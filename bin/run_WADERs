@@ -1,0 +1,532 @@
+#!/usr/bin/env python3
+"""run_WADERs: one command from raw skipper-CCD image(s) to panaSKImg (WADERs) results.
+
+    run_WADERs <image.fz | image.fits | image.fits.bz2 | list.txt> [-o PARENT] [-j N]
+
+For every image it
+  1. makes one panaSKImg JSON per CCD with gain_dc_split.py (autoconfig settings per
+     CCD, gain from a many-peak fit where that is more precise, dark current from the
+     Poisson-like 0e-/1e- peaks),
+  2. runs panaSKImg once per CCD (--ext N), in parallel,
+  3. collects the results.
+
+Output: WADERs_analysis_<run name>/   (run name = image name, or the .txt name for a list)
+    *.pdf, *_waders.fits.bz2   panaSKImg plots and processed images
+    json/<image>/final/        the JSONs that were run (one per CCD)
+    json/<image>/gain/, dc/    the intermediate JSONs (many-peak gain / 0e-1e- fit)
+    json/<image>/*_gain_dc_summary.txt   gain and dark-current fits compared
+    root/                      cluster files, one per CCD (panaSKImg_clustersRec_<image>_extN.root)
+    root/root_files.txt        full paths of those cluster files (input list for e.g.
+                               MakeComposite_Fe55_Clusters_Extensions.cc)
+    root/dc_fits/              the dark-current fits (histogram + fitted function) as ROOT
+    logs/                      panaSKImg and autoconfig logs
+    summary.txt, fit_quality.csv   gain, noise, dark current per CCD with fit errors
+
+A list .txt has one image path per line (relative paths are relative to the .txt;
+empty lines and lines starting with # are ignored).
+
+Environment: it needs python with numpy, astropy, PyROOT and pysimdamicm (panaSKImg).
+If the python running it does not have them, it looks for a conda/mamba environment
+that has panaSKImg installed and re-runs itself inside it with "conda run" (nothing is
+activated in your shell, nothing stays active afterwards). Choose the environment with
+--env NAME (or $WADERS_ENV); give panaSKImg with --panaskimg (or $PANASKIMG).
+
+The scripts it uses (gain_dc_split.py, autoconfig_panaSKImg.py, fit_quality.py,
+gain_vs_charge.py) live in comm_scripts/src; keep the bin/ and src/ folders together. Nothing else on disk is needed: the reference
+JSON is built into autoconfig_panaSKImg.py.
+"""
+# Only the standard library at module level: this part has to run in any python, before
+# the environment with ROOT/pysimdamicm is found.
+import argparse
+import concurrent.futures as cf
+import glob
+import importlib.util
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+SCRIPT_PATH = os.path.realpath(__file__)
+SCRIPT_DIR = os.path.dirname(SCRIPT_PATH)
+# the pipeline modules live in ../src (comm_scripts/src) next to this bin/ folder
+SRC_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), "src")
+NEEDED_MODULES = ("numpy", "astropy", "ROOT", "pysimdamicm")
+INSIDE_FLAG = "RUN_WADERS_IN_ENV"
+
+
+# =============================================================================
+# Environment
+# =============================================================================
+def env_ready():
+    """True if this python can run everything."""
+    return all(importlib.util.find_spec(m) is not None for m in NEEDED_MODULES)
+
+
+def find_conda():
+    """conda / mamba / micromamba executable, or None."""
+    cands = [os.environ.get("CONDA_EXE"), os.environ.get("MAMBA_EXE"),
+             shutil.which("conda"), shutil.which("mamba"), shutil.which("micromamba")]
+    home = os.path.expanduser("~")
+    for base in ("miniforge3", "mambaforge", "miniconda3", "anaconda3", "micromamba"):
+        cands.append(os.path.join(home, base, "bin", "conda"))
+    cands += ["/opt/conda/bin/conda", "/opt/homebrew/Caskroom/miniforge/base/bin/conda",
+              "/usr/local/Caskroom/miniforge/base/bin/conda"]
+    return next((c for c in cands if c and os.path.isfile(c)), None)
+
+
+def find_env(conda, name):
+    """Prefix of the environment to use: --env/$WADERS_ENV, else the first one with panaSKImg."""
+    try:
+        out = subprocess.run([conda, "env", "list", "--json"], capture_output=True, text=True, check=True).stdout
+        envs = json.loads(out).get("envs", [])
+    except (subprocess.CalledProcessError, json.JSONDecodeError, OSError):
+        return None
+    if name:
+        return next((e for e in envs if os.path.basename(e) == name or e == name), None)
+    for e in envs:
+        if os.path.isfile(os.path.join(e, "bin", "panaSKImg")) or os.path.isfile(os.path.join(e, "Scripts", "panaSKImg")):
+            return e
+    return None
+
+
+def ensure_environment(env_name):
+    """Return if this python is ready; otherwise re-run this script inside a conda env."""
+    if env_ready():
+        return
+    missing = [m for m in NEEDED_MODULES if importlib.util.find_spec(m) is None]
+    if os.environ.get(INSIDE_FLAG):
+        sys.exit(f"run_WADERs: the environment is missing {', '.join(missing)}")
+    conda = find_conda()
+    if not conda:
+        sys.exit(f"run_WADERs: this python lacks {', '.join(missing)} and no conda was found. "
+                 "Activate the environment with pysimdamicm and run again.")
+    env = find_env(conda, env_name)
+    if not env:
+        sys.exit("run_WADERs: no conda environment with panaSKImg found"
+                 + (f" (looked for '{env_name}')" if env_name else "") + "; use --env NAME")
+    print(f"run_WADERs: using environment {env}", flush=True)
+    cmd = [conda, "run"]
+    if not os.path.basename(conda).startswith("micromamba"):
+        cmd.append("--no-capture-output")
+    cmd += ["-p", env, "python", SCRIPT_PATH] + sys.argv[1:]
+    environ = dict(os.environ, **{INSIDE_FLAG: "1", "PYTHONUNBUFFERED": "1"})
+    sys.exit(subprocess.run(cmd, env=environ).returncode)
+
+
+# =============================================================================
+# Inputs
+# =============================================================================
+IMAGE_EXT = (".fz", ".fits", ".fits.bz2", ".fits.gz")
+
+
+def read_inputs(path):
+    """(run name, [image paths]) from an image or a .txt list of images."""
+    path = os.path.abspath(path)
+    if not os.path.isfile(path):
+        sys.exit(f"run_WADERs: {path} not found")
+    if path.endswith(".txt"):
+        base = os.path.dirname(path)
+        images = []
+        with open(path) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                p = line if os.path.isabs(line) else os.path.join(base, line)
+                if not os.path.isfile(p):
+                    sys.exit(f"run_WADERs: {p} (from {os.path.basename(path)}) not found")
+                images.append(os.path.abspath(p))
+        if not images:
+            sys.exit(f"run_WADERs: no images listed in {path}")
+        return os.path.basename(path)[:-4], images
+    if not path.endswith(IMAGE_EXT):
+        sys.exit(f"run_WADERs: {path} is neither an image ({', '.join(IMAGE_EXT)}) nor a .txt list")
+    return os.path.basename(path).split(".")[0], [path]
+
+
+# =============================================================================
+# Main
+# =============================================================================
+HELP_DESCRIPTION = """\
+Raw skipper-CCD image(s) -> one panaSKImg JSON per CCD -> panaSKImg (WADERs) per CCD
+-> plots, cluster ROOT files and a fit summary, all in WADERs_analysis_<run name>/.
+
+usage in short:
+  run_WADERs image.fz                 analyse one image (.fz, .fits, .fits.bz2)
+  run_WADERs images.txt               analyse a list (one image path per line)
+  run_WADERs images.txt -o DIR -j 6   output in DIR, 6 panaSKImg runs at a time
+
+The run name is the image name (one image) or the .txt name (a list). In a list,
+relative paths are relative to the .txt; empty lines and lines starting with # are
+ignored. Works from any folder and any python: if this python lacks ROOT/pysimdamicm,
+the conda environment with panaSKImg is found and used automatically.
+"""
+
+HELP_EPILOG = """\
+output (WADERs_analysis_<run name>/):
+  *.pdf, *_waders.fits.bz2     panaSKImg plots and processed images
+  summary.txt, fit_quality.csv gain, noise, dark current per CCD, with fit errors
+                               (scaled by sqrt(chi2/ndf)) and the dark-current bias
+  root/                        cluster files, one per CCD (..._extN.root)
+  root/root_files.txt          full paths of those files (input list for e.g.
+                               MakeComposite_Fe55_Clusters_Extensions.cc)
+  root/dc_fits/                dark-current fits (histogram + function) as ROOT
+  json/<image>/final/          the JSONs that were run, one per CCD
+  json/<image>/gain/, dc/      intermediate JSONs (many-peak gain fit, 0e-/1e- fit)
+  logs/                        panaSKImg and autoconfig logs
+
+what it does, per image (gain_dc_split.py --per-ext, always on):
+  1. autoconfig measures every CCD from the raw pixels and writes two JSONs per CCD:
+       json/<image>/dc/    fits only the Poisson-like 0e-/1e- peaks (unbiased dark current)
+       json/<image>/gain/  fits all peaks (more lever arm for the gain)
+  2. both are fitted with panaSKImg (pedestal + fit only, fast); per CCD the gain with
+     the smaller error (scaled by sqrt(chi2/ndf)) is kept: the all-peaks gain is held
+     in the final JSON if it is more precise and agrees with the 2-peak gain (3 sigma)
+       json/<image>/final/                      the JSONs that are run
+       json/<image>/<image>_gain_dc_summary.txt all fits compared, with errors
+  3. panaSKImg runs once per CCD (--ext N) with the final JSONs, in parallel;
+     flooded/unresolved CCDs are skipped (see --all-ext)
+  summary.txt lists, per CCD, which gain was used and why (* = all-peaks gain held)
+
+--tune (optional, off by default; adds ~1 min per image):
+  Instead of taking the pedestal method and fit window from rules, each CCD's
+  0e-/1e- JSON is checked with panaSKImg itself before the final run:
+  1. pedestal: the per-row pedestal is computed with each candidate method (median
+     of the overscan, Gaussian fit, lowest-peak finder for charged overscans), the
+     DC fit is run for each, and the one with the smallest total fit error is kept
+     (gain/noise/dark-current errors scaled by sqrt(chi2/ndf), plus the dark-current
+     bias against the 0e-/1e- pixel counts; a parameter stuck at a limit is penalised).
+     Smallest error, not smallest noise: a wrong pedestal can make the noise look
+     smaller while biasing the dark current.
+  2. window: panaSKImg is run with a wide window; in its own histogram the 0e- peak
+     is located and the fit window and mu limits are centred on it (useful when the
+     pedestal leaves the 0e- peak away from 0 ADU). The number of fitted peaks stays
+     the module-wide choice.
+  3. a check fit; its results are in logs/<image>_autoconfig_dc.log.
+  The all-peaks (gain) JSON then uses the same pedestal and 0e- position.
+
+--gain-correction (optional): the gain falls slowly with the charge in a pixel (~3% at
+  1000 e-), so cluster energies come out low at keV energies. With this flag, after the
+  panaSKImg runs, gain_vs_charge.py measures g(n) from the images themselves (spacing of
+  the electron comb at high charge, clean rows only; images of the same module together),
+  and writes corrected cluster files (pixels_E and Energy recomputed) to root_gaincorr/,
+  with root_gaincorr/root_files.txt. Curves and fits: gain_vs_charge/. Originals in root/.
+  By default the comb's whole g(n) is used, including its low-charge gain (one curve for
+  all images of a CCD; this removes image-to-image scatter of the 0e-/1e- gain fits);
+  --gain-anchor fit keeps each image's fitted gain and corrects only the charge
+  dependence. CCDs whose curve is not trustworthy (measured to < 400 e-, or rising) are
+  copied unchanged.
+
+settings you can pass with --autoconfig-args "..." (all inside one quoted string):
+  --cluster-threshold-e PIX SEED  cluster thresholds in e- (pixel > PIX, seed > SEED);
+                                  much faster on images with high dark current
+  --plot-peaks N                  DC-fit plot shown up to N e- (default 5)
+  --reference my.json             start from your own JSON instead of the built-in one
+  --gain G                        gain prior [ADU/e-] if the peaks are hard to resolve
+  --gain-min / --gain-max         gain search range [ADU/e-] (default 0.6 / 3.0)
+  --lam-max L                     leave out rows with more than L e-/pix (default 1.0)
+  --min-rows N                    minimum rows in the fit (default 25)
+  --ccd-cols N                    override the active/overscan column boundary
+  --dead-frac F / --keep-dead     detection of channels without a CCD / keep them
+  --cluster-all                   search clusters even on flooded CCDs
+  --max-peaks N                   maximum number of peaks considered (default 10)
+  --poisson-tol T                 how closely a peak must follow Poisson to be
+                                  fitted (default 0.25)
+  (do not pass --peaks, --per-ext or --tune here: use run_WADERs' own --tune)
+
+examples:
+  run_WADERs avg_Image_8_Low_Temp_106_20260330_123052_21.fz
+  run_WADERs my_images.txt -o ~/analysis -j 8
+  run_WADERs my_images.txt --autoconfig-args "--cluster-threshold-e 2 5"
+  run_WADERs image.fits.bz2 --overwrite --all-ext
+  run_WADERs my_images.txt --no-clusters        noise/gain/dark current only, fast
+  run_WADERs image.fz --tune                     pedestal and window checked per CCD
+  run_WADERs images.txt --gain-correction        also gain-corrected cluster files
+
+environment variables: WADERS_ENV (conda environment), PANASKIMG (panaSKImg script)
+"""
+
+
+SHORT_DESCRIPTION = """\
+Raw skipper-CCD image(s) -> one JSON per CCD -> panaSKImg per CCD -> plots, cluster
+ROOT files and a fit summary in WADERs_analysis_<run name>/."""
+
+SHORT_EPILOG = """\
+examples:
+  run_WADERs image.fz
+  run_WADERs images.txt -o ~/analysis -j 8 --no-clusters
+
+run_WADERs -h -v   full guide: output folders, what each step does, --tune, and all
+                   settings for --autoconfig-args"""
+
+
+def build_parser(full=False):
+    ap = argparse.ArgumentParser(
+        prog="run_WADERs",
+        usage="run_WADERs INPUT [options]      (-h: flags, -h -v: full guide)",
+        description=HELP_DESCRIPTION if full else SHORT_DESCRIPTION,
+        epilog=HELP_EPILOG if full else SHORT_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("input", metavar="INPUT",
+                    help="an image (.fz, .fits, .fits.bz2) or a .txt with one image path per line")
+    ap.add_argument("-o", "--parent", metavar="DIR", default=".",
+                    help="folder in which WADERs_analysis_<run name> is created (default: current folder)")
+    ap.add_argument("-j", "--jobs", metavar="N", type=int, default=min(4, os.cpu_count() or 1),
+                    help="number of panaSKImg runs at the same time (default: 4, or fewer if fewer CPUs)")
+    ap.add_argument("--overwrite", action="store_true",
+                    help="replace an existing WADERs_analysis_<run name> folder (otherwise it stops)")
+    ap.add_argument("--all-ext", action="store_true",
+                    help="also run CCDs flagged as flooded/unresolved (slow, fits not reliable)")
+    ap.add_argument("--no-clusters", action="store_true",
+                    help="noise, gain and dark current only: leave out ClusterFinder and BuildClusterMask "
+                         "(no cluster ROOT files; much faster)")
+    ap.add_argument("--gain-correction", action="store_true",
+                    help="measure the gain vs charge per pixel g(n) from the images (per module) and write "
+                         "gain-corrected cluster files to root_gaincorr/ (originals kept)")
+    ap.add_argument("--gain-anchor", choices=("comb", "fit"), default="comb",
+                    help="with --gain-correction: convert with the comb's g(n) including its low-charge gain "
+                         "(comb, default), or keep each image's fitted gain and correct only the charge "
+                         "dependence (fit)")
+    ap.add_argument("--tune", action="store_true",
+                    help="check each CCD's pedestal method and fit window with panaSKImg before the "
+                         "final run (smallest total fit error; ~1 min more per image)")
+    ap.add_argument("--keep-work", action="store_true",
+                    help="keep the intermediate gain and 0e-/1e- fit runs in work/ (normally deleted)")
+    ap.add_argument("--autoconfig-args", metavar='"ARGS"', default="",
+                    help="extra settings for the JSON generation, in one quoted string (list: -h -v)")
+    ap.add_argument("--env", metavar="NAME", default=os.environ.get("WADERS_ENV"),
+                    help="conda environment to use if this python lacks pysimdamicm "
+                         "(default: $WADERS_ENV, else the first environment with panaSKImg)")
+    ap.add_argument("--panaskimg", metavar="PATH", default=os.environ.get("PANASKIMG"),
+                    help="panaSKImg script to use (default: $PANASKIMG, else found automatically)")
+    ap.add_argument("-v", "--verbose", action="store_true", help="with -h: show the full guide")
+    return ap
+
+
+def parse_args():
+    argv = sys.argv[1:]
+    if any(a in ("-h", "--help") for a in argv) and any(a in ("-v", "--verbose") for a in argv):
+        build_parser(full=True).print_help()
+        sys.exit(0)
+    return build_parser().parse_args()
+
+
+def main():
+    args = parse_args()
+    # checks that need only the standard library come first (clear messages, no conda noise)
+    run_name, images = read_inputs(args.input)
+    out = os.path.join(os.path.abspath(args.parent), f"WADERs_analysis_{run_name}")
+    if os.path.exists(out) and os.listdir(out) and not args.overwrite:
+        sys.exit(f"run_WADERs: {out} already exists; use --overwrite to replace it")
+    ensure_environment(args.env)
+
+    # environment is ready: the pipeline modules (comm_scripts/src) can be imported
+    if not os.path.isfile(os.path.join(SRC_DIR, "gain_dc_split.py")):
+        sys.exit(f"run_WADERs: pipeline modules not found in {SRC_DIR} (keep the comm_scripts layout: bin/, src/)")
+    sys.path.insert(0, SRC_DIR)
+    import autoconfig_panaSKImg as A
+    import fit_quality as FQ
+    import gain_dc_split as G
+
+    panaskimg = args.panaskimg or A.DEFAULT_PANASKIMG
+    if not panaskimg or not os.path.isfile(panaskimg):
+        sys.exit("run_WADERs: panaSKImg not found; give --panaskimg /path/to/panaSKImg")
+
+    if os.path.exists(out) and os.listdir(out):
+        shutil.rmtree(out)                     # --overwrite (checked above)
+    D = {k: os.path.join(out, k) for k in ("json", "root", "logs", "work")}
+    D["fits"] = os.path.join(D["root"], "dc_fits")
+    for d in D.values():
+        os.makedirs(d, exist_ok=True)
+    if "_ext" in out:
+        print("WARNING: the output path contains '_ext'; scripts that read the extension from "
+              "'_ext<N>' in the path (MakeComposite_Fe55_Clusters_Extensions.cc) may misread it")
+
+    t0 = time.time()
+    print(f"run_WADERs: {len(images)} image(s) -> {out}   ({args.jobs} parallel runs)")
+
+    # ---- 1. per-CCD JSONs (gain_dc_split), images in parallel
+    def configure(img):
+        stem = G.image_stem(img)
+        jdir = os.path.join(D["json"], stem)
+        r = G.split_image(img, jdir, per_ext=True, panaskimg=panaskimg,
+                          autoconfig_args=args.autoconfig_args.split(),
+                          work=os.path.join(D["work"], stem), final_fit=False, jobs=1, tune=args.tune)
+        for lg in glob.glob(os.path.join(jdir, "autoconfig_*.log")):      # logs together
+            shutil.move(lg, os.path.join(D["logs"], f"{stem}_{os.path.basename(lg)}"))
+        return r
+
+    configs = {}
+    with cf.ThreadPoolExecutor(max_workers=args.jobs) as ex:
+        futs = {ex.submit(configure, img): img for img in images}
+        for f in cf.as_completed(futs):
+            img = futs[f]
+            try:
+                r = f.result()
+                configs[img] = r
+                held = ", ".join(r["held"]) or "none"
+                print(f"  [{time.time() - t0:5.0f}s] JSONs ready: {r['stem']} (gain held: {held})")
+            except Exception as err:                       # keep going with the other images
+                print(f"  ERROR configuring {os.path.basename(img)}: {err}")
+
+    # ---- --no-clusters: drop cluster finding from the final JSONs (so json/ shows what ran)
+    if args.no_clusters:
+        for r in configs.values():
+            for ext, path, skip in r["finals"]:
+                cfg = json.load(open(path))
+                seq = cfg["process"]["sequence"].split(";")
+                cfg["process"]["sequence"] = ";".join(
+                    p for p in seq if p.strip() not in ("ClusterFinder", "BuildClusterMask"))
+                with open(path, "w") as fh:
+                    json.dump(cfg, fh, indent=4)
+        print("  --no-clusters: ClusterFinder and BuildClusterMask removed from the final JSONs")
+
+    # ---- 2. panaSKImg per CCD, all runs in parallel
+    tasks = []
+    for img, r in configs.items():
+        for ext, path, skip in r["finals"]:
+            if skip and not args.all_ext:
+                print(f"  {r['stem']} {ext}: skipped (unresolved outlier CCD; --all-ext to run it)")
+                continue
+            tasks.append((r, ext, path))
+
+    def run_one(task):
+        r, ext, path = task
+        cfg = json.load(open(path))
+        cmd = [sys.executable, panaskimg, r["src"], "-j", path, "-o", out + "/", "--save-plots", "--ext", ext[3:]]
+        if cfg["input"]["image"].get("ACM_multi_extension", False):
+            cmd.append("--acm")
+        log = os.path.join(D["logs"], f"{r['stem']}_{ext}_panaSKImg.log")
+        with open(log, "w") as fh:
+            subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT)
+        with open(log) as fh:
+            ok = "Finished correctly" in fh.read()
+        return r["stem"], ext, ok, log
+
+    print(f"  running panaSKImg: {len(tasks)} CCD run(s)")
+    failed = []
+    with cf.ThreadPoolExecutor(max_workers=args.jobs) as ex:
+        for fut in cf.as_completed([ex.submit(run_one, t) for t in tasks]):
+            stem, ext, ok, log = fut.result()
+            print(f"  [{time.time() - t0:5.0f}s] {stem} {ext}: {'done' if ok else 'FAILED, see ' + log}")
+            if not ok:
+                failed.append((stem, ext, log))
+
+    # ---- 3. collect the ROOT files
+    for f in glob.glob(os.path.join(out, "panaSKImg_clustersRec_*.root")):
+        shutil.move(f, os.path.join(D["root"], os.path.basename(f)))
+    for f in glob.glob(os.path.join(out, "*_FitDarkCurrentProcess_side*.root")):
+        shutil.move(f, os.path.join(D["fits"], os.path.basename(f)))
+    roots = sorted(glob.glob(os.path.join(D["root"], "panaSKImg_clustersRec_*.root")))
+    with open(os.path.join(D["root"], "root_files.txt"), "w") as fh:
+        fh.write("".join(p + "\n" for p in roots))
+
+    # ---- 3b. --gain-correction: g(n) per module from the images, corrected cluster files
+    gc_lines = []
+    if args.gain_correction:
+        import re as _re
+        import gain_vs_charge as GVC
+        D["gc"] = os.path.join(out, "gain_vs_charge")
+        D["root_gc"] = os.path.join(out, "root_gaincorr")
+        os.makedirs(D["gc"], exist_ok=True)
+        os.makedirs(D["root_gc"], exist_ok=True)
+        # images of the same module (ACM id in the name, e.g. ..._106_20250914_024425_6) share the CCDs
+        groups = {}
+        for r in configs.values():
+            m = _re.search(r"_(\d+)_\d{8}_\d{6}_\d+$", r["stem"])
+            groups.setdefault(m.group(1) if m else r["stem"], []).append(r)
+        run_exts = sorted({int(ext[3:]) for _, ext, _ in tasks})
+        gc_lines.append("gain vs charge per pixel (--gain-correction; g(n) = a + b*min(n, n_cap), from the "
+                        "electron comb in clean rows):")
+        if not groups:
+            gc_lines.append("  nothing to correct: no image was configured")
+        for key, rs in sorted(groups.items()):
+            print(f"  [{time.time() - t0:5.0f}s] g(n) for module {key} ({len(rs)} image(s))")
+            res = GVC.measure([r["src"] for r in rs], run_exts, verbose=False)
+            mpath = os.path.join(D["gc"], f"module_{key}_gain_vs_charge.json")
+            with open(mpath, "w") as fh:
+                json.dump({"images": [r["src"] for r in rs], "e_per_electron_eV": GVC.E_PER_E,
+                           "extensions": res}, fh, indent=1)
+            GVC.plot(res, os.path.join(D["gc"], f"module_{key}_gain_vs_charge.png"), f"module {key}")
+            for ext, rr in sorted(res.items()):
+                if rr.get("ok"):
+                    m = rr["model"]
+                    gc_lines.append(f"  module {key} {ext}: a = {m['a']:.4f} ADU/e- (fit gain {rr['g_1e']:.4f}), "
+                                    f"b = {m['b'] * 1e5:+.2f}e-5 /e-, {rr['drop_at_1000'] * 100:.1f}% lower at 1000 e-, "
+                                    f"measured to {rr['n_max_measured']:.0f} e-")
+                else:
+                    gc_lines.append(f"  module {key} {ext}: no correction ({rr.get('reason')})")
+            if not args.no_clusters:
+                files = [f for r in rs for f in glob.glob(os.path.join(D["root"], f"panaSKImg_clustersRec_{r['stem']}_ext*.root"))]
+                done = GVC.apply(mpath, sorted(files), D["root_gc"], verbose=False, anchor=args.gain_anchor)
+                for src_f, dst_f, n, med in done:
+                    gc_lines.append(f"    {os.path.basename(dst_f)}: median E_corrected/E_original = {med:.4f}")
+        if not args.no_clusters:
+            gcroots = sorted(glob.glob(os.path.join(D["root_gc"], "panaSKImg_clustersRec_*.root")))
+            with open(os.path.join(D["root_gc"], "root_files.txt"), "w") as fh:
+                fh.write("".join(p + "\n" for p in gcroots))
+            gc_lines.append(f"  corrected cluster files: {len(gcroots)} (list: "
+                            f"{os.path.join(D['root_gc'], 'root_files.txt')})")
+
+    # ---- 4. summary with fit errors
+    refs = {r["stem"]: r["refs"] for r in configs.values()}
+    held = {r["stem"]: r["held"] for r in configs.values()}
+    rows = []
+    for path in sorted(glob.glob(os.path.join(D["fits"], "*_FitDarkCurrentProcess_side*.root"))):
+        m = FQ.SIDE_RE.match(os.path.basename(path))
+        if not m:
+            continue
+        stem, ext = m.group(1), m.group(2)
+        fit = FQ.read_side_fit(path, ext)
+        if fit is None:
+            continue
+        q = G.held_quality(fit, refs.get(stem, {}).get(ext), held.get(stem, {}).get(ext))
+        rows.append(dict(image=stem, ext=ext, gain_held=ext in held.get(stem, {}), **q))
+    if rows:
+        import csv
+        with open(os.path.join(out, "fit_quality.csv"), "w", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
+            w.writeheader()
+            w.writerows(rows)
+    rows.sort(key=lambda q: (q["image"], q["ext"]))
+    wid = max([len(q["image"]) for q in rows] + [5])
+    lines = [f"run_WADERs summary: {run_name}  ({len(images)} image(s), {time.time() - t0:.0f} s)", "",
+             f"{'image':{wid}} {'ext':4} {'chi2/ndf':>8} {'gain [ADU/e-]':>19} {'noise [e-]':>17} "
+             f"{'DC [e-/pix]':>17} {'DC bias':>8}"]
+    for q in rows:
+        bias = f"{q['dc_bias']:+8.3f}" if q["dc_bias"] is not None else "       -"
+        lines.append(f"{q['image']:{wid}} {q['ext']:4} {q['chi2ndf']:8.2f} "
+                     f"{q['gain']:8.4f} +- {q['gain_err_s']:.4f}{'*' if q['gain_held'] else ' '} "
+                     f"{q['noise']:7.4f} +- {q['noise_err_s']:.4f} {q['dc']:7.4f} +- {q['dc_err_s']:.4f} {bias}")
+    lines += ["", "errors scaled by sqrt(chi2/ndf); * = gain held at the all-peaks fit; "
+                  "DC bias = fit - dark current from the 0e-/1e- pixel counts", "",
+              "gain used per CCD (gain_dc_split: all-peaks fit vs 0e-/1e- fit; details in "
+              "json/<image>/<image>_gain_dc_summary.txt):"]
+    for r in sorted(configs.values(), key=lambda r: r["stem"]):
+        lines.append(f"  {r['stem']}")
+        lines += [f"  {n}" for n in r["notes"]]
+        if r["skipped"]:
+            lines.append(f"    not run (flooded/unresolved CCD): {', '.join(r['skipped'])}"
+                         + ("" if not args.all_ext else " -- run anyway (--all-ext)"))
+    lines.append("")
+    lines.append("cluster files: none (--no-clusters)" if args.no_clusters else
+                 f"cluster files: {len(roots)} (list: {os.path.join(D['root'], 'root_files.txt')})")
+    if gc_lines:
+        lines += [""] + gc_lines
+    if failed:
+        lines.append("FAILED runs: " + ", ".join(f"{s} {e}" for s, e, _ in failed))
+    text = "\n".join(lines)
+    with open(os.path.join(out, "summary.txt"), "w") as fh:
+        fh.write(text + "\n")
+    print("\n" + text)
+
+    if not args.keep_work:
+        shutil.rmtree(D["work"], ignore_errors=True)
+    print(f"\nresults: {out}")
+    sys.exit(1 if failed else 0)
+
+
+if __name__ == "__main__":
+    main()
