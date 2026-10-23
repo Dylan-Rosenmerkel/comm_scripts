@@ -7,6 +7,47 @@ the geometry, PedestalSubtractionProcess, FitDarkCurrentProcess (and optionally
 ClusterFinder) settings are chosen so that panaSKImg's fit of the pixel charge
 distribution converges on the right noise, gain and dark current.
 
+Where it sits in the pipeline
+-----------------------------
+    raw image -> autoconfig_panaSKImg.py (this file: one JSON per image or per CCD)
+              -> gain_dc_split.py (chooses the gain) -> panaSKImg -> cluster ROOT files
+              -> optional gain-vs-charge correction (gain_vs_charge.py) -> MakeComposite
+bin/run_WADERs drives the whole chain. panaSKImg (WADERs package, pysimdamicm) fits
+the pixel charge histogram with Gaussian peaks (one per electron number, spacing =
+gain, width = read noise) weighted by a Poisson distribution (mean = dark current).
+That fit only converges if its window, starting values and limits are sensible for
+the image at hand; this script measures them from the pixels first.
+
+Entry points
+------------
+* command line: main() (options in parse_args(); run with -h).
+* outputs: the JSON given by -o plus <json>_measured.json (write_measured), or with
+  --per-ext a folder with one JSON per CCD, <image>_measured.json and run_<image>.sh.
+
+How to read this file
+---------------------
+    REFERENCE_JSON              built-in starting config
+    find_panaskimg, ...         locating panaSKImg / its optional features
+    Small statistics helpers    robust_std, trimmed_mean, clip_tails, compress_ranges
+    Electron-peak ("comb")      comb_offset, align_rows, find_gain, refine_gain, ...
+    Column and channel checks   find_bad_columns, is_dead_channel
+    Per-extension analysis      measure_gain, held_gain_fallback, poisson_peaks,
+                                measure_dark_current, split_active_overscan,
+                                mask_bad_columns, measure_resolved, measure_unresolved,
+                                analyse_extension (uses all of these)
+    FitDarkCurrentProcess       fit_settings, choose_peaks, shared_fit_window
+    Writing the JSON            set_pedestal, set_dark_current_fit, set_cluster_threshold,
+                                skip_clusters, set_plot_range, write_measured,
+                                write_per_ext, tune_per_ext, write_run_script
+    --tune                      run_candidate, score, tune_pedestal, histogram_peaks,
+                                locate_histogram_peaks, apply_peak_window, refine_peaks
+    Main                        parse_args, geometry, gain_priors, print_report,
+                                analyse_all_extensions, write_single_json, main
+
+Units: charges are in ADU (after pedestal subtraction) unless the name says e-;
+gain is ADU/e-; dark current lambda is e-/pixel (mean electrons per pixel over the
+exposure + readout). Extensions are named "EXT1", "EXT2", ... as in panaSKImg.
+
 Typical use
 -----------
     python autoconfig_panaSKImg.py avg_img_....fits -o auto.json
@@ -21,6 +62,8 @@ What is measured
   (ccd_cols = PHYSCOL - NCOLPRE + PRESCAN, in unbinned pixels as panaSKImg expects).
 * Channels without a CCD: the active region looks exactly like the overscan (same
   noise, no dark current, no particle tracks). They are removed from 'extensions'.
+  (The overscan = columns read after the last real pixel: empty charge packets, so
+  they hold only the electronic baseline ("pedestal") and read noise.)
 * Bad columns (electronic transient in the first columns, hot columns): columns
   whose mean charge stands out from their neighbours. Masked in the DC fit only.
 * Gain and noise, when single-electron peaks are resolved: each row is shifted
@@ -32,7 +75,8 @@ What is measured
   overscan and the gain is held at a prior (reference-JSON CalibrationProcess gain or
   --gain), since it cannot be fitted.
 * Dark current per row: with resolved peaks the electron count of every pixel is
-  known, so lambda(row) = -ln P(0 e-). For long readouts it grows with row, so the
+  known, so lambda(row) = -ln P(0 e-) (for a Poisson of mean lambda the fraction of
+  empty pixels is exp(-lambda)). For long readouts it grows with row, so the
   DC fit only uses the first rows (until lambda > --lam-max).
 * Pedestal: if most of the rows used in the fit have overscan pixels on the 1 e-
   (or higher) peak, a plain pedestal lands on the wrong peak; the lowest-peak finder
@@ -484,7 +528,13 @@ def compress_ranges(idx):
 # noise.
 # =============================================================================
 def comb_offset(q, g):
-    """Position (ADU, modulo g) of the comb of peaks in the values q."""
+    """Position (ADU, modulo g) of the comb of peaks in the values q.
+
+    Each value is mapped to a phase 2*pi*q/g on the unit circle; values on the comb
+    teeth all point the same way, so the angle of the mean vector is the comb
+    position. q: 1-D array (ADU), g: peak spacing (ADU/e-). Returns a float in
+    (-g/2, g/2].
+    """
     return g * np.angle(np.exp(2j * np.pi * q / g).mean()) / (2 * np.pi)
 
 
@@ -493,6 +543,9 @@ def align_rows(x, g):
 
     Only the sub-electron part of each row's offset is removed; whole-electron
     offsets (pedestal landing on a wrong peak) are kept and handled per row later.
+    Why: the baseline of each row is estimated separately and jitters by a fraction
+    of an electron, which smears the peaks of the combined histogram.
+    x: 2-D array (rows, cols) in ADU. Returns an array of the same shape.
     """
     ph = np.angle(np.exp(2j * np.pi * x / g).mean(axis=1, keepdims=True))
     return x - g * ph / (2 * np.pi)
@@ -505,6 +558,9 @@ def find_gain(q, gmin, gmax, prominence=0.03):
     equal to the peak spacing (and its multiples); for a single Gaussian it just
     falls monotonically. The first prominent secondary maximum between gmin and
     gmax is taken and then refined with refine_gain().
+    q: 1-D pixel values (ADU); gmin, gmax: gain search range (ADU/e-);
+    prominence: minimum rise of the maximum above the preceding dip (autocorrelation
+    normalised to 1). Returns the gain (float, ADU/e-) or None.
     """
     rng = np.random.default_rng(0)
     if q.size > 300000:                       # subsample very large images (speed)
@@ -561,7 +617,12 @@ def refine_gain(q, g, n_iter=3, min_count=200):
 
 
 def comb_residual_sigma(q, g):
-    """Comb offset and peak width: robust std of each pixel's distance to its nearest peak."""
+    """Comb offset and peak width: robust std of each pixel's distance to its nearest peak.
+
+    With resolved peaks this width is the read noise (ADU): every peak has the same
+    Gaussian width, so folding all pixels onto one tooth measures it with all the
+    statistics of the image. Returns (offset, sigma), both in ADU.
+    """
     off = comb_offset(q, g)
     d = (q - off) - g * np.round((q - off) / g)
     return off, robust_std(d)
@@ -572,6 +633,8 @@ def zero_peak_sigma(q):
 
     Used when peaks are not resolved. Only the left side is used so the width is
     not inflated by the dark-current tail on the right.
+    q: 1-D pixel values (ADU). Returns (mode, sigma) in ADU; sigma is the MAD of the
+    pixels below the mode, scaled to a Gaussian standard deviation.
     """
     # the zero-electron peak sits in the lower part of the distribution; limiting
     # the range keeps the bins fine even with a long high-charge tail
@@ -593,7 +656,9 @@ def find_bad_columns(x, min_dev, nsig=6.0, max_frac=0.03):
     The threshold is at least nsig robust standard deviations and min_dev (ADU),
     and is raised until at most max_frac of the columns are flagged, so only the
     clearly anomalous ones (transients, hot columns) are masked.
-    Returns (list of column indices, threshold used).
+    x: 2-D active-region array (rows, cols), baseline-subtracted, in ADU;
+    min_dev: minimum deviation (ADU) for a column to count as bad.
+    Returns (list of column indices relative to x, threshold used in ADU).
     """
     xr = x - np.median(x, axis=1, keepdims=True)     # remove per-row level
     cm = trimmed_mean(xr, axis=0).ravel()             # robust mean of every column
@@ -617,6 +682,8 @@ def is_dead_channel(x, xo, gain_prior, args):
     An unconnected/broken channel shows only read noise, identical to the overscan.
     Criteria: (1) almost no pixels far above the noise, (2) same noise in active
     region and overscan, (3) no offset between them.
+    x, xo: baseline-subtracted active region and overscan (2-D, ADU); gain_prior:
+    ADU/e- (or None); args: uses --dead-frac and --keep-dead (never dead with it).
     Returns (dead?, overscan noise in ADU, fraction of pixels with charge).
     """
     # noise from differences of neighbouring pixels: insensitive to slow baseline drifts
@@ -635,9 +702,17 @@ def is_dead_channel(x, xo, gain_prior, args):
 def measure_gain(x, ext, args, gain_prior, early):
     """Decide whether peaks are resolved and measure the gain.
 
+    "Resolved" means the single-electron peaks are separate: noise/gain below
+    --max-sig-over-gain (0.3 by default). Then the gain can be measured from the
+    peak spacing and each pixel's electron count is known. Otherwise the histogram
+    is one broadened bump and the gain has to come from a prior.
+
+    x: baseline-subtracted active region (2-D, ADU); ext: name for messages;
+    gain_prior: ADU/e- (or None); early: slice of the low-dark-current rows used.
     Returns a dict with: g (gain or None), resolved, gain_held (gain could not be
     measured and is held at the prior), credible (a comb was found even if too broad
-    to fit), sig_zero (width of the lowest peak), xa (rows aligned with gain g).
+    to fit), sig_zero (width of the lowest peak, ADU).
+    Prints a message when the comb spacing disagrees with the prior or the gain is held.
     """
     # align rows with the prior gain first, so the combined distribution is sharp
     xa = align_rows(x, gain_prior) if gain_prior else x
@@ -694,7 +769,10 @@ def held_gain_fallback(act, gain_prior, args):
     (row median) and only the clean early rows, the zero-electron peak is still narrower
     than max_sig_over_gain x gain, the 0e-/1e- peaks can be fitted with the gain held at
     the prior (--gain, or the reference CalibrationProcess gain).
-    Returns (pedestal-subtracted active pixels, peak width, clean rows) or None.
+    act: raw active-region pixels (2-D, ADU, no baseline subtracted); gain_prior:
+    ADU/e-; args: uses --max-sig-over-gain.
+    Returns (pedestal-subtracted active pixels (2-D, ADU), zero-peak width (ADU),
+    number of clean rows) or None if the CCD does not qualify.
     """
     g = gain_prior
     x = act - np.median(act, axis=1, keepdims=True)
@@ -742,6 +820,10 @@ def poisson_peaks(counts, max_peaks, tol=0.25):
     larger of `tol` (relative) and 3 statistical standard deviations. The first
     peak that disagrees stops the selection.
 
+    Why N1/N0: for a Poisson of mean lambda, P(1)/P(0) = lambda; the 0 e- and 1 e-
+    peaks are the tallest and the least affected by extra charge, so this ratio is
+    the cleanest estimate of the dark current (lam01).
+
     counts: number of pixels with 0, 1, 2, ... electrons.
     Returns (K = number of peaks to fit, at least 2; list of data/prediction ratios;
     lambda from the first two peaks).
@@ -770,6 +852,17 @@ def measure_dark_current(xga, xo, off, g, nrows, args):
     Every pixel gets an electron number; in each row the zero-electron peak is the
     lowest peak holding >= 5% of the pixels, and lambda = -ln(fraction at 0 e-),
     which is robust against tracks and hot pixels.
+
+    Why only part of the rows: rows are read one after the other, so later rows wait
+    longer in the CCD and collect more dark current. The fit model has ONE lambda,
+    so it is applied to the early rows whose dark current is still low (< --lam-max
+    e-/pix) and fairly uniform; the remaining rows are masked in the fit.
+
+    off: comb offset (ADU), g: gain (ADU/e-), nrows: number of rows; args: uses
+    --lam-max, --min-rows, --max-peaks, --poisson-tol.
+    Returns a dict: row_end (first row NOT used), lam (mean lambda of the used rows,
+    e-/pix), lam01, k_poisson, poisson_ratios (see poisson_peaks), ovs_charged_frac
+    and ovs_charged_frac_fit (fractions of rows whose overscan sits on >= 1 e-).
     """
     n_act = np.round((xga - off) / g)
     n_ovs = np.round((xo - off) / g)
@@ -815,10 +908,19 @@ def measure_dark_current(xga, xo, off, g, nrows, args):
     )
 
 
-def analyse_extension(data, ext, cfg, args, gain_prior):
-    """Measure one extension. Returns a dict of results (see keys set below)."""
-    # ---- split into active region and overscan, and subtract a rough per-row
-    #      baseline (median of the overscan, similar to what panaSKImg starts from)
+def split_active_overscan(data, cfg):
+    """Cut one extension into active region and overscan and subtract a rough baseline.
+
+    The pedestal (electronic baseline) drifts from row to row, so a per-row baseline
+    is subtracted: the median of that row's overscan, similar to what panaSKImg
+    starts from. Without an overscan (windowed readout) the row median of the active
+    region is used instead.
+    data: 2-D extension image (rows, cols) in ADU; cfg: analysis geometry from
+    geometry() (id_row_start, n_cols_prescan, ccd_cols = first overscan column).
+    Returns (act: raw active pixels, x: baseline-subtracted active pixels,
+    xo: baseline-subtracted overscan (= x without overscan), nrows, a0: first
+    active column, no_ovs: True if there are fewer than 3 overscan columns).
+    """
     r0 = cfg["id_row_start"]
     d = data[r0:, :].astype(float)
     nrows = d.shape[0]
@@ -835,6 +937,89 @@ def analyse_extension(data, ext, cfg, args, gain_prior):
         x = act - base
         xo = x
     no_ovs = ovs.shape[1] < 3
+    return act, x, xo, nrows, a0, no_ovs
+
+
+def mask_bad_columns(x, g, resolved, early, a0):
+    """Find the bad columns of x and return them with the good columns only.
+
+    The minimum deviation for a bad column is ~0.3 e- (resolved peaks) or half the
+    zero-peak width (unresolved). x: baseline-subtracted active region (2-D, ADU);
+    g: gain (ADU/e-, used only if resolved); early: slice of early rows; a0: first
+    active column, added so the returned indices are image columns.
+    Returns (bad columns as image column indices, x without the bad columns).
+    """
+    if resolved:
+        min_dev = 0.3 * g
+    else:
+        min_dev = 0.5 * zero_peak_sigma(x[early].ravel())[1]
+    bad_cols, _ = find_bad_columns(x, min_dev)
+    bad_abs = [c + a0 for c in bad_cols]
+    good = np.ones(x.shape[1], bool)
+    good[bad_cols] = False
+    xg = x[:, good]
+    return bad_abs, xg
+
+
+def measure_resolved(xg, xo, g, nrows, early, args):
+    """Noise and dark current of a CCD with resolved peaks.
+
+    Two noise values: sigma, the intrinsic peak width (rows aligned on the comb),
+    and sigma_raw, the width as panaSKImg's fit will see it (rows not aligned:
+    panaSKImg subtracts one overscan pedestal per row, which keeps the row-to-row
+    jitter). Then the per-row dark current and the rows to use (measure_dark_current).
+    xg: active region without bad columns, xo: overscan (2-D, ADU); g: gain.
+    Returns a dict (gain, sigma, sigma_raw in ADU, plus measure_dark_current's keys).
+    """
+    xga = align_rows(xg, g)
+    off, sigma = comb_residual_sigma(clip_tails(xga[early].ravel()), g)
+    _, sigma_raw = comb_residual_sigma(clip_tails(xg[early].ravel()), g)
+    out = dict(gain=g, sigma=sigma, sigma_raw=max(sigma_raw, sigma))
+    out.update(measure_dark_current(xga, xo, off, g, nrows, args))
+    return out
+
+
+def measure_unresolved(xg, xo, g, nrows, early):
+    """Noise and mean charge of a CCD whose peaks are not resolved.
+
+    The width of the zero peak in the early rows is broadened by the unresolved
+    charge (sigma_raw); the read noise proper comes from the overscan, which has no
+    dark current (sigma = the smaller of the two). The dark current is estimated as
+    the median pixel charge divided by the gain (a rough mean charge per pixel).
+    xg: active region without bad columns, xo: overscan (2-D, ADU); g: gain used
+    (measured comb spacing if credible, else the prior).
+    Returns a dict (gain, sigma, sigma_raw in ADU, row_end = nrows, lam in e-/pix,
+    ovs_charged_frac(_fit) = 0).
+    """
+    _, sigma = zero_peak_sigma(xg[early].ravel())
+    sig_ovs = robust_std(xo - np.median(xo, axis=1, keepdims=True))
+    sig_noise = min(sig_ovs, sigma) if sig_ovs > 0 else sigma
+    # mean charge per pixel in electrons (baseline from the overscan)
+    lam_e = max(float(np.median(xg)) / g, 0.0)
+    return dict(gain=g, sigma=sig_noise, sigma_raw=sigma, row_end=nrows, lam=lam_e,
+                ovs_charged_frac=0.0, ovs_charged_frac_fit=0.0)
+
+
+def analyse_extension(data, ext, cfg, args, gain_prior):
+    """Measure one extension (CCD) from its raw pixels.
+
+    Steps: split active/overscan and subtract a per-row baseline; drop the channel if
+    it has no CCD (is_dead_channel); measure the gain and decide whether the peaks are
+    resolved (measure_gain), with the held-gain fallback for unresolved CCDs; mask
+    bad columns; then measure noise and dark current (measure_resolved or
+    measure_unresolved).
+
+    data: 2-D image of this extension (ADU); ext: name, e.g. "EXT1"; cfg: analysis
+    geometry from geometry(); gain_prior: ADU/e-.
+    Returns a dict of results. Always: ext, nrows, dead, no_overscan. Dead channels
+    add frac_hi and sigma (overscan noise) and stop there. Otherwise: resolved,
+    gain_held, gain_source ("fit", "prior" or "measured"), bad_cols, gain, sigma,
+    sigma_raw, row_end, lam, ovs_charged_frac(_fit), and for resolved CCDs lam01,
+    k_poisson, poisson_ratios; fallback/ped_active/fallback_note if the fallback was used.
+    """
+    # ---- split into active region and overscan, and subtract a rough per-row
+    #      baseline (median of the overscan, similar to what panaSKImg starts from)
+    act, x, xo, nrows, a0, no_ovs = split_active_overscan(data, cfg)
     early = slice(0, min(N_EARLY_ROWS, nrows))
     res = {"ext": ext, "nrows": nrows, "dead": False, "no_overscan": bool(no_ovs)}
 
@@ -871,39 +1056,19 @@ def analyse_extension(data, ext, cfg, args, gain_prior):
         res["gain_source"] = "measured" if gm["credible"] else "prior"
 
     # ---- bad columns; the minimum deviation is ~0.3 e- (resolved) or half the noise
-    if resolved:
-        min_dev = 0.3 * g
-    else:
-        min_dev = 0.5 * zero_peak_sigma(x[early].ravel())[1]
-    bad_cols, _ = find_bad_columns(x, min_dev)
-    res["bad_cols"] = [c + a0 for c in bad_cols]
-    good = np.ones(x.shape[1], bool)
-    good[bad_cols] = False
-    xg = x[:, good]
+    res["bad_cols"], xg = mask_bad_columns(x, g, resolved, early, a0)
 
     if resolved:
-        # ---- noise: intrinsic (rows aligned) and as the fit will see it (rows not
-        #      aligned: panaSKImg subtracts one overscan pedestal per row, which keeps
-        #      the row-to-row jitter)
-        xga = align_rows(xg, g)
-        off, sigma = comb_residual_sigma(clip_tails(xga[early].ravel()), g)
-        _, sigma_raw = comb_residual_sigma(clip_tails(xg[early].ravel()), g)
-        res.update(gain=g, sigma=sigma, sigma_raw=max(sigma_raw, sigma))
-        # ---- dark current per row and the rows to use
-        res.update(measure_dark_current(xga, xo, off, g, nrows, args))
+        # ---- noise (intrinsic and as the fit sees it), dark current per row and
+        #      the rows to use
+        res.update(measure_resolved(xg, xo, g, nrows, early, args))
         if no_ovs or fallback:             # pedestal from the active region: "overscan charge" checks do not apply
             res.update(ovs_charged_frac=0.0, ovs_charged_frac_fit=0.0)
     else:
         # ---- unresolved: width of the zero peak in the early rows (broadened by the
         #      unresolved charge) and read noise from the overscan (no dark current there)
-        _, sigma = zero_peak_sigma(xg[early].ravel())
         g = g if gm["credible"] else gain_prior
-        sig_ovs = robust_std(xo - np.median(xo, axis=1, keepdims=True))
-        sig_noise = min(sig_ovs, sigma) if sig_ovs > 0 else sigma
-        # mean charge per pixel in electrons (baseline from the overscan)
-        lam_e = max(float(np.median(xg)) / g, 0.0)
-        res.update(gain=g, sigma=sig_noise, sigma_raw=sigma, row_end=nrows, lam=lam_e,
-                   ovs_charged_frac=0.0, ovs_charged_frac_fit=0.0)
+        res.update(measure_unresolved(xg, xo, g, nrows, early))
     return res
 
 
@@ -915,7 +1080,14 @@ def fit_settings(r):
 
     All values are in ADU. The model fitted by panaSKImg is a sum of n_peaks
     Gaussians (width sigma, spacing gain, first at mu) weighted by a Poisson
-    distribution of mean lambda.
+    distribution of mean lambda. The limits below keep each parameter near its
+    measured value so the fit cannot wander to a wrong solution (e.g. twice the gain
+    with every other peak empty).
+
+    r: result dict of analyse_extension, with k_fit set by choose_peaks.
+    Returns a dict: n_peaks, mu_lo/mu_hi (zero-peak position limits), sigma_min/max,
+    gain_min/max, dc_max (lambda upper limit), x_min/x_max (fit window) and binning.
+    Three cases: --peaks 1 (zero peak only), resolved peaks, unresolved peaks.
     """
     g, s, s_raw = r["gain"], r["sigma"], r["sigma_raw"]
 
@@ -996,6 +1168,8 @@ def choose_peaks(results, args):
         extension gets non-Poisson peaks inside its window.
     --peaks all: previous behaviour, all peaks populated by the Poisson distribution.
     --peaks N: fit exactly N peaks (0e- ... (N-1)e-).
+    results: list of analyse_extension dicts (modified in place).
+    Returns k (int, or None for 'all' / no resolved extension).
     """
     resolved = [r for r in results if r["resolved"]]
     if args.peaks == "all":
@@ -1016,7 +1190,12 @@ def shared_fit_window(results, any_res):
     These three settings are global in panaSKImg. They are built from the resolved
     extensions if any, otherwise from those with a typical window. Extensions left
     out (e.g. a very noisy or very charged CCD) are fit in a truncated window and
-    flagged as unreliable. Returns (used extensions, outliers, x_lo, x_hi).
+    flagged as unreliable. Without resolved extensions an extension is an outlier if
+    its window span or x_max exceeds twice the median (typically a flooded CCD: so
+    much charge, e.g. from light, that the histogram is far wider than the others).
+    results: analyse_extension dicts with "fit" (fit_settings) set; any_res: True
+    if any extension is resolved.
+    Returns (used extensions, outliers, x_lo, x_hi), x_lo/x_hi in ADU.
     """
     F = {r["ext"]: r["fit"] for r in results}
     span = {k: v["x_max"] - v["x_min"] for k, v in F.items()}
@@ -1036,7 +1215,18 @@ def shared_fit_window(results, any_res):
 # Writing the JSON
 # =============================================================================
 def set_pedestal(j, results, no_overscan=False):
-    """PedestalSubtractionProcess settings (shared by all extensions)."""
+    """PedestalSubtractionProcess settings (shared by all extensions).
+
+    The pedestal is the electronic baseline (ADU of zero charge) that panaSKImg
+    subtracts row by row, normally estimated from the overscan. Three choices:
+    per-row median (default for resolved peaks, or of the active region when there
+    is no overscan), the lowest-peak finder (is_highDC, when the overscan of most
+    fit rows already holds >= 1 e-, so a median/Gaussian would sit on the 1 e- peak),
+    or the reference method (Gaussian fit by default) with Freedman binning (no
+    resolved peaks).
+    j: config dict, modified in place; results: analyse_extension dicts;
+    no_overscan: force the active-region median. Returns None.
+    """
     any_res = any(r["resolved"] for r in results)
     if no_overscan or any(r.get("no_overscan") or r.get("ped_active") for r in results):
         # windowed readout: per-row median of the active region (the zero-electron peak)
@@ -1071,7 +1261,16 @@ def set_pedestal(j, results, no_overscan=False):
 
 
 def set_dark_current_fit(j, results):
-    """FitDarkCurrentProcess settings. Returns the list of outlier extensions."""
+    """FitDarkCurrentProcess settings. Returns the list of outlier extensions.
+
+    Writes into j (in place): rows to mask (the reference rows plus every row from
+    row_end on, where the dark current is too high for the single-lambda model),
+    bad columns to mask, the per-extension limits from r["fit"], and the shared
+    window x_min/x_max/binning_size (shared_fit_window). Also adds "root" to
+    format_figures so fit_quality.py can read the fitted histogram. Raises n_peaks
+    where needed so the model covers the whole shared window.
+    results: analyse_extension dicts with "fit" set (n_peaks may be raised).
+    """
     dc = j["process"]["FitDarkCurrentProcess"]
     any_res = any(r["resolved"] for r in results)
 
@@ -1131,6 +1330,7 @@ def set_cluster_threshold(j, results, pix_e, seed_e):
     pedestal noise, which depends on the pedestal method and is inflated by rows
     where the pedestal fit failed. A numeric sigma is taken in electrons, so
     sigma = 1 e- turns n_pixel/n_seed into thresholds in electrons.
+    j: config dict (modified in place); pix_e, seed_e: thresholds in e-.
     """
     cf = j["process"].setdefault("ClusterFinder", {})
     cf["spr_threshold"] = {r["ext"]: [1.0, pix_e, seed_e] for r in results}
@@ -1142,6 +1342,8 @@ def skip_clusters(j, exts):
     A flooded CCD (hundreds of e-/pixel) is one giant cluster: ClusterFinder spends
     minutes on it and the result is meaningless. With these thresholds no pixel
     passes, so it finds no clusters there; the other extensions are unchanged.
+    j: config dict (modified in place); exts: extension names. Does nothing if
+    spr_threshold is not a per-extension dict.
     """
     cf = j["process"].setdefault("ClusterFinder", {})
     thr = cf.get("spr_threshold")
@@ -1157,6 +1359,9 @@ def set_plot_range(j, results, n_show):
     Needs the x_max_plot option in panaSKImg's FitDarkCurrentProcess: the histogram
     is drawn up to x_max_plot, the fit still uses [x_min, x_max] only, and the
     fitted model is continued as a dashed line beyond x_max.
+    j: config dict (modified in place, needs the DC fit settings already set);
+    results: analyse_extension dicts; n_show: --plot-peaks (e-). Only cosmetic: the
+    fit itself is unchanged. Not written if panaSKImg lacks the option.
     """
     dc = j["process"]["FitDarkCurrentProcess"]
     if any(r.get("k_fit") == 1 for r in results) and panaskimg_has_plot_range():
@@ -1177,6 +1382,10 @@ def write_measured(path, infile, results, outliers=()):
 
     fit_quality.py uses lam01 (dark current from the 0e-/1e- pixel counts, independent
     of panaSKImg's fit) as the reference for the dark-current bias.
+    Per extension: resolved, gain (ADU/e-), noise_e (e-), lam01 (e-/pix, None if not
+    resolved), k_poisson, k_fit, skip (unresolved outlier, e.g. flooded CCD).
+    path: file to write; infile: image path (its name without extensions is stored);
+    outliers: from set_dark_current_fit.
     """
     ext = {}
     for r in results:
@@ -1198,6 +1407,10 @@ def write_per_ext(base, results, outliers, args):
     lowest-peak finder on the others), fit window and binning. The number of fitted
     peaks is still the module-wide choice (choose_peaks): letting each CCD take more
     peaks put the dark current 5-8% above the 0e-/1e- estimate in tests.
+    base: reference config with geometry and extensions only (before any process
+    settings); outliers: from set_dark_current_fit on the whole module.
+    Writes args.output/<image>_EXTn.json and run_<image>.sh (write_run_script);
+    with --tune, tunes each CCD first (tune_per_ext).
     Returns [(ext, json path, resolved, skip)].
     """
     os.makedirs(args.output, exist_ok=True)
@@ -1237,16 +1450,24 @@ def write_per_ext(base, results, outliers, args):
 
 
 class _ThreadOutput:
-    """sys.stdout replacement: a thread can collect its own prints (tune_per_ext)."""
+    """sys.stdout replacement: a thread can collect its own prints (tune_per_ext).
+
+    The CCDs are tuned in parallel threads; without this their messages would be
+    interleaved. A thread that sets sys.stdout.local.buf to a StringIO gets its
+    prints there; all other output goes to the original stream.
+    """
 
     def __init__(self, orig):
+        """orig: the stream to fall back to (the real sys.stdout)."""
         self.orig, self.local = orig, threading.local()
 
     def write(self, text):
+        """Write text to this thread's buffer if it has one, else to the original stream."""
         buf = getattr(self.local, "buf", None)
         return (buf if buf is not None else self.orig).write(text)
 
     def flush(self):
+        """Flush the original stream (the per-thread buffers are in memory)."""
         self.orig.flush()
 
 
@@ -1256,12 +1477,15 @@ def tune_per_ext(configs, args):
     Per CCD: tune_pedestal (pedestal candidates ranked by total fit error) and
     refine_peaks (zero peak and window from panaSKImg's own histogram). The number of
     fitted peaks stays the module-wide choice (choose_peaks), as without --tune.
-    configs: [[r, json, skip]], updated in place.
+    configs: [[r, json, skip]], updated in place (item[1] becomes the tuned config).
+    Each CCD's messages are collected per thread and printed afterwards, CCD by CCD.
+    The panaSKImg runs go to <tune_dir or temp dir>/EXTn (temp dir removed afterwards).
     """
     import concurrent.futures as cf
     work_root, src = prepare_workdir(os.path.abspath(args.infile), args.tune_dir)
 
     def one(item):
+        """Tune one CCD (runs in a worker thread); returns the text it printed."""
         r, j, _ = item
         sys.stdout.local.buf = buf = io.StringIO()
         try:
@@ -1292,7 +1516,13 @@ def tune_per_ext(configs, args):
 
 
 def write_run_script(args, stem, written):
-    """run_<image>.sh: panaSKImg once per CCD, all in parallel; output folder = $1."""
+    """run_<image>.sh: panaSKImg once per CCD, all in parallel; output folder = $1.
+
+    stem: image name without extensions; written: [(ext, json path, resolved, skip)]
+    from write_per_ext. Skipped CCDs appear as commented-out commands. The script
+    lists the logs without "Finished correctly" at the end. Written to args.output
+    (made executable).
+    """
     infile = os.path.abspath(args.infile)
     note = ""
     if infile.endswith(".bz2"):
@@ -1330,6 +1560,12 @@ def write_run_script(args, stem, written):
 
 # =============================================================================
 # Optional tuning of the pedestal method with panaSKImg itself (--tune)
+#
+# The settings above come from this script's own reading of the pixels. --tune
+# checks them against panaSKImg's actual result: it runs panaSKImg (pedestal
+# subtraction + DC fit only) with a few candidate configs, ranks them by fit
+# quality (tune_pedestal), then re-places the fit window on panaSKImg's own
+# histogram (refine_peaks).
 # =============================================================================
 def parse_dcfit_log(text):
     """{ext: dict(mu, sigma, lam, gain)} (ADU) from a panaSKImg log, or None if it failed."""
@@ -1353,6 +1589,10 @@ def run_candidate(cfg, infile, workdir, name, panaskimg, save_hist=False):
     The config and log are written to workdir/<name>.json and workdir/<name>/log.txt.
     With save_hist, the fitted histogram of every extension is also saved as
     workdir/<name>/*_FitDarkCurrentProcess_sideEXTn.root (read by histogram_peaks).
+    cfg: config dict (not modified); infile: image panaSKImg reads; panaskimg: path
+    of the panaSKImg script (run with the current python).
+    Returns parse_dcfit_log's dict, with res[ext]["fit"] (fit_quality.read_side_fit:
+    parameters, errors, chi2) when save_hist; None if panaSKImg failed.
     """
     j = copy.deepcopy(cfg)
     j["process"]["sequence"] = "CompressSkipperProcess;PedestalSubtractionProcess;FitDarkCurrentProcess"
@@ -1381,7 +1621,12 @@ def run_candidate(cfg, infile, workdir, name, panaskimg, save_hist=False):
 
 
 def at_limit(r, dc, e):
-    """True if the fitted mu or sigma of extension e sits on its limit."""
+    """True if the fitted mu or sigma of extension e sits on its limit.
+
+    A parameter pinned at a limit means the fit wanted to go further: the minimum is
+    not inside the allowed range, and the quoted errors are not meaningful.
+    r: parsed fit result (parse_dcfit_log), dc: FitDarkCurrentProcess settings.
+    """
     return (abs(r["mu"] - dc["mu_min"][e]) < 1e-3 or abs(r["mu"] - dc["mu_max"][e]) < 1e-3
             or abs(r["sigma"] - dc["sigma_max"][e]) < 1e-3 * dc["sigma_max"][e])
 
@@ -1413,6 +1658,8 @@ def prepare_workdir(infile, keep_dir):
     """Working folder for the --tune runs and a panaSKImg-readable copy of the input.
 
     panaSKImg's file-name parser does not accept *.fits.bz2, so those are decompressed.
+    keep_dir: --tune-dir, or None for a new temporary folder (the caller removes it).
+    Returns (working folder, path of the image panaSKImg should read).
     """
     work = keep_dir or tempfile.mkdtemp(prefix="autoconfig_")
     os.makedirs(work, exist_ok=True)
@@ -1430,7 +1677,12 @@ def tune_pedestal(j, src, work, results, panaskimg):
     Candidates: the settings chosen by this script ("chosen"), the median of the
     overscan ("median": lands exactly on a peak when peaks are sharp, so a wrong row
     is off by a whole electron and the comb stays aligned), and the other of
-    Gaussian fit / lowest-peak finder. Returns (config, name of the chosen candidate).
+    Gaussian fit / lowest-peak finder. Each is run in panaSKImg (run_candidate) and
+    ranked by score(); a ranking table is printed.
+    j: config dict (not modified); src: image panaSKImg reads; work: folder for the
+    runs; results: analyse_extension dicts; panaskimg: path of the panaSKImg script.
+    Returns (config, name of the chosen candidate), or (j, None) if no extension is
+    resolved.
     """
     resolved = [r["ext"] for r in results if r["resolved"]]
     if not resolved:
@@ -1476,7 +1728,11 @@ def tune_pedestal(j, src, work, results, panaskimg):
 
 
 def histogram_peaks(*a, **k):
-    """Thread-safe wrapper (ROOT file access) of _histogram_peaks."""
+    """Thread-safe wrapper (ROOT file access) of _histogram_peaks.
+
+    ROOT is not thread-safe and tune_per_ext runs CCDs in parallel threads, so file
+    access is serialised with fit_quality's ROOT_LOCK. Same arguments and return value.
+    """
     with FQ.ROOT_LOCK:
         return _histogram_peaks(*a, **k)
 
@@ -1492,6 +1748,9 @@ def _histogram_peaks(rootfile, ext, g, lam_expected, max_peaks, tol):
     ...] and is rejected, while a real zero followed by taller peaks (lambda > 1) is
     kept. Then the pixels in every peak above zero are counted and the same Poisson
     test as poisson_peaks() selects the number of peaks.
+    rootfile: panaSKImg's *_FitDarkCurrentProcess_sideEXTn.root (histogram "pcd");
+    ext: extension name (not used in the lookup); g: gain (ADU/e-);
+    lam_expected: e-/pix; max_peaks, tol: as for poisson_peaks.
     Returns dict(zero=position in ADU, k, ratios, lam01).
     """
     import ROOT                       # only needed for --tune; available in the damic env
@@ -1503,6 +1762,7 @@ def _histogram_peaks(rootfile, ext, g, lam_expected, max_peaks, tol):
     f.Close()
 
     def peak_count(pos):
+        """Pixels in the peak at pos (ADU): histogram content within +-0.4 gain."""
         return float(y[np.abs(x - pos) < 0.4 * g].sum())
 
     # comb position from the count-weighted phase, then all peak positions in range
@@ -1519,6 +1779,10 @@ def _histogram_peaks(rootfile, ext, g, lam_expected, max_peaks, tol):
     prob /= prob.sum()
 
     def zero_score(z):
+        """How well z works as the zero peak: minus the KL divergence (higher = better).
+
+        -inf if there are no pixels at z.
+        """
         c = np.array([peak_count(z + n * g) for n in range(m)])
         if c[0] <= 0:
             return -math.inf
@@ -1539,37 +1803,13 @@ def _histogram_peaks(rootfile, ext, g, lam_expected, max_peaks, tol):
     return dict(zero=zero, k=k, ratios=ratios, lam01=lam01)
 
 
-def refine_peaks(j, src, work, results, args):
-    """Iterative refinement of the DC-fit window with panaSKImg itself (part of --tune).
+def locate_histogram_peaks(resolved, work, args):
+    """Step 2 of refine_peaks: zero peak and Poisson-like peaks in the scan histograms.
 
-    1. Run panaSKImg with a wide window (up to --max-peaks peaks) and save the histogram.
-    2. In that histogram, per extension: locate the zero-electron peak (tallest peak)
-       and count which peaks follow a single Poisson (histogram_peaks).
-    3. Centre the mu limits on the zero peak and set the window to the chosen number
-       of peaks (--peaks auto: smallest over the resolved extensions, since the
-       window is shared).
-    4. Run the final config once more to check the fit converged.
-    Returns the refined config (unchanged if ROOT is not available).
+    resolved: resolved analyse_extension dicts; work: folder holding the
+    "peaks_scan" run. Prints one line per extension.
+    Returns {ext: histogram_peaks result} for the extensions with a saved histogram.
     """
-    resolved = [r for r in results if r["resolved"]]
-    if not resolved:
-        return j
-    try:
-        import ROOT  # noqa: F401
-    except ImportError:
-        print("peak refinement skipped: PyROOT not available in this python")
-        return j
-
-    # ---- 1. wide scan
-    gmax = max(r["gain"] for r in resolved)
-    scan = copy.deepcopy(j)
-    dc = scan["process"]["FitDarkCurrentProcess"]
-    dc["x_min"] = round(-2.5 * gmax, 2)
-    dc["x_max"] = round((args.max_peaks + 0.5) * gmax, 2)
-    dc["n_peaks"] = {k: min(args.max_peaks + 3, 20) for k in dc["n_peaks"]}
-    run_candidate(scan, src, work, "peaks_scan", args.panaskimg, save_hist=True)
-
-    # ---- 2. zero peak and Poisson-like peaks per extension
     print("peak refinement (panaSKImg histogram; data/Poisson for peaks 0,1,2..):")
     found = {}
     for r in resolved:
@@ -1581,10 +1821,18 @@ def refine_peaks(j, src, work, results, args):
         found[r["ext"]] = hp
         print(f"  {r['ext']}: zero peak at {hp['zero']:+.2f} ADU, "
               + " ".join(f"{v:.2f}" for v in hp["ratios"][:8]) + f"  -> {hp['k']} Poisson-like peaks")
-    if not found:
-        return j
+    return found
 
-    # ---- 3. final window
+
+def apply_peak_window(j, resolved, found, args):
+    """Step 3 of refine_peaks: move the mu limits and fit window onto the found peaks.
+
+    The mu limits keep their width but are centred on the zero peak found in the
+    histogram; x_min is placed below it, and (unless --peaks all) x_max halfway
+    between the last fitted peak and the next one. Sets r["k_fit"] of the refined
+    extensions. j: config dict (not modified); found: from locate_histogram_peaks.
+    Prints the chosen window. Returns the refined copy of j.
+    """
     if args.peaks == "auto":
         k = min(hp["k"] for hp in found.values())
     elif args.peaks == "all":
@@ -1610,6 +1858,53 @@ def refine_peaks(j, src, work, results, args):
     if hi:
         dc["x_max"] = round(max(hi), 2)
     print(f"  -> fitting {k if k else 'all'} peaks, window [{dc['x_min']}, {dc['x_max']}] ADU")
+    return final
+
+
+def refine_peaks(j, src, work, results, args):
+    """Iterative refinement of the DC-fit window with panaSKImg itself (part of --tune).
+
+    Why: this script estimates the zero-peak position and the useful number of peaks
+    from its own rough pedestal; panaSKImg's pedestal can differ (e.g. land one
+    electron off in many rows), so the window is re-placed on panaSKImg's histogram.
+    1. Run panaSKImg with a wide window (up to --max-peaks peaks) and save the histogram.
+    2. In that histogram, per extension: locate the zero-electron peak (Poisson shape
+       test, see histogram_peaks) and count which peaks follow a single Poisson
+       (locate_histogram_peaks).
+    3. Centre the mu limits on the zero peak and set the window to the chosen number
+       of peaks (--peaks auto: smallest over the resolved extensions, since the
+       window is shared) (apply_peak_window).
+    4. Run the final config once more to check the fit converged (prints the quality).
+    src, work: image and working folder (prepare_workdir); results: analyse_extension
+    dicts (k_fit may be updated).
+    Returns the refined config (unchanged if ROOT is not available).
+    """
+    resolved = [r for r in results if r["resolved"]]
+    if not resolved:
+        return j
+    try:
+        import ROOT  # noqa: F401
+    except ImportError:
+        print("peak refinement skipped: PyROOT not available in this python")
+        return j
+
+    # ---- 1. wide scan
+    gmax = max(r["gain"] for r in resolved)
+    scan = copy.deepcopy(j)
+    dc = scan["process"]["FitDarkCurrentProcess"]
+    dc["x_min"] = round(-2.5 * gmax, 2)
+    dc["x_max"] = round((args.max_peaks + 0.5) * gmax, 2)
+    dc["n_peaks"] = {k: min(args.max_peaks + 3, 20) for k in dc["n_peaks"]}
+    run_candidate(scan, src, work, "peaks_scan", args.panaskimg, save_hist=True)
+
+    # ---- 2. zero peak and Poisson-like peaks per extension
+    found = locate_histogram_peaks(resolved, work, args)
+    if not found:
+        return j
+
+    # ---- 3. final window
+    final = apply_peak_window(j, resolved, found, args)
+    dc = final["process"]["FitDarkCurrentProcess"]
 
     # ---- 4. check run
     res = run_candidate(final, src, work, "peaks_final", args.panaskimg, save_hist=True)
@@ -1626,6 +1921,15 @@ def refine_peaks(j, src, work, results, args):
 # Main
 # =============================================================================
 def parse_args():
+    """Command-line options (see -h); validates --peaks, --cluster-threshold-e, panaSKImg.
+
+    Options are grouped as in the help: gain (prior and search range, when peaks
+    count as resolved), dark-current fit (rows and peaks used), geometry and
+    channels, clusters, tuning (--tune) and one JSON per extension (--per-ext).
+    Exits with a usage error for an invalid --peaks, PIXEL_E/SEED_E not satisfying
+    0 < PIXEL_E <= SEED_E, or --tune/--per-ext without a panaSKImg script.
+    Returns the argparse namespace.
+    """
     ap = argparse.ArgumentParser(description="Generate a panaSKImg JSON tuned to a raw skipper image.")
     ap.add_argument("infile", help="raw (skip-averaged) FITS image (.fits or .fits.bz2)")
     ap.add_argument("-o", "--output", required=True, help="output JSON file")
@@ -1660,6 +1964,8 @@ def parse_args():
     c.add_argument("--keep-dead", action="store_true",
                    help="keep channels without a CCD in 'extensions' (default: remove them)")
 
+    # more "dark-current fit" options (group f), defined after group c: -h lists them
+    # under their group, while the usage line follows the order of definition
     f.add_argument("--no-fallback", action="store_true",
                    help="do not try the held-gain 0e-/1e- fit for CCDs whose peaks the comb search "
                         "could not resolve (see held_gain_fallback)")
@@ -1727,6 +2033,15 @@ def geometry(h0, hdul, img, args):
     panaSKImg takes ccd_cols in UNBINNED pixels and computes
     n_cols_overscan = int(ncols - ccd_cols/NSBIN). Returns (ccd_cols for the JSON,
     analysis settings for analyse_extension, ncol, nsbin).
+
+    A raw row holds prescan columns, the active (real CCD) columns and then the
+    overscan. Priority: --ccd-cols, then the header (PHYSCOL - NCOLPRE + PRESCAN),
+    then the reference JSON. A windowed readout (only part of the CCD read) has no
+    overscan; then ccd_cols covers the whole row.
+    h0: primary FITS header; hdul: open FITS file; img: the reference's
+    input.image block; args: uses --ccd-cols. The analysis settings (dict) are in
+    BINNED columns: id_row_start, n_cols_prescan, ccd_cols (first overscan
+    column), no_overscan.
     """
     ncol = int(h0.get("NCOL", hdul[1].header["NAXIS1"]))
     nsbin = int(h0.get("NSBIN", 1)) or 1
@@ -1755,7 +2070,13 @@ def geometry(h0, hdul, img, args):
 
 
 def gain_priors(j, names, args):
-    """Gain prior per extension: --gain if given, else the reference-JSON CalibrationProcess gain."""
+    """Gain prior per extension: --gain if given, else the reference-JSON CalibrationProcess gain.
+
+    The prior is used to check the measured gain (--prior-tol) and as the gain when
+    the peaks are not resolved. --gain is either one number for all extensions or
+    "EXT1=1.32,EXT2=1.30". j: reference config; names: ["EXT1", ...].
+    Returns {ext name: gain in ADU/e-} (1.0 for extensions missing in the reference).
+    """
     if args.gain:
         if "=" in args.gain:
             return {k: float(v) for k, v in (kv.split("=") for kv in args.gain.split(","))}
@@ -1767,7 +2088,15 @@ def gain_priors(j, names, args):
 
 
 def print_report(results, outliers, dc, output):
-    """Per-extension summary of what was measured and configured."""
+    """Per-extension summary of what was measured and configured.
+
+    Columns: resolved, gain (ADU/e-), sigma (intrinsic noise, ADU), sig_row (noise
+    as the fit sees it, ADU), sig[e] (noise in e-), lam[e] (dark current, e-/pix),
+    rows (rows used in the fit), ovs>=1e (fraction of fit rows with a charged
+    overscan), badcols, npk (model peaks). Then warnings for outlier CCDs.
+    dc: the FitDarkCurrentProcess settings, or None (--per-ext: no shared window);
+    output: printed as the destination.
+    """
     print(f"{'ext':5} {'resolved':8} {'gain':>6} {'sigma':>7} {'sig_row':>7} {'sig[e]':>7} {'lam[e]':>7} "
           f"{'rows':>5} {'ovs>=1e':>7} {'badcols':>7} {'npk':>4}")
     for r in results:
@@ -1798,23 +2127,15 @@ def print_report(results, outliers, dc, output):
         print(f"fit window [{dc['x_min']}, {dc['x_max']}] ADU, bin {dc['binning_size']} ADU -> {output}")
 
 
-def main():
-    args = parse_args()
+def analyse_all_extensions(hdul, img, j, cfg, args):
+    """Run analyse_extension on every extension listed in the reference.
 
-    j = json.load(open(args.reference)) if args.reference else json.loads(REFERENCE_JSON)
-    img = j["input"]["image"]
-    hdul = fits.open(args.infile)
-    h0 = hdul[0].header
-    nskips = h0.get("NDCM", h0.get("NSKIPS", "?"))
-
-    # ---- geometry
-    ccd_cols, cfg, ncol, nsbin = geometry(h0, hdul, img, args)
-    img["ccd_cols"] = ccd_cols
-    print(f"{os.path.basename(args.infile)}: {nskips} skips, {ncol} cols (binning {nsbin}), active cols "
-          f"{cfg['n_cols_prescan']}-{cfg['ccd_cols'] - 1}, overscan {cfg['ccd_cols']}-{ncol - 1} "
-          f"(ccd_cols={ccd_cols})")
-
-    # ---- analyse every extension
+    Channels without a CCD are reported and removed from img["extensions"] (in
+    place). Exits if no extension has a working CCD.
+    hdul: open FITS file; img: j["input"]["image"]; j: config (for the gain priors);
+    cfg: analysis geometry from geometry().
+    Returns the result dicts of the working extensions.
+    """
     exts = img.get("extensions", [1])
     names = [f"EXT{e}" for e in exts]
     gp = gain_priors(j, names, args)
@@ -1834,6 +2155,63 @@ def main():
         sys.exit("No extension shows a working CCD; nothing to configure.")
     if dead:
         img["extensions"] = [e for e in exts if e not in [d[0] for d in dead]]
+    return results
+
+
+def write_single_json(j, results, outliers, args):
+    """Finish and write the single JSON (mode without --per-ext) and print the summary.
+
+    Adds the plot range and the ClusterFinder skip for unresolved outlier CCDs
+    (unless --cluster-all), writes args.output and <output>_measured.json, then
+    prints print_report and notes on ClusterFinder and the plot range.
+    """
+    set_plot_range(j, results, args.plot_peaks)
+    no_cls = [] if args.cluster_all else [e for e in outliers if not any(r["ext"] == e and r["resolved"] for r in results)]
+    skip_clusters(j, no_cls)
+
+    os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
+    with open(args.output, "w") as fh:
+        json.dump(j, fh, indent=4)
+    write_measured(re.sub(r"\.json$", "", args.output) + "_measured.json", args.infile, results, outliers)
+
+    print_report(results, outliers, j["process"]["FitDarkCurrentProcess"], args.output)
+    if args.cluster_threshold_e is not None:
+        pix, seed = args.cluster_threshold_e
+        print(f"ClusterFinder: pixels > {pix:g} e-, seed > {seed:g} e- (spr_threshold sigma = 1 e-)")
+    if no_cls:
+        print(f"ClusterFinder: no clusters searched in {', '.join(no_cls)} (unresolved outlier; "
+              f"use --cluster-all to keep it)")
+    if "x_max_plot" in j["process"]["FitDarkCurrentProcess"]:
+        print(f"DC fit plot drawn up to {j['process']['FitDarkCurrentProcess']['x_max_plot']} ADU "
+              f"(about {args.plot_peaks} e-), fit only up to x_max")
+
+
+def main():
+    """Command-line entry point: measure the image and write the config(s).
+
+    Order: load the reference JSON (--reference or the built-in one); geometry from
+    the header; analyse every extension; choose the number of peaks and the per-CCD
+    fit settings; set pedestal, DC fit and (optionally) ClusterFinder settings;
+    optionally --tune with panaSKImg; then write either one JSON (+ _measured.json)
+    or, with --per-ext, one JSON per CCD, a run script and _measured.json.
+    """
+    args = parse_args()
+
+    j = json.load(open(args.reference)) if args.reference else json.loads(REFERENCE_JSON)
+    img = j["input"]["image"]
+    hdul = fits.open(args.infile)
+    h0 = hdul[0].header
+    nskips = h0.get("NDCM", h0.get("NSKIPS", "?"))
+
+    # ---- geometry
+    ccd_cols, cfg, ncol, nsbin = geometry(h0, hdul, img, args)
+    img["ccd_cols"] = ccd_cols
+    print(f"{os.path.basename(args.infile)}: {nskips} skips, {ncol} cols (binning {nsbin}), active cols "
+          f"{cfg['n_cols_prescan']}-{cfg['ccd_cols'] - 1}, overscan {cfg['ccd_cols']}-{ncol - 1} "
+          f"(ccd_cols={ccd_cols})")
+
+    # ---- analyse every extension (channels without a CCD are dropped)
+    results = analyse_all_extensions(hdul, img, j, cfg, args)
 
     # reference + geometry + extensions, before any process settings (for --per-ext)
     base = copy.deepcopy(j)
@@ -1861,25 +2239,7 @@ def main():
         stem = os.path.basename(args.infile).split(".")[0]
         write_measured(os.path.join(args.output, f"{stem}_measured.json"), args.infile, results, outliers)
         return
-    set_plot_range(j, results, args.plot_peaks)
-    no_cls = [] if args.cluster_all else [e for e in outliers if not any(r["ext"] == e and r["resolved"] for r in results)]
-    skip_clusters(j, no_cls)
-
-    os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
-    with open(args.output, "w") as fh:
-        json.dump(j, fh, indent=4)
-    write_measured(re.sub(r"\.json$", "", args.output) + "_measured.json", args.infile, results, outliers)
-
-    print_report(results, outliers, j["process"]["FitDarkCurrentProcess"], args.output)
-    if args.cluster_threshold_e is not None:
-        pix, seed = args.cluster_threshold_e
-        print(f"ClusterFinder: pixels > {pix:g} e-, seed > {seed:g} e- (spr_threshold sigma = 1 e-)")
-    if no_cls:
-        print(f"ClusterFinder: no clusters searched in {', '.join(no_cls)} (unresolved outlier; "
-              f"use --cluster-all to keep it)")
-    if "x_max_plot" in j["process"]["FitDarkCurrentProcess"]:
-        print(f"DC fit plot drawn up to {j['process']['FitDarkCurrentProcess']['x_max_plot']} ADU "
-              f"(about {args.plot_peaks} e-), fit only up to x_max")
+    write_single_json(j, results, outliers, args)
 
 
 if __name__ == "__main__":

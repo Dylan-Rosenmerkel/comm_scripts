@@ -18,6 +18,18 @@ As a script, it reports every fit in a panaSKImg output folder (needs the fits s
 ROOT files: "format_figures": ["pdf", "root"] in FitDarkCurrentProcess, and --save-plots):
 
     python fit_quality.py <panaSKImg output folder> [--ref <folder with *_measured.json>] [--csv out.csv]
+
+Place in the pipeline: a library for autoconfig_panaSKImg.py (--tune scoring),
+gain_dc_split.py (which gain to keep) and bin/run_WADERs (fit_quality.csv, via SIDE_RE and
+read_side_fit), and a stand-alone report on any panaSKImg output folder.
+
+How to read this file:
+  read_side_fit  fit parameters, chi2 and ndf from panaSKImg's stored fit (ROOT file)
+  quality        the numbers above -> gain, noise, dark current with raw/scaled errors,
+                 bias against lam01, total error and score
+  fmt, load_refs one-line summary; reference dark currents from *_measured.json
+  main           command line
+Units: gain in ADU/e-, noise in e-, dark current (DC) in e-/pix (per pixel and image).
 """
 import argparse
 import csv
@@ -32,17 +44,25 @@ import threading
 # in these scripts goes through this lock (also used by autoconfig_panaSKImg.py)
 ROOT_LOCK = threading.RLock()
 
+# Parameters of panaSKImg's fit function, in its order: normalisation, position of the
+# 0e- peak [ADU], peak width (readout noise) [ADU], Poisson mean lambda [e-/pix], gain [ADU/e-]
 PARAMS = ["norm", "mu", "sigma", "lam", "gain"]
+# file name of a stored fit -> (image stem, "EXTn")
 SIDE_RE = re.compile(r"(.*)_FitDarkCurrentProcess_side(EXT\d+)\.root$")
 
 
 def read_side_fit(path, ext):
-    """Fit parameters (value, error), chi2 and ndf from a *_FitDarkCurrentProcess_sideEXTn.root."""
+    """Fit parameters (value, error), chi2 and ndf from a *_FitDarkCurrentProcess_sideEXTn.root.
+
+    ext: "EXTn". Returns {param: (value, error) for PARAMS, "chi2": float, "ndf": int}, or
+    None if the file cannot be opened or holds no fit. Thread-safe (ROOT_LOCK).
+    """
     with ROOT_LOCK:
         return _read_side_fit(path, ext)
 
 
 def _read_side_fit(path, ext):
+    """read_side_fit() without the lock: histogram "pcd" and its function "fitfunc_<ext>"."""
     import ROOT
     f = ROOT.TFile.Open(path)
     if not f or f.IsZombie():
@@ -59,7 +79,18 @@ def _read_side_fit(path, ext):
 
 
 def quality(fit, lam_ref=None):
-    """Errors of gain [ADU/e-], noise [e-] and dark current [e-/pix], raw and scaled."""
+    """Errors of gain [ADU/e-], noise [e-] and dark current [e-/pix], raw and scaled.
+
+    fit: dict from read_side_fit(); lam_ref: independent dark current lam01 [e-/pix] or None.
+    The fit is in ADU, so noise = sigma / gain and dark current = lambda / gain, with the
+    relative errors added in quadrature. Each error is also given scaled by
+    k = sqrt(max(chi2/ndf, 1)) (keys *_err_s): a chi2/ndf above 1 means the model misses
+    part of the data, and scaling by k is the usual way to make the errors account for it.
+    dc_bias = dc - lam_ref is the systematic shift of the fitted dark current (e.g. from
+    non-Poisson charge in the higher peaks); dc_total = sqrt((k * dc_err)^2 + bias^2), or
+    k * dc_err without a reference. score: see the module docstring.
+    Returns a flat dict (also the CSV columns of main()).
+    """
     g, eg = fit["gain"]
     s, es = fit["sigma"]
     lam, el = fit["lam"]
@@ -103,6 +134,8 @@ def load_refs(folders):
 
 
 def main():
+    """Command line: print fmt() for every stored fit in the folder and write the CSV
+    (one row per image and extension, the columns of quality())."""
     ap = argparse.ArgumentParser(description="Report chi2/ndf, scaled errors and dark-current bias "
                                              "of panaSKImg dark-current fits.")
     ap.add_argument("folder", help="panaSKImg output folder (with *_FitDarkCurrentProcess_sideEXTn.root)")

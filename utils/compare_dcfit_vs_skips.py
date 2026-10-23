@@ -10,6 +10,23 @@ groups them by extension (EXT1..EXTn), sorts each group by the number of
 skips, and writes one grid PDF per extension, e.g. FitDarkCurrentProcess_DCfit_EXT1_vs_skips.pdf.
 Pages are merged as vector graphics, so plots stay sharp when zoomed.
 
+Typical use: the same image type analysed with run_WADERs at several numbers of skips (one
+subfolder per skip count), to see by eye how the dark-current fit (or the baseline/noise
+plots, --plot) changes with the number of skips.
+
+Usage
+    python compare_dcfit_vs_skips.py ANALYSIS_DIR -o OUTDIR [--ncols 4] [--plot NAME]
+Input:  ANALYSIS_DIR/*/<image>_<plot>_EXT<n>.pdf (number of skips from the image name
+        <rows>x<cols>x<skips>, else from a purely numeric subfolder name)
+Output: OUTDIR/<plot>_EXT<n>_vs_skips.pdf, one single-page grid per extension, each plot
+        labelled "<N> skips"
+
+How to read this file
+    find_plots   collect and group the PDFs by extension and number of skips
+    label_page   a blank PDF page carrying only the text labels
+    make_grid    place the plots on one large page and add the labels
+    main         command line, one grid per extension
+
 Requires: pypdf  (pip install pypdf)
 """
 import argparse
@@ -113,6 +130,8 @@ def make_grid(entries, outfile, ncols, label_h=24.0, gap=6.0):
 
 
 def main():
+    """Command line: find the plots in ANALYSIS_DIR, write one grid PDF per extension (EXT1, EXT2, ...)
+    into --output and print what went into each. Exits if no matching PDF is found."""
     ap = argparse.ArgumentParser(
         description="Tile panaSKImg per-extension plots from analysis/<skips>/ subfolders "
                     "into one PDF per extension, ordered by number of skips.")
