@@ -1,3 +1,7 @@
 __pycache__/
 *.pyc
 .DS_Store
+
+# level-1 (per-skip) raw data and skip_noise_L1.py output
+*.RJ45ADCDATA*
+L1_noise_*/

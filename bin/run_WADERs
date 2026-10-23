@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
 """run_WADERs: one command from raw skipper-CCD image(s) to panaSKImg (WADERs) results.
 
-    run_WADERs <image.fz | image.fits | image.fits.bz2 | list.txt> [-o PARENT] [-j N]
+    run_WADERs <image.fz | image.fits | image.fits.bz2 | list.txt> [-o PARENT] [-j N] [options]
+    run_WADERs -h        the options;   run_WADERs -h -v   the full guide (what each step does)
 
-For every image it
-  1. makes one panaSKImg JSON per CCD with gain_dc_split.py (autoconfig settings per
-     CCD, gain from a many-peak fit where that is more precise, dark current from the
-     Poisson-like 0e-/1e- peaks),
-  2. runs panaSKImg once per CCD (--ext N), in parallel,
-  3. collects the results.
+What happens, per image (each step is one function below)
+---------------------------------------------------------
+  check_request          inputs exist, output folder free, option combinations valid (standard library only)
+  ensure_environment     if this python lacks ROOT/pysimdamicm, re-run inside the conda environment with panaSKImg
+  step1_configure        one panaSKImg JSON per CCD (gain_dc_split.py + autoconfig_panaSKImg.py): settings measured
+                         from the raw pixels; the gain from a many-peak fit where that is more precise, the dark
+                         current from the Poisson-like 0e-/1e- peaks
+  step2_run_panaskimg    panaSKImg once per CCD (--ext N), in parallel
+  step3_collect_root_files   cluster files -> root/, dark-current fits -> root/dc_fits/
+  step3b_gain_correction --gain-correction: gain vs charge per pixel g(n) measured from the images, corrected
+                         cluster files (gain_vs_charge.py)
+  step3c_composite       --composite: MakeComposite_Fe55_Clusters_Extensions.cc on the cluster files
+  step4_summary          fit_quality.csv and summary.txt (gain, noise, dark current per CCD with fit errors)
 
 Output: WADERs_analysis_<run name>/   (run name = image name, or the .txt name for a list)
     *.pdf, *_waders.fits.bz2   panaSKImg plots and processed images
@@ -21,6 +29,7 @@ Output: WADERs_analysis_<run name>/   (run name = image name, or the .txt name f
     root/dc_fits/              the dark-current fits (histogram + fitted function) as ROOT
     logs/                      panaSKImg and autoconfig logs
     summary.txt, fit_quality.csv   gain, noise, dark current per CCD with fit errors
+    gain_vs_charge/, root_gaincorr*/   with --gain-correction;   composite*/   with --composite
 
 A list .txt has one image path per line (relative paths are relative to the .txt;
 empty lines and lines starting with # are ignored).
@@ -31,9 +40,14 @@ that has panaSKImg installed and re-runs itself inside it with "conda run" (noth
 activated in your shell, nothing stays active afterwards). Choose the environment with
 --env NAME (or $WADERS_ENV); give panaSKImg with --panaskimg (or $PANASKIMG).
 
+How to read this file: Environment (finding conda) -> Inputs (image lists) -> --composite helpers (module names)
+-> the help texts and the argument parser -> the --gain-correction both comparison -> the pipeline steps, one
+function each, and main(), which calls them in order.
+
 The scripts it uses (gain_dc_split.py, autoconfig_panaSKImg.py, fit_quality.py,
-gain_vs_charge.py) live in comm_scripts/src; keep the bin/ and src/ folders together. Nothing else on disk is needed: the reference
-JSON is built into autoconfig_panaSKImg.py.
+gain_vs_charge.py) live in comm_scripts/src; keep the bin/ and src/ folders together. Nothing else on disk is
+needed: the reference JSON is built into autoconfig_panaSKImg.py. See docs/PIPELINE_GUIDE.md for the physics of
+each step.
 """
 # Only the standard library at module level: this part has to run in any python, before
 # the environment with ROOT/pysimdamicm is found.
@@ -43,10 +57,12 @@ import glob
 import importlib.util
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import time
+from dataclasses import dataclass, field
 
 SCRIPT_PATH = os.path.realpath(__file__)
 SCRIPT_DIR = os.path.dirname(SCRIPT_PATH)
@@ -147,6 +163,36 @@ def read_inputs(path):
 
 
 # =============================================================================
+# --composite (MakeComposite_Fe55_Clusters_Extensions.cc)
+# =============================================================================
+DEFAULT_COMPOSITE_MACRO = os.path.expanduser(
+    "~/Documents/LSM_Module_Testing_Analysis/src/MakeComposite_Fe55_Clusters_Extensions.cc")
+# ACM ids in the order of the modules in a data folder named ..._DMa_DMb_DMc_... (FT1, FT2, FT4)
+ACM_ORDER = ("110", "109", "106")
+
+
+def parse_modules(items):
+    """{ACM id: module name} from --module ACM=NAME arguments."""
+    modules = {}
+    for it in items:
+        acm, sep, name = it.partition("=")
+        if not sep or not acm.strip() or not name.strip():
+            sys.exit(f"run_WADERs: --module {it}: expected ACM=NAME, e.g. 109=DM02")
+        modules[acm.strip()] = name.strip()
+    return modules
+
+
+def module_name(acm, src, modules):
+    """Module name for an image: --module, else the DMa_DMb_DMc folder name, else ACM<id>."""
+    if acm in modules:
+        return modules[acm], "--module"
+    m = re.search(r"(DM\d+)_(DM\d+)_(DM\d+)", os.path.dirname(src))
+    if m and acm in ACM_ORDER:
+        return m.group(ACM_ORDER.index(acm) + 1), "folder name"
+    return (f"ACM{acm}" if acm else "DMXX"), "no module found"
+
+
+# =============================================================================
 # Main
 # =============================================================================
 HELP_DESCRIPTION = """\
@@ -176,6 +222,7 @@ output (WADERs_analysis_<run name>/):
   json/<image>/final/          the JSONs that were run, one per CCD
   json/<image>/gain/, dc/      intermediate JSONs (many-peak gain fit, 0e-/1e- fit)
   logs/                        panaSKImg and autoconfig logs
+  composite/                   with --composite: MakeComposite plots and its input lists
 
 what it does, per image (gain_dc_split.py --per-ext, always on):
   1. autoconfig measures every CCD from the raw pixels and writes two JSONs per CCD:
@@ -217,7 +264,36 @@ what it does, per image (gain_dc_split.py --per-ext, always on):
   all images of a CCD; this removes image-to-image scatter of the 0e-/1e- gain fits);
   --gain-anchor fit keeps each image's fitted gain and corrects only the charge
   dependence. CCDs whose curve is not trustworthy (measured to < 400 e-, or rising) are
-  copied unchanged.
+  copied unchanged. Each curve also gets <name>_nonlinearity.png in gain_vs_charge/:
+  measured charge minus peak number against measured charge, A(n)/g(0) - n, with the
+  curve's low-charge gain g(0) as reference (points from the measured local gains, the
+  model, and a quadratic fit). Several images of a module are combined by adding each image's comb
+  power (the combs of different images need not line up).
+  --gain-model interpolated (default) | broken | linear: the form of g(n): monotone
+  interpolation through the measured points, two straight lines with a fitted knot, or
+  one straight line (see gain_vs_charge.py; the straight line does not follow the measured
+  curvature, the other two do).
+  --gain-correction per-image: every image gets its own curve, measured from that image
+  alone (gain_vs_charge/image_<image>_gain_vs_charge.json), applied to its own clusters
+  -> root_gaincorr_per_image/ (a CCD whose own comb is not usable, e.g. a noisy image,
+  gets the module curve; noted in summary.txt). --gain-correction both: pooled and per-image, and
+  gain_vs_charge/per_image_vs_pooled.csv compares them per image and CCD (curve a, drop
+  at 1000 e-, cluster energies per-image/pooled, front-side Fe-55 K-alpha, sigma_xy < 1).
+
+--composite (optional): after the panaSKImg runs, MakeComposite_Fe55_Clusters_Extensions.cc
+  (front/back composite clusters, Fe-55 Kalpha/Kbeta fits, CTI) is run with ROOT on the
+  cluster files, once per image type and module (the gain-corrected files from
+  root_gaincorr/ if --gain-correction is on, else root/; with --gain-correction
+  both also root_gaincorr_per_image/ -> composite_per_image/):
+    composite/lists/Image_<N>_<module>_list.txt          the file list given to the macro
+    composite/Fe_55_Analysis_Plots/<module>/Image_<N>_<module>_list/
+                                     ext1..ext4/ per-CCD plots, compare/ 2x2 comparisons
+    logs/composite_Image_<N>_<module>.log                ROOT output
+  The image type N comes from "Image_<N>" in the image name (--image-number N to set it);
+  it selects the CCD geometry in the macro (4, 5, 6, 7, 8, 11). The module comes from
+  --module ACM=NAME, else from a data folder named ..._DMa_DMb_DMc_... (ACM 110 -> DMa,
+  109 -> DMb, 106 -> DMc), else ACM<id>. Macro: --composite-macro, $MAKECOMPOSITE_MACRO,
+  else ~/Documents/LSM_Module_Testing_Analysis/src/MakeComposite_Fe55_Clusters_Extensions.cc.
 
 settings you can pass with --autoconfig-args "..." (all inside one quoted string):
   --cluster-threshold-e PIX SEED  cluster thresholds in e- (pixel > PIX, seed > SEED);
@@ -244,8 +320,12 @@ examples:
   run_WADERs my_images.txt --no-clusters        noise/gain/dark current only, fast
   run_WADERs image.fz --tune                     pedestal and window checked per CCD
   run_WADERs images.txt --gain-correction        also gain-corrected cluster files
+  run_WADERs images.txt --gain-correction both   per-image and per-module curves, compared
+  run_WADERs images.txt --composite --gain-correction --module 109=DM02
+                                                 then MakeComposite on the corrected files
 
-environment variables: WADERS_ENV (conda environment), PANASKIMG (panaSKImg script)
+environment variables: WADERS_ENV (conda environment), PANASKIMG (panaSKImg script),
+  MAKECOMPOSITE_MACRO (MakeComposite_Fe55_Clusters_Extensions.cc for --composite)
 """
 
 
@@ -263,6 +343,7 @@ run_WADERs -h -v   full guide: output folders, what each step does, --tune, and 
 
 
 def build_parser(full=False):
+    """The command-line parser; full=True uses the long guide (HELP_DESCRIPTION/HELP_EPILOG) for -h -v."""
     ap = argparse.ArgumentParser(
         prog="run_WADERs",
         usage="run_WADERs INPUT [options]      (-h: flags, -h -v: full guide)",
@@ -282,13 +363,31 @@ def build_parser(full=False):
     ap.add_argument("--no-clusters", action="store_true",
                     help="noise, gain and dark current only: leave out ClusterFinder and BuildClusterMask "
                          "(no cluster ROOT files; much faster)")
-    ap.add_argument("--gain-correction", action="store_true",
-                    help="measure the gain vs charge per pixel g(n) from the images (per module) and write "
-                         "gain-corrected cluster files to root_gaincorr/ (originals kept)")
+    ap.add_argument("--gain-correction", nargs="?", const="pooled", choices=("pooled", "per-image", "both"),
+                    metavar="MODE",
+                    help="measure the gain vs charge per pixel g(n) from the images and write gain-corrected "
+                         "cluster files (originals kept). MODE: pooled (default: one curve per module from all "
+                         "its images -> root_gaincorr/), per-image (each image's own curve -> "
+                         "root_gaincorr_per_image/), both (both, plus a comparison; details: -h -v)")
+    ap.add_argument("--gain-model", choices=("interpolated", "broken", "linear"), default="interpolated",
+                    help="with --gain-correction: form of g(n): interpolated (default; monotone interpolation "
+                         "through the measured points), broken (two straight lines, fitted knot) or linear")
     ap.add_argument("--gain-anchor", choices=("comb", "fit"), default="comb",
                     help="with --gain-correction: convert with the comb's g(n) including its low-charge gain "
                          "(comb, default), or keep each image's fitted gain and correct only the charge "
                          "dependence (fit)")
+    ap.add_argument("--composite", action="store_true",
+                    help="after panaSKImg, run MakeComposite_Fe55_Clusters_Extensions.cc on the cluster files, "
+                         "once per image type and module (output in composite/; details: -h -v)")
+    ap.add_argument("--composite-macro", metavar="PATH",
+                    default=os.environ.get("MAKECOMPOSITE_MACRO", DEFAULT_COMPOSITE_MACRO),
+                    help="with --composite: the macro to run (default: $MAKECOMPOSITE_MACRO, else "
+                         "~/Documents/LSM_Module_Testing_Analysis/src/MakeComposite_Fe55_Clusters_Extensions.cc)")
+    ap.add_argument("--module", metavar="ACM=NAME", action="append", default=[],
+                    help="with --composite: module name of an ACM, e.g. --module 109=DM02 (repeat per ACM; "
+                         "default: from a ..._DMa_DMb_DMc_... data folder name, else ACM<id>)")
+    ap.add_argument("--image-number", metavar="N", type=int,
+                    help="with --composite: image type given to the macro (default: Image_<N> in the image name)")
     ap.add_argument("--tune", action="store_true",
                     help="check each CCD's pedestal method and fit window with panaSKImg before the "
                          "final run (smallest total fit error; ~1 min more per image)")
@@ -306,6 +405,7 @@ def build_parser(full=False):
 
 
 def parse_args():
+    """Parse the command line; -h together with -v prints the full guide and exits."""
     argv = sys.argv[1:]
     if any(a in ("-h", "--help") for a in argv) and any(a in ("-v", "--verbose") for a in argv):
         build_parser(full=True).print_help()
@@ -313,29 +413,189 @@ def parse_args():
     return build_parser().parse_args()
 
 
-def main():
-    args = parse_args()
-    # checks that need only the standard library come first (clear messages, no conda noise)
+def front_kalpha(files):
+    """Front-side Fe-55 K-alpha (clusters with sigma_xy = sqrt((fSTD_X^2+fSTD_Y^2)/2) < 1 and
+    4.5 < E < 7 keV, as in MakeComposite_Fe55_Clusters_Extensions.cc): unbinned fit of K-alpha +
+    K-beta (at 6.490/5.899 x K-alpha, same width) + flat background. Returns (mu, err, n) or None."""
+    import numpy as np
+    import ROOT
+    from scipy import optimize
+    E = []
+    for f in files:
+        tf = ROOT.TFile.Open(f)
+        t = tf.Get("clustersRec") if tf else None
+        if t and isinstance(t, ROOT.TTree):
+            for i in range(t.GetEntries()):
+                t.GetEntry(i)
+                sx, sy = np.array(list(t.fSTD_X)), np.array(list(t.fSTD_Y))
+                e = np.array(list(t.Energy))
+                E.append(e[(np.sqrt(0.5 * (sx ** 2 + sy ** 2)) < 1) & (e > 4.5) & (e < 7.0)])
+        if tf:
+            tf.Close()
+    e = np.concatenate(E) if E else np.array([])
+    if e.size < 30:
+        return None
+    lo, hi, r = 4.5, 7.0, 6.490 / 5.899
+
+    def nll(p):
+        """Unbinned negative log-likelihood: K-alpha and K-beta Gaussians (fraction fb in K-beta) + flat background."""
+        mu, s, fb, fbg = p
+        g = lambda m: np.exp(-0.5 * ((e - m) / s) ** 2) / (s * np.sqrt(2 * np.pi))
+        v = (1 - fbg) * ((1 - fb) * g(mu) + fb * g(mu * r)) + fbg / (hi - lo)
+        return np.inf if np.any(v <= 0) else -np.sum(np.log(v))
+    sel = e[(e > 5.0) & (e < 6.2)]
+    res = optimize.minimize(nll, [np.median(sel) if sel.size else 5.8, 0.1, 0.15, 0.1], method="L-BFGS-B",
+                            bounds=[(5.0, 6.3), (0.03, 0.5), (0.0, 0.5), (1e-4, 0.9)])
+    h = 1e-3
+    curv = (nll(res.x + [h, 0, 0, 0]) - 2 * nll(res.x) + nll(res.x - [h, 0, 0, 0])) / h ** 2
+    return float(res.x[0]), float(1 / np.sqrt(curv)) if curv > 0 else float("nan"), int(e.size)
+
+
+def compare_gain_corrections(configs, curves, gc_dirs, gcdir, no_clusters):
+    """--gain-correction both: per image and CCD, the image's own curve vs the module curve.
+    Writes gain_vs_charge/per_image_vs_pooled.csv; returns summary lines."""
+    import csv
+    import numpy as np
+    import ROOT
+    rows = []
+    for r in sorted(configs.values(), key=lambda r: r["stem"]):
+        mp = json.load(open(curves[("pooled", r["stem"])]))["extensions"]
+        mi = json.load(open(curves[("per-image", r["stem"])]))["extensions"]
+        for ext in sorted(set(mp) | set(mi)):
+            p, q = mp.get(ext, {}), mi.get(ext, {})
+            row = dict(image=r["stem"], ext=ext, pooled_ok=bool(p.get("ok")), per_image_ok=bool(q.get("ok")),
+                       per_image_source=q.get("source", "image"))
+            for tag, m in (("pooled", p), ("per_image", q)):
+                row[f"a_{tag}"] = round(m["model"]["a"], 5) if m.get("ok") else ""
+                row[f"drop1000_{tag}_pct"] = round(m["drop_at_1000"] * 100, 3) if m.get("ok") else ""
+                row[f"nmax_{tag}"] = m.get("n_max_measured", "") if m.get("ok") else ""
+            if not no_clusters:
+                name = f"panaSKImg_clustersRec_{r['stem']}_ext{ext[3:]}.root"
+                fp, fi = os.path.join(gc_dirs["pooled"], name), os.path.join(gc_dirs["per-image"], name)
+                ratios = []
+                if os.path.exists(fp) and os.path.exists(fi):
+                    tp, ti = ROOT.TFile.Open(fp), ROOT.TFile.Open(fi)
+                    a_, b_ = tp.Get("clustersRec"), ti.Get("clustersRec")
+                    if a_ and b_ and isinstance(a_, ROOT.TTree) and isinstance(b_, ROOT.TTree):
+                        for k in range(a_.GetEntries()):
+                            a_.GetEntry(k); b_.GetEntry(k)
+                            ep, ei = np.array(list(a_.Energy)), np.array(list(b_.Energy))
+                            w = ep > 1.0
+                            ratios += list(ei[w] / ep[w])
+                    tp.Close(); ti.Close()
+                    fk_p, fk_i = front_kalpha([fp]), front_kalpha([fi])
+                else:
+                    fk_p = fk_i = None
+                ratios = np.array(ratios)
+                row["median_E_per_image_over_pooled"] = round(float(np.median(ratios)), 5) if ratios.size else ""
+                row["max_abs_E_diff_pct"] = round(float(np.max(np.abs(ratios - 1)) * 100), 3) if ratios.size else ""
+                for tag, fk in (("pooled", fk_p), ("per_image", fk_i)):
+                    row[f"front_kalpha_{tag}_keV"] = round(fk[0], 4) if fk else ""
+                    row[f"front_kalpha_{tag}_err"] = round(fk[1], 4) if fk else ""
+                row["front_clusters"] = fk_p[2] if fk_p else ""
+            rows.append(row)
+    path = os.path.join(gcdir, "per_image_vs_pooled.csv")
+    if rows:
+        keys = list(dict.fromkeys(k for row in rows for k in row))
+        with open(path, "w", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=keys)
+            w.writeheader()
+            w.writerows(rows)
+    lines = ["per-image vs pooled gain correction (--gain-correction both; details in " + path + "):"]
+    for row in rows:
+        if not (row["pooled_ok"] and row["per_image_ok"]):
+            lines.append(f"  {row['image']} {row['ext']}: curve missing (pooled ok {row['pooled_ok']}, "
+                         f"per-image ok {row['per_image_ok']})")
+            continue
+        da = (row["a_per_image"] / row["a_pooled"] - 1) * 100
+        dd = row["drop1000_per_image_pct"] - row["drop1000_pooled_pct"]
+        txt = f"  {row['image']} {row['ext']}: a {da:+.3f}%, drop at 1000 e- {dd:+.2f} points"
+        if row["per_image_source"] == "module":
+            txt += " (own comb not usable: module curve used, same as pooled)"
+        if row.get("median_E_per_image_over_pooled", "") != "":
+            txt += (f", cluster E per-image/pooled median {row['median_E_per_image_over_pooled']:.5f} "
+                    f"(max |diff| {row['max_abs_E_diff_pct']:.2f}%)")
+        if row.get("front_kalpha_pooled_keV", "") != "":
+            txt += (f", front K-alpha {row['front_kalpha_pooled_keV']:.4f} (pooled) vs "
+                    f"{row['front_kalpha_per_image_keV']:.4f} (per image) +- {row['front_kalpha_pooled_err']:.4f} keV, "
+                    f"{row['front_clusters']} clusters")
+        lines.append(txt)
+    return lines
+
+
+# =============================================================================
+# The pipeline, one function per step
+# =============================================================================
+@dataclass
+class Run:
+    """What the pipeline steps share for one run_WADERs call.
+
+    args       the parsed command line
+    run_name   image name (one image) or .txt name (a list); the output folder is WADERs_analysis_<run_name>
+    images     absolute paths of the raw images
+    out        the output folder
+    modules    {ACM id: module name} from --module (used by --composite)
+    panaskimg  path of the panaSKImg script
+    dirs       output sub-folders: json, root, logs, work, fits (root/dc_fits), and, when made, gc (gain_vs_charge)
+               and root_gc (the corrected cluster files given to --composite)
+    t0         start time (for the [  12s] progress stamps)
+    A, FQ, G   the pipeline modules autoconfig_panaSKImg, fit_quality and gain_dc_split (imported once the
+               environment with ROOT/pysimdamicm is known to be available)
+    """
+    args: argparse.Namespace
+    run_name: str
+    images: list
+    out: str
+    modules: dict
+    panaskimg: str = ""
+    dirs: dict = field(default_factory=dict)
+    t0: float = 0.0
+    A: object = None
+    FQ: object = None
+    G: object = None
+
+    def stamp(self):
+        """Seconds since the start, formatted as in the progress lines: '[  12s]'."""
+        return f"[{time.time() - self.t0:5.0f}s]"
+
+
+def check_request(args):
+    """Checks that need only the standard library, done before any conda environment is looked for (so mistakes
+    give a clear message quickly). Returns (run_name, images, out, modules); resolves args.composite_macro."""
     run_name, images = read_inputs(args.input)
     out = os.path.join(os.path.abspath(args.parent), f"WADERs_analysis_{run_name}")
     if os.path.exists(out) and os.listdir(out) and not args.overwrite:
         sys.exit(f"run_WADERs: {out} already exists; use --overwrite to replace it")
-    ensure_environment(args.env)
+    modules = parse_modules(args.module)
+    if args.composite:
+        if args.no_clusters:
+            sys.exit("run_WADERs: --composite needs the cluster files; it cannot be used with --no-clusters")
+        args.composite_macro = os.path.abspath(os.path.expanduser(args.composite_macro))
+        if not os.path.isfile(args.composite_macro):
+            sys.exit(f"run_WADERs: MakeComposite macro {args.composite_macro} not found; give --composite-macro PATH")
+    return run_name, images, out, modules
 
-    # environment is ready: the pipeline modules (comm_scripts/src) can be imported
+
+def load_pipeline_modules(run):
+    """Import the pipeline modules from comm_scripts/src (needs ROOT/pysimdamicm, so only after ensure_environment)
+    and find panaSKImg (--panaskimg, else the one autoconfig_panaSKImg finds)."""
     if not os.path.isfile(os.path.join(SRC_DIR, "gain_dc_split.py")):
         sys.exit(f"run_WADERs: pipeline modules not found in {SRC_DIR} (keep the comm_scripts layout: bin/, src/)")
     sys.path.insert(0, SRC_DIR)
     import autoconfig_panaSKImg as A
     import fit_quality as FQ
     import gain_dc_split as G
-
-    panaskimg = args.panaskimg or A.DEFAULT_PANASKIMG
-    if not panaskimg or not os.path.isfile(panaskimg):
+    run.A, run.FQ, run.G = A, FQ, G
+    run.panaskimg = run.args.panaskimg or A.DEFAULT_PANASKIMG
+    if not run.panaskimg or not os.path.isfile(run.panaskimg):
         sys.exit("run_WADERs: panaSKImg not found; give --panaskimg /path/to/panaSKImg")
 
+
+def prepare_output(run):
+    """Create the (emptied, with --overwrite) output folder and its json/, root/, root/dc_fits/, logs/, work/."""
+    out = run.out
     if os.path.exists(out) and os.listdir(out):
-        shutil.rmtree(out)                     # --overwrite (checked above)
+        shutil.rmtree(out)                     # --overwrite (checked in check_request)
     D = {k: os.path.join(out, k) for k in ("json", "root", "logs", "work")}
     D["fits"] = os.path.join(D["root"], "dc_fits")
     for d in D.values():
@@ -343,47 +603,65 @@ def main():
     if "_ext" in out:
         print("WARNING: the output path contains '_ext'; scripts that read the extension from "
               "'_ext<N>' in the path (MakeComposite_Fe55_Clusters_Extensions.cc) may misread it")
+    run.dirs = D
 
-    t0 = time.time()
-    print(f"run_WADERs: {len(images)} image(s) -> {out}   ({args.jobs} parallel runs)")
 
-    # ---- 1. per-CCD JSONs (gain_dc_split), images in parallel
+def step1_configure(run):
+    """Step 1: one panaSKImg JSON per CCD for every image (gain_dc_split.split_image), images in parallel.
+
+    For each CCD, autoconfig measures the raw pixels; the image is fitted twice (0e-/1e- peaks only, for an unbiased
+    dark current; all resolved peaks, for a more precise gain) and the more precise gain is kept in the final JSON.
+    Returns {image path: result dict of split_image} (keys used later: stem, src, finals, held, refs, notes, skipped).
+    """
+    args, D = run.args, run.dirs
+
     def configure(img):
-        stem = G.image_stem(img)
+        """Run gain_dc_split on one image and move its autoconfig logs to logs/."""
+        stem = run.G.image_stem(img)
         jdir = os.path.join(D["json"], stem)
-        r = G.split_image(img, jdir, per_ext=True, panaskimg=panaskimg,
-                          autoconfig_args=args.autoconfig_args.split(),
-                          work=os.path.join(D["work"], stem), final_fit=False, jobs=1, tune=args.tune)
+        r = run.G.split_image(img, jdir, per_ext=True, panaskimg=run.panaskimg,
+                              autoconfig_args=args.autoconfig_args.split(),
+                              work=os.path.join(D["work"], stem), final_fit=False, jobs=1, tune=args.tune)
         for lg in glob.glob(os.path.join(jdir, "autoconfig_*.log")):      # logs together
             shutil.move(lg, os.path.join(D["logs"], f"{stem}_{os.path.basename(lg)}"))
         return r
 
     configs = {}
     with cf.ThreadPoolExecutor(max_workers=args.jobs) as ex:
-        futs = {ex.submit(configure, img): img for img in images}
+        futs = {ex.submit(configure, img): img for img in run.images}
         for f in cf.as_completed(futs):
             img = futs[f]
             try:
                 r = f.result()
                 configs[img] = r
                 held = ", ".join(r["held"]) or "none"
-                print(f"  [{time.time() - t0:5.0f}s] JSONs ready: {r['stem']} (gain held: {held})")
+                print(f"  {run.stamp()} JSONs ready: {r['stem']} (gain held: {held})")
             except Exception as err:                       # keep going with the other images
                 print(f"  ERROR configuring {os.path.basename(img)}: {err}")
+    return configs
 
-    # ---- --no-clusters: drop cluster finding from the final JSONs (so json/ shows what ran)
-    if args.no_clusters:
-        for r in configs.values():
-            for ext, path, skip in r["finals"]:
-                cfg = json.load(open(path))
-                seq = cfg["process"]["sequence"].split(";")
-                cfg["process"]["sequence"] = ";".join(
-                    p for p in seq if p.strip() not in ("ClusterFinder", "BuildClusterMask"))
-                with open(path, "w") as fh:
-                    json.dump(cfg, fh, indent=4)
-        print("  --no-clusters: ClusterFinder and BuildClusterMask removed from the final JSONs")
 
-    # ---- 2. panaSKImg per CCD, all runs in parallel
+def drop_cluster_finding(configs):
+    """--no-clusters: remove ClusterFinder and BuildClusterMask from the final JSONs, so json/ shows what ran."""
+    for r in configs.values():
+        for ext, path, skip in r["finals"]:
+            cfg = json.load(open(path))
+            seq = cfg["process"]["sequence"].split(";")
+            cfg["process"]["sequence"] = ";".join(
+                p for p in seq if p.strip() not in ("ClusterFinder", "BuildClusterMask"))
+            with open(path, "w") as fh:
+                json.dump(cfg, fh, indent=4)
+    print("  --no-clusters: ClusterFinder and BuildClusterMask removed from the final JSONs")
+
+
+def step2_run_panaskimg(run, configs):
+    """Step 2: panaSKImg once per CCD (--ext N) with its final JSON, all runs in parallel.
+
+    CCDs flagged as flooded/unresolved by autoconfig are skipped unless --all-ext. A run counts as successful when
+    its log contains "Finished correctly". Returns (tasks, failed): tasks = [(config, ext, json path)] that were run,
+    failed = [(stem, ext, log path)].
+    """
+    args, D = run.args, run.dirs
     tasks = []
     for img, r in configs.items():
         for ext, path, skip in r["finals"]:
@@ -393,9 +671,10 @@ def main():
             tasks.append((r, ext, path))
 
     def run_one(task):
+        """panaSKImg on one CCD; returns (stem, ext, ok, log path)."""
         r, ext, path = task
         cfg = json.load(open(path))
-        cmd = [sys.executable, panaskimg, r["src"], "-j", path, "-o", out + "/", "--save-plots", "--ext", ext[3:]]
+        cmd = [sys.executable, run.panaskimg, r["src"], "-j", path, "-o", run.out + "/", "--save-plots", "--ext", ext[3:]]
         if cfg["input"]["image"].get("ACM_multi_extension", False):
             cmd.append("--acm")
         log = os.path.join(D["logs"], f"{r['stem']}_{ext}_panaSKImg.log")
@@ -410,11 +689,16 @@ def main():
     with cf.ThreadPoolExecutor(max_workers=args.jobs) as ex:
         for fut in cf.as_completed([ex.submit(run_one, t) for t in tasks]):
             stem, ext, ok, log = fut.result()
-            print(f"  [{time.time() - t0:5.0f}s] {stem} {ext}: {'done' if ok else 'FAILED, see ' + log}")
+            print(f"  {run.stamp()} {stem} {ext}: {'done' if ok else 'FAILED, see ' + log}")
             if not ok:
                 failed.append((stem, ext, log))
+    return tasks, failed
 
-    # ---- 3. collect the ROOT files
+
+def step3_collect_root_files(run):
+    """Step 3: move panaSKImg's cluster files to root/ and its dark-current fits to root/dc_fits/, and write
+    root/root_files.txt (full paths, the input list for e.g. MakeComposite). Returns the sorted cluster files."""
+    out, D = run.out, run.dirs
     for f in glob.glob(os.path.join(out, "panaSKImg_clustersRec_*.root")):
         shutil.move(f, os.path.join(D["root"], os.path.basename(f)))
     for f in glob.glob(os.path.join(out, "*_FitDarkCurrentProcess_side*.root")):
@@ -422,55 +706,191 @@ def main():
     roots = sorted(glob.glob(os.path.join(D["root"], "panaSKImg_clustersRec_*.root")))
     with open(os.path.join(D["root"], "root_files.txt"), "w") as fh:
         fh.write("".join(p + "\n" for p in roots))
+    return roots
 
-    # ---- 3b. --gain-correction: g(n) per module from the images, corrected cluster files
+
+def measure_curve(run, GVC, srcs, name, title, run_exts):
+    """Measure g(n) from the images srcs (gain_vs_charge.measure), save it as gain_vs_charge/<name>_gain_vs_charge.json
+    with its plots (<name>_gain_vs_charge.png, <name>_nonlinearity.png). Returns (json path, result per CCD)."""
+    res = GVC.measure(srcs, run_exts, verbose=False, model=run.args.gain_model)
+    mpath = os.path.join(run.dirs["gc"], f"{name}_gain_vs_charge.json")
+    with open(mpath, "w") as fh:
+        json.dump({"images": srcs, "e_per_electron_eV": GVC.E_PER_E, "extensions": res}, fh, indent=1)
+    GVC.plot(res, os.path.join(run.dirs["gc"], f"{name}_gain_vs_charge.png"), title)
+    GVC.plot_nonlinearity(res, os.path.join(run.dirs["gc"], f"{name}_nonlinearity.png"), title)
+    return mpath, res
+
+
+def report_curve(gc_lines, title, res):
+    """Append one summary line per CCD describing a measured g(n) curve (or why there is none) to gc_lines."""
+    for ext, rr in sorted(res.items()):
+        if rr.get("ok"):
+            m = rr["model"]
+            gc_lines.append(f"  {title} {ext}: g(0) = {m['a']:.4f} ADU/e- (fit gain {rr['g_1e']:.4f}), "
+                            f"{rr['drop_at_1000'] * 100:.1f}% lower at 1000 e-, measured to "
+                            f"{rr['n_max_measured']:.0f} e-"
+                            + (f", nonlinearity {rr['nonlinearity']['c2']:.2e} x^2 {rr['nonlinearity']['c1']:+.4f} x"
+                               if rr.get("nonlinearity") else "")
+                            + (f" -- module curve: own comb not usable ({rr.get('own_reason')})"
+                               if rr.get("source") == "module" else ""))
+        else:
+            gc_lines.append(f"  {title} {ext}: no correction ({rr.get('reason')})")
+
+
+def apply_curve(run, GVC, gc_lines, mpath, rs, outdir):
+    """Rewrite the cluster files of the images rs with the curve mpath into outdir (gain_vs_charge.apply), adding a
+    summary line per file. Nothing to do with --no-clusters."""
+    if run.args.no_clusters:
+        return
+    files = [f for r in rs for f in glob.glob(os.path.join(run.dirs["root"], f"panaSKImg_clustersRec_{r['stem']}_ext*.root"))]
+    for src_f, dst_f, n, med in GVC.apply(mpath, sorted(files), outdir, verbose=False, anchor=run.args.gain_anchor):
+        gc_lines.append(f"    {os.path.basename(dst_f)}: " + (f"median E_corrected/E_original = {med:.4f}" if n
+                        else "copied unchanged (no curve for this CCD)"))
+
+
+def step3b_gain_correction(run, configs, tasks):
+    """Step 3b, --gain-correction: measure the gain vs charge per pixel g(n) and write corrected cluster files.
+
+    Why: the gain falls slowly with the charge in a pixel (~3 % at 1000 e-), so keV clusters come out low when every
+    pixel is converted with the low-charge gain. g(n) is measured from the images themselves (the spacing of the
+    electron comb at high charge) and each pixel's ADU is converted with it.
+    Images of one module (ACM id in the name) share the CCDs and are grouped:
+      pooled     one curve per module from all its images            -> root_gaincorr/
+      per-image  one curve per image (module curve where the image's own comb is not usable) -> root_gaincorr_per_image/
+      both       both, plus gain_vs_charge/per_image_vs_pooled.csv comparing them
+    Returns (gc_lines, gc_dirs): summary lines and {mode: folder of corrected cluster files}; also sets
+    run.dirs["gc"] and run.dirs["root_gc"].
+    """
+    args, D = run.args, run.dirs
     gc_lines = []
-    if args.gain_correction:
-        import re as _re
-        import gain_vs_charge as GVC
-        D["gc"] = os.path.join(out, "gain_vs_charge")
-        D["root_gc"] = os.path.join(out, "root_gaincorr")
-        os.makedirs(D["gc"], exist_ok=True)
-        os.makedirs(D["root_gc"], exist_ok=True)
-        # images of the same module (ACM id in the name, e.g. ..._106_20250914_024425_6) share the CCDs
-        groups = {}
-        for r in configs.values():
-            m = _re.search(r"_(\d+)_\d{8}_\d{6}_\d+$", r["stem"])
-            groups.setdefault(m.group(1) if m else r["stem"], []).append(r)
-        run_exts = sorted({int(ext[3:]) for _, ext, _ in tasks})
-        gc_lines.append("gain vs charge per pixel (--gain-correction; g(n) = a + b*min(n, n_cap), from the "
-                        "electron comb in clean rows):")
-        if not groups:
-            gc_lines.append("  nothing to correct: no image was configured")
-        for key, rs in sorted(groups.items()):
-            print(f"  [{time.time() - t0:5.0f}s] g(n) for module {key} ({len(rs)} image(s))")
-            res = GVC.measure([r["src"] for r in rs], run_exts, verbose=False)
-            mpath = os.path.join(D["gc"], f"module_{key}_gain_vs_charge.json")
-            with open(mpath, "w") as fh:
-                json.dump({"images": [r["src"] for r in rs], "e_per_electron_eV": GVC.E_PER_E,
-                           "extensions": res}, fh, indent=1)
-            GVC.plot(res, os.path.join(D["gc"], f"module_{key}_gain_vs_charge.png"), f"module {key}")
-            for ext, rr in sorted(res.items()):
-                if rr.get("ok"):
-                    m = rr["model"]
-                    gc_lines.append(f"  module {key} {ext}: a = {m['a']:.4f} ADU/e- (fit gain {rr['g_1e']:.4f}), "
-                                    f"b = {m['b'] * 1e5:+.2f}e-5 /e-, {rr['drop_at_1000'] * 100:.1f}% lower at 1000 e-, "
-                                    f"measured to {rr['n_max_measured']:.0f} e-")
-                else:
-                    gc_lines.append(f"  module {key} {ext}: no correction ({rr.get('reason')})")
-            if not args.no_clusters:
-                files = [f for r in rs for f in glob.glob(os.path.join(D["root"], f"panaSKImg_clustersRec_{r['stem']}_ext*.root"))]
-                done = GVC.apply(mpath, sorted(files), D["root_gc"], verbose=False, anchor=args.gain_anchor)
-                for src_f, dst_f, n, med in done:
-                    gc_lines.append(f"    {os.path.basename(dst_f)}: median E_corrected/E_original = {med:.4f}")
-        if not args.no_clusters:
-            gcroots = sorted(glob.glob(os.path.join(D["root_gc"], "panaSKImg_clustersRec_*.root")))
-            with open(os.path.join(D["root_gc"], "root_files.txt"), "w") as fh:
-                fh.write("".join(p + "\n" for p in gcroots))
-            gc_lines.append(f"  corrected cluster files: {len(gcroots)} (list: "
-                            f"{os.path.join(D['root_gc'], 'root_files.txt')})")
+    gc_dirs = {}                        # mode -> folder of corrected cluster files
+    if not args.gain_correction:
+        return gc_lines, gc_dirs
+    import gain_vs_charge as GVC
+    D["gc"] = os.path.join(run.out, "gain_vs_charge")
+    os.makedirs(D["gc"], exist_ok=True)
+    run_exts = sorted({int(ext[3:]) for _, ext, _ in tasks})
+    modes = ["pooled", "per-image"] if args.gain_correction == "both" else [args.gain_correction]
+    gc_dirs = {m: os.path.join(run.out, "root_gaincorr" if m == "pooled" else "root_gaincorr_per_image") for m in modes}
+    for d in gc_dirs.values():
+        os.makedirs(d, exist_ok=True)
+    D["root_gc"] = gc_dirs.get("pooled", gc_dirs.get("per-image"))
 
-    # ---- 4. summary with fit errors
+    # images of the same module (ACM id in the name, e.g. ..._106_20250914_024425_6) share the CCDs
+    groups = {}
+    for r in configs.values():
+        m = re.search(r"_(\d+)_\d{8}_\d{6}_\d+$", r["stem"])
+        groups.setdefault(m.group(1) if m else r["stem"], []).append(r)
+    if not groups:
+        gc_lines.append("gain vs charge: nothing to correct, no image was configured")
+    curves = {}                     # (mode, image stem) -> model file
+    # module curves: used by 'pooled', and by 'per-image' for CCDs whose own comb is not usable
+    module_res = {}
+    gc_lines.append(f"gain vs charge per pixel (--gain-correction, --gain-model {args.gain_model}; one curve per "
+                    f"module from all its images, from the electron comb in clean rows):")
+    for key, rs in sorted(groups.items()):
+        print(f"  {run.stamp()} g(n) for module {key} ({len(rs)} image(s))")
+        mpath, res = measure_curve(run, GVC, [r["src"] for r in rs], f"module_{key}", f"module {key}", run_exts)
+        report_curve(gc_lines, f"module {key}", res)
+        module_res[key] = res
+        if "pooled" in modes:
+            curves.update({("pooled", r["stem"]): mpath for r in rs})
+            apply_curve(run, GVC, gc_lines, mpath, rs, gc_dirs["pooled"])
+    if "per-image" in modes:
+        gc_lines.append("gain vs charge per pixel, one curve per image (--gain-correction per-image; a CCD whose "
+                        "own comb is not usable gets the module curve):")
+        for key, rs in sorted(groups.items()):
+            for r in sorted(rs, key=lambda r: r["stem"]):
+                print(f"  {run.stamp()} g(n) for image {r['stem']}")
+                mpath, res = measure_curve(run, GVC, [r["src"]], f"image_{r['stem']}", r["stem"], run_exts)
+                for ext, rr in res.items():       # fallback to the module curve, recorded in the file
+                    rr["source"] = "image"
+                    mod = module_res[key].get(ext, {})
+                    if not rr.get("ok") and mod.get("ok"):
+                        res[ext] = dict(mod, source="module", own_reason=rr.get("reason"))
+                with open(mpath, "w") as fh:
+                    json.dump({"images": [r["src"]], "e_per_electron_eV": GVC.E_PER_E, "extensions": res},
+                              fh, indent=1)
+                report_curve(gc_lines, r["stem"], res)
+                curves[("per-image", r["stem"])] = mpath
+                apply_curve(run, GVC, gc_lines, mpath, [r], gc_dirs["per-image"])
+    if not args.no_clusters:
+        for mode, d in gc_dirs.items():
+            gcroots = sorted(glob.glob(os.path.join(d, "panaSKImg_clustersRec_*.root")))
+            with open(os.path.join(d, "root_files.txt"), "w") as fh:
+                fh.write("".join(p + "\n" for p in gcroots))
+            gc_lines.append(f"  corrected cluster files ({mode}): {len(gcroots)} (list: "
+                            f"{os.path.join(d, 'root_files.txt')})")
+    if len(modes) == 2:
+        gc_lines += compare_gain_corrections(configs, curves, gc_dirs, D["gc"], args.no_clusters)
+    return gc_lines, gc_dirs
+
+
+def step3c_composite(run, configs, gc_dirs):
+    """Step 3c, --composite: MakeComposite_Fe55_Clusters_Extensions.cc once per image type and module.
+
+    Runs on the gain-corrected cluster files if there are any (root_gaincorr/), else on root/; with
+    --gain-correction both also on root_gaincorr_per_image/ -> composite_per_image/. The image type N (CCD geometry
+    in the macro) comes from Image_<N> in the name or --image-number; the module from module_name(). Returns
+    (comp_lines, comp_failed): summary lines and the names of failed runs.
+    """
+    args, D = run.args, run.dirs
+    comp_lines = []
+    comp_failed = []
+    if not args.composite:
+        return comp_lines, comp_failed
+    comp_sets = [(D.get("root_gc", D["root"]), os.path.join(run.out, "composite"), "")]
+    if len(gc_dirs) == 2:           # --gain-correction both: also the per-image corrected files
+        comp_sets.append((gc_dirs["per-image"], os.path.join(run.out, "composite_per_image"), "_per_image"))
+    root_exe = shutil.which("root") or os.path.join(os.path.dirname(sys.executable), "root")
+    for rootdir, cdir, tag in comp_sets:
+        os.makedirs(os.path.join(cdir, "lists"), exist_ok=True)
+        groups = {}
+        comp_lines.append(f"MakeComposite (--composite, {args.composite_macro}) on the cluster files in {rootdir}:")
+        for r in sorted(configs.values(), key=lambda r: r["stem"]):
+            m = re.search(r"Image_(\d+)", r["stem"])
+            num = args.image_number if args.image_number is not None else (int(m.group(1)) if m else None)
+            m = re.search(r"_(\d+)_\d{8}_\d{6}_\d+$", r["stem"])
+            acm = m.group(1) if m else None
+            module, why = module_name(acm, r["src"], run.modules)
+            comp_lines.append(f"  {r['stem']}: Image {num if num is not None else '?'}, module {module} ({why})")
+            if num is None:
+                comp_lines.append("    not run: no Image_<N> in the name (use --image-number N)")
+                continue
+            files = sorted(glob.glob(os.path.join(rootdir, f"panaSKImg_clustersRec_{r['stem']}_ext*.root")))
+            groups.setdefault((num, module), []).extend(files)
+        # one at a time: the first run compiles the macro (ACLiC "+"), parallel runs would race on that
+        for (num, module), files in sorted(groups.items()):
+            name = f"Image_{num}_{module}"
+            if not files:
+                comp_lines.append(f"  {name}: not run (no cluster files)")
+                continue
+            lst = os.path.join(cdir, "lists", f"{name}_list.txt")
+            with open(lst, "w") as fh:
+                fh.write("".join(f + "\n" for f in files))
+            log = os.path.join(D["logs"], f"composite{tag}_{name}.log")
+            call = f'{args.composite_macro}+("{lst}",{num},"{module}","{cdir}")'
+            print(f"  {run.stamp()} MakeComposite {name}{tag} ({len(files)} file(s))")
+            with open(log, "w") as fh:
+                rc = subprocess.run([root_exe, "-l", "-q", "-b", call], stdout=fh, stderr=subprocess.STDOUT).returncode
+            plots = os.path.join(cdir, "Fe_55_Analysis_Plots", module, f"{name}_list")
+            ok = rc == 0 and bool(glob.glob(os.path.join(plots, "compare", "*.png")))
+            print(f"  {run.stamp()} MakeComposite {name}{tag}: {'done' if ok else 'FAILED, see ' + log}")
+            comp_lines.append(f"  {name}: {'plots in ' + plots if ok else 'FAILED, see ' + log}")
+            if not ok:
+                comp_failed.append(name + tag)
+    return comp_lines, comp_failed
+
+
+def step4_summary(run, configs, roots, failed, gc_lines, comp_lines, comp_failed):
+    """Step 4: fit_quality.csv and summary.txt (also printed).
+
+    Per CCD, the dark-current fit of panaSKImg (root/dc_fits/) gives gain, noise and dark current; their errors are
+    scaled by sqrt(chi2/ndf) (a fit with chi2/ndf > 1 underestimates its errors) and the dark current is compared with
+    the one from the 0e-/1e- pixel counts (the "DC bias"). summary.txt then lists which gain was used per CCD and why,
+    the cluster files, and the gain-correction and MakeComposite results.
+    """
+    args, D, G, FQ = run.args, run.dirs, run.G, run.FQ
     refs = {r["stem"]: r["refs"] for r in configs.values()}
     held = {r["stem"]: r["held"] for r in configs.values()}
     rows = []
@@ -486,13 +906,13 @@ def main():
         rows.append(dict(image=stem, ext=ext, gain_held=ext in held.get(stem, {}), **q))
     if rows:
         import csv
-        with open(os.path.join(out, "fit_quality.csv"), "w", newline="") as fh:
+        with open(os.path.join(run.out, "fit_quality.csv"), "w", newline="") as fh:
             w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
             w.writeheader()
             w.writerows(rows)
     rows.sort(key=lambda q: (q["image"], q["ext"]))
     wid = max([len(q["image"]) for q in rows] + [5])
-    lines = [f"run_WADERs summary: {run_name}  ({len(images)} image(s), {time.time() - t0:.0f} s)", "",
+    lines = [f"run_WADERs summary: {run.run_name}  ({len(run.images)} image(s), {time.time() - run.t0:.0f} s)", "",
              f"{'image':{wid}} {'ext':4} {'chi2/ndf':>8} {'gain [ADU/e-]':>19} {'noise [e-]':>17} "
              f"{'DC [e-/pix]':>17} {'DC bias':>8}"]
     for q in rows:
@@ -515,17 +935,42 @@ def main():
                  f"cluster files: {len(roots)} (list: {os.path.join(D['root'], 'root_files.txt')})")
     if gc_lines:
         lines += [""] + gc_lines
+    if comp_lines:
+        lines += [""] + comp_lines
     if failed:
         lines.append("FAILED runs: " + ", ".join(f"{s} {e}" for s, e, _ in failed))
+    if comp_failed:
+        lines.append("FAILED MakeComposite runs: " + ", ".join(comp_failed))
     text = "\n".join(lines)
-    with open(os.path.join(out, "summary.txt"), "w") as fh:
+    with open(os.path.join(run.out, "summary.txt"), "w") as fh:
         fh.write(text + "\n")
     print("\n" + text)
 
+
+def main():
+    """The whole pipeline: checks, environment, then steps 1-4 (see the module docstring)."""
+    args = parse_args()
+    run_name, images, out, modules = check_request(args)
+    ensure_environment(args.env)          # may re-run this script inside the conda environment and exit
+    run = Run(args=args, run_name=run_name, images=images, out=out, modules=modules)
+    load_pipeline_modules(run)
+    prepare_output(run)
+
+    run.t0 = time.time()
+    print(f"run_WADERs: {len(images)} image(s) -> {out}   ({args.jobs} parallel runs)")
+    configs = step1_configure(run)                                  # one JSON per CCD
+    if args.no_clusters:
+        drop_cluster_finding(configs)
+    tasks, failed = step2_run_panaskimg(run, configs)               # panaSKImg per CCD
+    roots = step3_collect_root_files(run)                           # cluster files -> root/
+    gc_lines, gc_dirs = step3b_gain_correction(run, configs, tasks) # --gain-correction
+    comp_lines, comp_failed = step3c_composite(run, configs, gc_dirs)   # --composite
+    step4_summary(run, configs, roots, failed, gc_lines, comp_lines, comp_failed)
+
     if not args.keep_work:
-        shutil.rmtree(D["work"], ignore_errors=True)
+        shutil.rmtree(run.dirs["work"], ignore_errors=True)
     print(f"\nresults: {out}")
-    sys.exit(1 if failed else 0)
+    sys.exit(1 if failed or comp_failed else 0)
 
 
 if __name__ == "__main__":

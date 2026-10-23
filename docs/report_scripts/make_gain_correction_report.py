@@ -1,5 +1,35 @@
-"""Multi-page PDF: what the gain-vs-charge correction does and how Fe-55 / cluster energies change."""
-import glob, json, os, re, textwrap
+"""Multi-page PDF: what the gain-vs-charge correction does and how Fe-55 / cluster energies change.
+
+Purpose: an 11-page report for collaborators on the gain-vs-charge correction (run_WADERs
+--gain-correction / gain_vs_charge.py) over the Production_Modules_Data: the measured g(n)
+curves, Fe-55 K-alpha spectra of single CCDs and whole modules without / with the correction,
+binned images, every dataset at a glance, and the limitations.
+
+Inputs (defaults in brackets, see -h):
+    --universal  folder of the "universal" test: universal_results.json (per-CCD K-alpha fits
+                 and curve summaries) and WADERs_analysis_<tag>/{root,root_gaincorr,gain_vs_charge}/
+                 [a Claude scratch folder of an earlier session; it may no longer exist]
+    --dm2426     WADERs analysis of the DM24/DM25/DM26 Image 5 set (pages 6-8)
+                 [.../2025-09-13-DM24_DM25_DM26_Low_Temp/WADERs_analysis_Image_5_files]
+Outputs:
+    --out        the PDF                                     [comm_scripts/gain_correction_report.pdf]
+    --pages-dir  every page also as page_NN.png (70 dpi)     [pages/ next to this script]
+
+Dataset tags look like I5_DM07-28_0919: image type (Image 5), module folder, date (MMDD).
+
+Run:  python make_gain_correction_report.py     (needs PyROOT, matplotlib)
+
+How to read this file
+    module_of, pretty     tag/board -> module name; tag -> readable label
+    energies              Fe-55 cluster energies of one board/extension (front-side clusters by default)
+    text_page             a page of headed text blocks
+    spectrum_panel        one K-alpha/K-beta spectrum panel without / with the correction
+    row                   the universal_results.json entry of one CCD
+    _Both                 writes each page to the PDF and as a PNG
+    page_intro ... page_limits   one function per page (group), in page order
+    main                  options, load the results, write the pages
+"""
+import argparse, glob, json, os, re, textwrap
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -12,16 +42,20 @@ U = "/private/tmp/claude-501/-Users-dylanrosenmerkel/a98994a6-5dc6-442a-abe8-a65
 DM2426 = ("/Users/dylanrosenmerkel/Documents/LSM_Module_Testing_Analysis/Production_Modules_Data/"
           "2025-09-13-DM24_DM25_DM26_Low_Temp/WADERs_analysis_Image_5_files")
 OUT = "/Users/dylanrosenmerkel/Documents/Software/comm_scripts/gain_correction_report.pdf"
-KA, KB = 5.899, 6.490
-ORIG, CORR = "#8c8c8c", "#1f5fbf"
-res = json.load(open(f"{U}/universal_results.json"))
-NAMES = {"110": 0, "109": 1, "106": 2}
+KA, KB = 5.899, 6.490                     # Mn K-alpha / K-beta (Fe-55) [keV]
+ORIG, CORR = "#8c8c8c", "#1f5fbf"         # colours: without / with the correction
+NAMES = {"110": 0, "109": 1, "106": 2}    # board -> position of its module in a FOLDERS entry
 FOLDERS = {"DM04-06": "DM04/DM05/DM06", "DM07-28": "DM07/DM27/DM28", "DM10-25": "DM10/DM24/DM25",
            "DM11-14": "DM11/DM13/DM14", "DM15-17": "DM15/DM16/DM17", "PD06-08": "PD06/PD07/PD08",
            "DM01-03": "DM01/DM02/DM03"}
 
 
 def module_of(tag, board):
+    """Module name (e.g. 'DM27') read out by board ('110', '109' or '106') in dataset tag.
+
+    Uses the module-folder part of the tag (FOLDERS) and the board order of NAMES; the DM24-26
+    set has its own mapping; otherwise returns 'board <board>'.
+    """
     for k, v in FOLDERS.items():
         if k in tag:
             return v.split("/")[NAMES[board]]
@@ -31,6 +65,7 @@ def module_of(tag, board):
 
 
 def pretty(tag):
+    """Readable label of a dataset tag: 'I5_DM07-28_0919' -> 'Image 5, DM07/DM27/DM28, 09/19' (else the tag)."""
     m = re.match(r"I(\d)_(.*)_(\d{4})$", tag)
     if not m:
         return tag
@@ -40,6 +75,12 @@ def pretty(tag):
 
 
 def energies(d, board, ext, front=True):
+    """Cluster energies [keV] of board/extension ext from the cluster files in folder d.
+
+    front=True keeps only compact clusters, sqrt((sx^2 + sy^2)/2) < 1 pixel: X-rays that convert
+    near the front surface diffuse little, so their charge (and energy) is collected best.
+    Returns a float array (empty if no file or no cluster).
+    """
     E = []
     for f in glob.glob(f"{d}/panaSKImg_clustersRec_*_{board}_*_ext{ext}.root"):
         tf = ROOT.TFile.Open(f)
@@ -57,6 +98,7 @@ def energies(d, board, ext, front=True):
 
 
 def text_page(pdf, title, blocks):
+    """Add a text-only page: title, then blocks of (heading or '', [paragraphs]), wrapped at 118 characters."""
     fig = plt.figure(figsize=(11, 8.5))
     fig.text(0.06, 0.93, title, fontsize=20, weight="bold")
     y = 0.86
@@ -75,6 +117,11 @@ def text_page(pdf, title, blocks):
 
 
 def spectrum_panel(ax, Eo, Ec, title, ka_o=None, ka_c=None, corrected=True):
+    """Draw the 4.6-7.4 keV spectrum without (Eo) and with (Ec) the correction on ax (40 eV bins).
+
+    ka_o / ka_c: fitted K-alpha peak [keV] without / with (from universal_results.json), shown
+    with their offset from 5.899 keV; corrected=False adds that the CCD was left unchanged.
+    """
     bins = np.arange(4.6, 7.4, 0.04)
     ax.hist(Eo, bins=bins, histtype="step", color=ORIG, lw=1.6, label="without correction")
     ax.hist(Ec, bins=bins, histtype="step", color=CORR, lw=1.6, label="with correction")
@@ -95,26 +142,30 @@ def spectrum_panel(ax, Eo, Ec, title, ka_o=None, ka_c=None, corrected=True):
     ax.set_ylabel("clusters per 0.04 keV")
 
 
-rows = res["rows"]
+def row(rows, tag, board, ext):
+    """The universal_results.json row of one CCD (dataset tag, board, 'EXT<n>'), or None.
 
-
-def row(tag, board, ext):
+    A row holds 'orig' / 'corr' (K-alpha fit without / with, [peak keV, ...] or empty),
+    'corrected' (whether a reliable curve was applied) and 'typ' ('I5', 'I6', ...).
+    """
     return next((r for r in rows if r["tag"] == tag and r["board"] == board and r["ext"] == ext), None)
 
 
 class _Both:
-    """PdfPages that also writes each page as pages/page_NN.png (for checking)."""
-    def __init__(self, pp):
-        self.pp, self.n = pp, 0
-        os.makedirs(os.path.join(os.path.dirname(os.path.abspath(__file__)), "pages"), exist_ok=True)
+    """PdfPages that also writes each page as <pages_dir>/page_NN.png (for checking)."""
+    def __init__(self, pp, pages_dir):
+        self.pp, self.n, self.pages_dir = pp, 0, pages_dir
+        os.makedirs(pages_dir, exist_ok=True)
     def savefig(self, fig):
+        """Add fig as the next PDF page and write it as page_NN.png (70 dpi)."""
         self.n += 1
         self.pp.savefig(fig)
-        fig.savefig(os.path.join(os.path.dirname(os.path.abspath(__file__)), "pages", f"page_{self.n:02d}.png"), dpi=70)
+        fig.savefig(os.path.join(self.pages_dir, f"page_{self.n:02d}.png"), dpi=70)
 
 
-with PdfPages(OUT) as _pp:
-    pdf = _Both(_pp)
+def page_intro(pdf, rows):
+    """Page 1: the problem, what the correction does, how to use it, and the Image-5 K-alpha
+    summary (mean and CCD-to-CCD spread of peak / 5.899 keV, without -> with)."""
     # ------------------------------------------------------------------ page 1
     i5 = [r for r in rows if r["typ"] == "I5" and r["orig"] and r["corr"] and r["corrected"]]
     o = np.array([r["orig"][0] / KA for r in i5]); c = np.array([r["corr"][0] / KA for r in i5])
@@ -148,11 +199,15 @@ with PdfPages(OUT) as _pp:
                    "module overlaid (alignment).  9: binned image.  10: every dataset, per CCD.  11: limitations."]),
     ])
 
+
+def page_curves(pdf, u, res):
+    """Page 2: measured g(n) / low-charge gain with the linear fit for 3 modules, and the
+    distribution of the gain drop at 1000 e- over all reliable Image-5 curves."""
     # ------------------------------------------------------------------ page 2: g(n) curves
     fig, axes = plt.subplots(1, 2, figsize=(11, 8.5))
     picks = [("I5_DM07-28_0919", "#1b9e77"), ("I5_PD06-08_1108", "#d95f02"), ("I5_DM15-17_0903", "#7570b3")]
     for tag, col in picks:
-        for j in sorted(glob.glob(f"{U}/WADERs_analysis_{tag}/gain_vs_charge/module_*_gain_vs_charge.json"))[:1]:
+        for j in sorted(glob.glob(f"{u}/WADERs_analysis_{tag}/gain_vs_charge/module_*_gain_vs_charge.json"))[:1]:
             board = re.search(r"module_(\d+)_", j).group(1)
             for k, (ext, r) in enumerate(sorted(json.load(open(j))["extensions"].items())):
                 if not r.get("ok"):
@@ -174,6 +229,9 @@ with PdfPages(OUT) as _pp:
     fig.suptitle("Page 2 - the effect being corrected: the gain falls with the charge in a pixel", fontsize=14)
     fig.tight_layout(rect=[0, 0, 1, 0.95]); pdf.savefig(fig); plt.close(fig)
 
+
+def pages_single_ccd(pdf, u, rows):
+    """Pages 3-5: Fe-55 spectra (front-side clusters) of 12 single CCDs without / with the correction."""
     # ------------------------------------------------------------------ pages 3-5: single CCD spectra
     examples = [
         [("I5_DM07-28_0919", "106", "EXT3"), ("I5_DM07-28_0919", "110", "EXT1"),
@@ -191,8 +249,8 @@ with PdfPages(OUT) as _pp:
     for p, (page, note) in enumerate(zip(examples, notes)):
         fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
         for ax, (tag, b, e) in zip(axes.flat, page):
-            d = f"{U}/WADERs_analysis_{tag}"
-            r = row(tag, b, e)
+            d = f"{u}/WADERs_analysis_{tag}"
+            r = row(rows, tag, b, e)
             spectrum_panel(ax, energies(f"{d}/root", b, int(e[3:])), energies(f"{d}/root_gaincorr", b, int(e[3:])),
                            f"{pretty(tag)}  -  {module_of(tag, b)} {e}",
                            r["orig"][0] if r and r["orig"] else None, r["corr"][0] if r and r["corr"] else None,
@@ -202,10 +260,15 @@ with PdfPages(OUT) as _pp:
                      fontsize=12)
         fig.tight_layout(rect=[0, 0, 1, 0.92]); pdf.savefig(fig); plt.close(fig)
 
+
+def pages_alignment(pdf, u, dm2426):
+    """Pages 6-8: K-alpha region of all 12 CCDs of three module sets overlaid, each scaled to its
+    maximum; the spread of the peak bins of the corrected CCDs shows how well they agree.
+    CCDs without a reliable curve (from gain_vs_charge/module_*_gain_vs_charge.json) are dashed grey."""
     # ------------------------------------------------------------------ pages 6-8: module alignment
-    align = [(f"{DM2426}", "Image 5, DM24/DM25/DM26, 09/13 (the first test set, 18 images)", "DM2426"),
-             (f"{U}/WADERs_analysis_I5_DM07-28_0919", "Image 5, DM07/DM27/DM28, 09/19", "I5_DM07-28_0919"),
-             (f"{U}/WADERs_analysis_I5_PD06-08_1108", "Image 5, PD06/PD07/PD08, 11/08", "I5_PD06-08_1108")]
+    align = [(f"{dm2426}", "Image 5, DM24/DM25/DM26, 09/13 (the first test set, 18 images)", "DM2426"),
+             (f"{u}/WADERs_analysis_I5_DM07-28_0919", "Image 5, DM07/DM27/DM28, 09/19", "I5_DM07-28_0919"),
+             (f"{u}/WADERs_analysis_I5_PD06-08_1108", "Image 5, PD06/PD07/PD08, 11/08", "I5_PD06-08_1108")]
     for p, (d, title, tag) in enumerate(align):
         fig, axes = plt.subplots(1, 2, figsize=(11, 8.5), sharey=True)
         bins = np.arange(5.3, 6.8, 0.03)
@@ -242,11 +305,14 @@ with PdfPages(OUT) as _pp:
                      f"grey dashed = CCD without a reliable curve (left unchanged, not in the peak range)", fontsize=12)
         fig.tight_layout(rect=[0, 0, 1, 0.92]); pdf.savefig(fig); plt.close(fig)
 
+
+def page_binned(pdf, u, rows):
+    """Page 9: binned images (Image 6/7, all clusters), where pixels hold more charge."""
     # ------------------------------------------------------------------ page 9: binned image
     fig, axes = plt.subplots(2, 2, figsize=(11, 8.5))
     for ax, (tag, b, e) in zip(axes.flat, [("I6_DM07-28_0919", "106", "EXT2"), ("I6_DM07-28_0919", "110", "EXT4"),
                                            ("I6_DM15-17_0903", "109", "EXT1"), ("I7_DM07-28_0919", "109", "EXT3")]):
-        d = f"{U}/WADERs_analysis_{tag}"; r = row(tag, b, e)
+        d = f"{u}/WADERs_analysis_{tag}"; r = row(rows, tag, b, e)
         spectrum_panel(ax, energies(f"{d}/root", b, int(e[3:]), front=False),
                        energies(f"{d}/root_gaincorr", b, int(e[3:]), front=False),
                        f"{pretty(tag)}  -  {module_of(tag, b)} {e}",
@@ -257,6 +323,9 @@ with PdfPages(OUT) as _pp:
                  "Pixels hold more charge here, so the correction is larger", fontsize=12)
     fig.tight_layout(rect=[0, 0, 1, 0.92]); pdf.savefig(fig); plt.close(fig)
 
+
+def page_all_datasets(pdf, rows):
+    """Page 10: K-alpha peak / 5.899 keV of every CCD of every Image 5/6/7 dataset, without and with."""
     # ------------------------------------------------------------------ page 10: every dataset
     fig, ax = plt.subplots(figsize=(11, 8.5))
     tags = [t for t in sorted({r["tag"] for r in rows}) if t.split("_")[0] in ("I5", "I6", "I7")
@@ -280,6 +349,9 @@ with PdfPages(OUT) as _pp:
                  "Corrected CCDs (circles) move to 1.00 and close up; unchanged CCDs (x) keep their spread", fontsize=12)
     fig.tight_layout(); pdf.savefig(fig); plt.close(fig)
 
+
+def page_limits(pdf, res):
+    """Page 11: when the correction cannot help (rejected curves, unsupported images, what remains)."""
     # ------------------------------------------------------------------ page 11: limits
     nok = sum(1 for cc in res["curves"] if cc["ok"]); ntot = len(res["curves"])
     text_page(pdf, "When the correction cannot help", [
@@ -297,4 +369,33 @@ with PdfPages(OUT) as _pp:
             "Corrected K-alpha sits ~0.2-0.7% below 5.899 keV: charge in the faint edge of each cluster that the "
             "clustering threshold drops. A gain correction cannot recover it. Back-side (diffuse) clusters lose more."]),
     ])
-print("->", OUT)
+
+
+def main():
+    """Options, load universal_results.json, write the 11 pages."""
+    ap = argparse.ArgumentParser(description="Multi-page PDF on the gain-vs-charge correction and Fe-55 / cluster energies.")
+    ap.add_argument("--universal", default=U,
+                    help=f"folder with universal_results.json and WADERs_analysis_<tag>/ (default: {U})")
+    ap.add_argument("--dm2426", default=DM2426, help=f"WADERs analysis of the DM24-26 Image 5 set (default: {DM2426})")
+    ap.add_argument("--out", default=OUT, help=f"output PDF (default: {OUT})")
+    ap.add_argument("--pages-dir", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "pages"),
+                    help="folder for the page_NN.png copies of the pages (default: pages/ next to this script)")
+    args = ap.parse_args()
+    u = args.universal
+    res = json.load(open(f"{u}/universal_results.json"))
+    rows = res["rows"]
+
+    with PdfPages(args.out) as _pp:
+        pdf = _Both(_pp, args.pages_dir)
+        page_intro(pdf, rows)
+        page_curves(pdf, u, res)
+        pages_single_ccd(pdf, u, rows)
+        pages_alignment(pdf, u, args.dm2426)
+        page_binned(pdf, u, rows)
+        page_all_datasets(pdf, rows)
+        page_limits(pdf, res)
+    print("->", args.out)
+
+
+if __name__ == "__main__":
+    main()

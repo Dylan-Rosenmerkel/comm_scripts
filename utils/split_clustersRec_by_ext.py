@@ -16,6 +16,19 @@ Usage:
     python split_clustersRec_by_ext.py a_ext1234.root b_ext1234.root -o outdir
 
 Extensions without clusters are not written. Needs PyROOT.
+
+Output: <outdir>/<name>_ext<N>.root per extension with clusters (clustersRec with only
+that extension's clusters, plus info and process_config), and a list of the new files
+(--list, default <outdir>/root_files_per_ext.txt) to feed to the per-extension scripts.
+Caveat: the clustersRec tree is assumed to have a single entry (panaSKImg writes all
+clusters of an image as vectors in entry 0); --nrows must match the rows per extension
+of the stacked image.
+
+How to read this file
+    the C++ block (splitext::keep / shift / ext_of)  fast per-cluster vector operations
+    Y_BRANCHES     branches holding row coordinates, shifted per extension
+    split_file     split one file: assign clusters to extensions, keep/shift, write
+    main           command line: expand .txt lists, split every file, write the list
 """
 import argparse
 import os
@@ -103,6 +116,8 @@ def split_file(path, outdir, nrows):
 
 
 def main():
+    """Command line: read the inputs (files or .txt lists of files), split each into per-extension
+    files in --outdir and write the list of all new files (absolute paths, one per line)."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("inputs", nargs="+", help="..._ext1234.root files, or a .txt list with one path per line")
     ap.add_argument("-o", "--outdir", required=True, help="folder for the per-extension files (created if missing)")
