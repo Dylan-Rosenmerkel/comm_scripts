@@ -73,5 +73,48 @@ class Periodogram(unittest.TestCase):
         self.assertAlmostEqual(gs[np.argmax(p)], 1.3, delta=0.002)
 
 
+class CoherentPooling(unittest.TestCase):
+    """_coherent_points: images converted with their own curves are pooled into one comb."""
+
+    @staticmethod
+    def image(seed, scale, n_pix=60000):
+        """A simulated image: electrons spread over 20-1500, response scale * A(n) of LINEAR, noise 0.15 e-.
+        Returns (pixels converted with the image's own, exact curve, that curve)."""
+        rng = np.random.default_rng(seed)
+        n = rng.integers(20, 1500, n_pix).astype(float)
+        model = dict(LINEAR, a=LINEAR["a"] * scale, b=LINEAR["b"] * scale)
+        x = GVC.adu_of_n(n, model["a"], model["b"], model["n_cap"]) + rng.normal(0, 0.15 * model["a"], n.size)
+        return GVC.electrons_of_adu(x, model), model
+
+    def test_recovers_the_gain_and_spacing_one(self):
+        """With exact curves the tooth spacing in electrons is 1 and g(n) is the curves' mean gain."""
+        imgs = [self.image(s, k) for s, k in ((1, 1.000), (2, 1.002), (3, 0.998))]
+        pts = GVC._coherent_points([u for u, _ in imgs], [m for _, m in imgs])
+        good = [p for p in pts if p["significant"]]
+        self.assertGreaterEqual(len(good), 8)
+        for p in good:
+            self.assertAlmostEqual(p["spacing_vs_curves"], 1.0, delta=3 * p["err"] / p["g"] + 1e-3)
+            gbar = np.mean([float(GVC.g_of(p["n"], m)) for _, m in imgs])
+            self.assertAlmostEqual(p["g"], gbar, delta=3 * p["err"] + 1e-3 * gbar)
+
+    def test_offsets_between_images_are_aligned(self):
+        """Teeth shifted by +0.3 / -0.3 e- in two of the images (an integration error of their curves)
+        are aligned before pooling: the pooled visibility stays that of one image, not washed out."""
+        imgs = [self.image(s, 1.0) for s in (1, 2, 3)]
+        us = [imgs[0][0], imgs[1][0] + 0.3, imgs[2][0] - 0.3]
+        pts = GVC._coherent_points(us, [m for _, m in imgs])
+        one = GVC._coherent_points([imgs[0][0]], [imgs[0][1]])
+        for p, q in zip(pts[:6], one[:6]):
+            self.assertGreater(p["visibility"], 0.9 * q["visibility"])
+
+    def test_independent_of_image_order(self):
+        imgs = [self.image(s, k) for s, k in ((1, 1.000), (2, 1.002), (3, 0.998))]
+        a = GVC._coherent_points([u for u, _ in imgs], [m for _, m in imgs])
+        b = GVC._coherent_points([u for u, _ in imgs[::-1]], [m for _, m in imgs[::-1]])
+        for p, q in zip(a, b):
+            self.assertAlmostEqual(p["g"], q["g"], places=6)
+            self.assertAlmostEqual(p["visibility"], q["visibility"], places=6)
+
+
 if __name__ == "__main__":
     unittest.main()

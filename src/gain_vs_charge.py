@@ -49,9 +49,12 @@ Usage:
       -> OUTDIR/<same name>.root with pixels_E and Energy recomputed with g(n)
 (`measure` is the default: gain_vs_charge.py IMAGES... -o OUTDIR also works.)
 
-Images of the same CCDs (same module / ACM) can be given together: each image's comb is
-measured on its own and the comb powers are added (the combs of different images need not
-line up; for one image this is the plain periodogram).
+Images of the same CCDs (same module / ACM) can be given together (--combine):
+  coherent (default): each image is measured on its own and converted to electrons with its own
+      curve; the remaining tooth offset of each image (a few tenths of an electron) is removed, and
+      all pixels are pooled into one comb. This reaches higher charge than one image (the noise
+      level falls with the total number of pixels) and does not depend on the order of the images.
+  incoherent: the comb powers of the images are added (measured with the first image's g0).
 Needs numpy, scipy, astropy (measure) and PyROOT (apply); uses autoconfig_panaSKImg.py
 from the same folder for the geometry and the low-charge gain.
 
@@ -463,8 +466,151 @@ def _measure_print(name, res, g0, nrows_clean, nrows):
         print(f"  {name}: no g(n) fit ({res.get('reason')})")
 
 
-def measure(images, exts=None, verbose=True, extrap_factor=3.0, model="interpolated"):
+COMBINE = ("coherent", "incoherent")
+
+
+def _tooth_offsets(u):
+    """Where one image's comb teeth sit, in electrons, relative to the integers, as a function of charge.
+
+    u: the image's clean pixels converted to electrons with its own curve. In a perfect conversion
+    every tooth is at an integer; in practice the integral A(n) of the curve is off by a few tenths
+    of an electron (it accumulates the small errors of g at low charge), by a different amount in
+    each image. In each charge window where this image alone shows a significant comb
+    (R > 4/sqrt(N)), the offset is the mean tooth position arg(sum exp(2 pi i u)) / 2 pi; the values
+    are unwrapped from window to window (they drift slowly). Returns (n, offset) at the window centres,
+    from the first window up to the last significant one before a non-significant window.
+    """
+    ns, offs = [], []
+    for lo, hi in zip(N_EDGES[:-1], N_EDGES[1:]):
+        v = u[(u > lo) & (u < hi)]
+        if v.size < 50:
+            break
+        S = np.sum(np.exp(2j * np.pi * v))
+        if abs(S) / v.size <= 4 / np.sqrt(v.size):
+            break
+        ns.append(float(np.sqrt(lo * hi)))
+        offs.append(float(np.angle(S)))
+    return np.array(ns), np.unwrap(np.array(offs)) / (2 * np.pi)
+
+
+def _offset_function(ns, offs):
+    """Offset d(n) [e-] and its slope d'(n): linear interpolation between the measured offsets, held
+    constant below the first one, continued with the slope of the last two above the last one."""
+    if ns.size == 0:
+        return (lambda n: np.zeros_like(np.asarray(n, float))), (lambda n: np.zeros_like(np.asarray(n, float)))
+    s_end = (offs[-1] - offs[-2]) / (ns[-1] - ns[-2]) if ns.size >= 2 else 0.0
+
+    def d(n):
+        n = np.asarray(n, float)
+        return np.where(n > ns[-1], offs[-1] + s_end * (n - ns[-1]), np.interp(n, ns, offs))
+
+    def dslope(n):
+        n = np.asarray(n, float)
+        if ns.size < 2:
+            return np.zeros_like(n)
+        seg = np.clip(np.searchsorted(ns, n) - 1, 0, ns.size - 2)
+        sl = np.diff(offs) / np.diff(ns)
+        return np.where(n > ns[-1], s_end, np.where(n < ns[0], 0.0, sl[seg]))
+    return d, dslope
+
+
+def _coherent_points(us, models):
+    """Local gain in each charge window from several images, pooled COHERENTLY.
+
+    us: per image, the clean pixel values already converted to electrons with that image's own
+    curve (u = A_i^-1(x)); models: those curves. In these units every image's comb teeth sit at
+    (nearly) integer u, so the pixels of all images can be pooled into one comb: for N pixels
+    the noise level of the visibility is 1/sqrt(N) of ALL pixels, where adding comb powers
+    (incoherent) only reaches ~1/sqrt(N) of one image.
+
+    Alignment: the teeth of image i actually sit at integer + d_i(n), a slowly drifting offset of
+    a few tenths of an electron that differs between images (_tooth_offsets); unless it is removed,
+    the pooled teeth partly cancel. Each image is shifted by its own d_i (measured where that image
+    alone sees the comb, continued linearly above), u -> u - d_i(u).
+
+    Each window is then scanned for the tooth spacing p of the pooled, aligned pixels (p = 1 where
+    the curves are right; p != 1 e.g. above an image's own n_max, where its curve is extrapolated).
+    The local gain is g(n) = p * mean_i[(1 + d_i'(n)) g_i(n)]: the spacing in the original units u is
+    p (1 + d_i'), and one electron in u is g_i(n) ADU. Windows are in electrons (N_EDGES), at most
+    300000 / (number of images) pixels per image (random subset, fixed seed); significance
+    R > 4 / sqrt(N); error as in _measure_comb_points; the scan stops at < 400 pixels or after two
+    non-significant windows in a row.
+    """
+    shifts = [_offset_function(*_tooth_offsets(u)) for u in us]
+    aligned = [u - d(u) for u, (d, _) in zip(us, shifts)]
+    pts, misses = [], 0
+    cap = 300000 // max(len(us), 1)
+    for lo, hi in zip(N_EDGES[:-1], N_EDGES[1:]):
+        vs = [u[(u > lo) & (u < hi)] for u in aligned]
+        if sum(v.size for v in vs) < 400:
+            break
+        vs = [np.random.default_rng(0).choice(v, cap, replace=False) if v.size > cap else v for v in vs]
+        v = np.concatenate(vs)
+        p, R = best_period(v, 1.0, lo=0.95, hi=1.05)
+        nc = float(np.sqrt(lo * hi))
+        gbar = float(np.mean([(1 + float(ds(nc))) * float(g_of(nc, m)) for m, (_, ds) in zip(models, shifts)]))
+        sig = R > 4 / np.sqrt(v.size)
+        err = gbar / (2 * np.pi * ((hi - lo) / np.sqrt(12)) * R * np.sqrt(v.size)) if R > 0 else float("nan")
+        pts.append(dict(n=nc, n_lo=int(lo), n_hi=int(hi), g=float(p * gbar), err=float(err), visibility=float(R),
+                        npix=int(v.size), significant=bool(sig), spacing_vs_curves=float(p)))
+        misses = 0 if sig else misses + 1
+        if misses >= 2:
+            break
+    return pts
+
+
+def _measure_coherent(images, exts, verbose, extrap_factor, model):
+    """measure() for several images, combined coherently (see _coherent_points).
+
+    1. Every image is measured on its own (its own g0, row alignment, clean rows and curve), so
+       nothing depends on which image comes first.
+    2. Per extension, the images with a usable curve of their own (at least 2 needed) are converted
+       to electrons with that curve and pooled; the points from the pooled comb are fitted as usual.
+       The result reaches as far as the pooled comb is significant, which can be beyond every single
+       image's n_max (there the comb checks, and corrects, the images' extrapolated curves).
+    3. With fewer than 2 usable images the extension falls back to the incoherent combination.
+    Extra result keys: combine, images_used, per_image_n_max; points carry spacing_vs_curves (p).
+    """
+    images = sorted(images)                     # same result whatever the order of the input
+    per = [measure([f], exts, verbose=False, extrap_factor=extrap_factor, model=model) for f in images]
+    A, fits, hdul0, exts, cfg, aargs, gp = _measure_setup(images, exts)
+    results, fallback = {}, None
+    for e in exts:
+        name = f"EXT{e}"
+        usable = [(f, r[name]) for f, r in zip(images, per) if r.get(name, {}).get("ok")]
+        if len(usable) < 2:
+            if fallback is None:
+                fallback = measure(images, exts, verbose=False, extrap_factor=extrap_factor, model=model,
+                                   combine="incoherent")
+            res = dict(fallback[name], combine="incoherent",
+                       combine_note=f"only {len(usable)} image(s) with a usable curve of their own")
+        else:
+            us, nclean, nrows = [], 0, 0
+            for f, r in usable:
+                vals, nc, nr = _measure_clean_values(fits, [f], e, cfg, r["g_1e"])
+                us.append(electrons_of_adu(vals[0], r["model"]))
+                nclean += nc
+                nrows += nr
+            g0 = float(np.mean([r["g_1e"] for _, r in usable]))
+            res = _measure_fit(_coherent_points(us, [r["model"] for _, r in usable]), g0, nclean, nrows,
+                               model, extrap_factor)
+            res.update(combine="coherent", images_used=[os.path.basename(f) for f, _ in usable],
+                       per_image_n_max=[r["n_max_measured"] for _, r in usable])
+        results[name] = res
+        if verbose:
+            _measure_print(name, res, res.get("g_1e", float("nan")), res.get("clean_rows", 0), res.get("rows", 0))
+            if res.get("combine") == "coherent":
+                print(f"         coherent combination of {len(res['images_used'])} images "
+                      f"(single images measured to {', '.join(f'{v:.0f}' for v in res['per_image_n_max'])} e-)")
+    return results
+
+
+def measure(images, exts=None, verbose=True, extrap_factor=3.0, model="interpolated", combine="coherent"):
     """{ext: result} from a list of images of the same CCDs; model: interpolated, broken or linear.
+
+    combine (several images only): "coherent" (default; each image converted with its own curve,
+    then all pixels pooled into one comb, see _measure_coherent) or "incoherent" (comb powers of
+    the images added, measured with the first image's g0).
 
     images: paths of .fz/.fits images of the same CCDs; exts: extension numbers (default:
     those of the reference JSON present in the first image); extrap_factor: n_cap / n_max.
@@ -475,6 +621,8 @@ def measure(images, exts=None, verbose=True, extrap_factor=3.0, model="interpola
     drop of g from 0 to 1000 e-), nonlinearity; reason when not ok. Extensions without
     resolved electron peaks give dict(ok=False, reason=...).
     """
+    if len(images) > 1 and combine == "coherent":
+        return _measure_coherent(images, exts, verbose, extrap_factor, model)
     A, fits, hdul0, exts, cfg, aargs, gp = _measure_setup(images, exts)
 
     results = {}
@@ -715,6 +863,9 @@ def main():
     m.add_argument("--ext", type=int, nargs="+", default=None, help="extensions (default: all in the reference)")
     m.add_argument("--extrap-factor", type=float, default=3.0,
                    help="continue g(n) linearly up to this x the highest measured charge, constant above (default 3)")
+    m.add_argument("--combine", choices=COMBINE, default="coherent",
+                   help="several images: coherent (default; each image converted with its own curve, then all "
+                        "pixels pooled) or incoherent (comb powers added)")
     m.add_argument("--model", choices=MODELS, default="interpolated",
                    help="form of g(n): interpolated (default; monotone interpolation through the measured "
                         "points), broken (two straight lines, fitted knot) or linear (straight line)")
@@ -731,7 +882,7 @@ def main():
         os.makedirs(args.outdir, exist_ok=True)
         name = args.name or os.path.basename(args.images[0]).split(".")[0]
         print(f"g(n) from {len(args.images)} image(s):")
-        res = measure(args.images, args.ext, extrap_factor=args.extrap_factor, model=args.model)
+        res = measure(args.images, args.ext, extrap_factor=args.extrap_factor, model=args.model, combine=args.combine)
         jpath = os.path.join(args.outdir, f"{name}_gain_vs_charge.json")
         with open(jpath, "w") as fh:
             json.dump({"images": [os.path.abspath(i) for i in args.images], "e_per_electron_eV": E_PER_E,

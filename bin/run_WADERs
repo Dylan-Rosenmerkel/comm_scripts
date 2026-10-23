@@ -267,8 +267,11 @@ what it does, per image (gain_dc_split.py --per-ext, always on):
   copied unchanged. Each curve also gets <name>_nonlinearity.png in gain_vs_charge/:
   measured charge minus peak number against measured charge, A(n)/g(0) - n, with the
   curve's low-charge gain g(0) as reference (points from the measured local gains, the
-  model, and a quadratic fit). Several images of a module are combined by adding each image's comb
-  power (the combs of different images need not line up).
+  model, and a quadratic fit). Several images of a module are combined coherently by default
+  (--gain-combine coherent): each image is measured and converted to electrons with its own
+  curve, so the comb teeth of all images line up and their pixels can be pooled into one comb;
+  this reaches higher charge than one image and does not depend on the image order.
+  --gain-combine incoherent adds each image's comb power instead (the earlier method).
   --gain-model interpolated (default) | broken | linear: the form of g(n): monotone
   interpolation through the measured points, two straight lines with a fitted knot, or
   one straight line (see gain_vs_charge.py; the straight line does not follow the measured
@@ -372,6 +375,10 @@ def build_parser(full=False):
     ap.add_argument("--gain-model", choices=("interpolated", "broken", "linear"), default="interpolated",
                     help="with --gain-correction: form of g(n): interpolated (default; monotone interpolation "
                          "through the measured points), broken (two straight lines, fitted knot) or linear")
+    ap.add_argument("--gain-combine", choices=("coherent", "incoherent"), default="coherent",
+                    help="with --gain-correction: how several images of a module are combined for the module curve: "
+                         "coherent (default; each image converted with its own curve, then all pixels pooled - "
+                         "independent of the image order) or incoherent (comb powers added)")
     ap.add_argument("--gain-anchor", choices=("comb", "fit"), default="comb",
                     help="with --gain-correction: convert with the comb's g(n) including its low-charge gain "
                          "(comb, default), or keep each image's fitted gain and correct only the charge "
@@ -712,7 +719,7 @@ def step3_collect_root_files(run):
 def measure_curve(run, GVC, srcs, name, title, run_exts):
     """Measure g(n) from the images srcs (gain_vs_charge.measure), save it as gain_vs_charge/<name>_gain_vs_charge.json
     with its plots (<name>_gain_vs_charge.png, <name>_nonlinearity.png). Returns (json path, result per CCD)."""
-    res = GVC.measure(srcs, run_exts, verbose=False, model=run.args.gain_model)
+    res = GVC.measure(srcs, run_exts, verbose=False, model=run.args.gain_model, combine=run.args.gain_combine)
     mpath = os.path.join(run.dirs["gc"], f"{name}_gain_vs_charge.json")
     with open(mpath, "w") as fh:
         json.dump({"images": srcs, "e_per_electron_eV": GVC.E_PER_E, "extensions": res}, fh, indent=1)
@@ -732,7 +739,10 @@ def report_curve(gc_lines, title, res):
                             + (f", nonlinearity {rr['nonlinearity']['c2']:.2e} x^2 {rr['nonlinearity']['c1']:+.4f} x"
                                if rr.get("nonlinearity") else "")
                             + (f" -- module curve: own comb not usable ({rr.get('own_reason')})"
-                               if rr.get("source") == "module" else ""))
+                               if rr.get("source") == "module" else "")
+                            + (f" [coherent, {len(rr['images_used'])} images; single images to "
+                               f"{'/'.join(f'{v:.0f}' for v in rr['per_image_n_max'])} e-]"
+                               if rr.get("combine") == "coherent" and rr.get("source") != "module" else ""))
         else:
             gc_lines.append(f"  {title} {ext}: no correction ({rr.get('reason')})")
 
