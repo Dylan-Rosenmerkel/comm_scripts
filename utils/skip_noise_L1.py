@@ -57,6 +57,25 @@ Output: OUTDIR/<name>_noise_vs_skips.png, .csv, <name>_avg.fits (average of the 
         [OUTDIR/<name>_composites_N<N>/ with --composites]
 Needs numpy, astropy, matplotlib, and comm_scripts/src/autoconfig_panaSKImg.py (gain finder):
 unlike the other utils/ scripts this one needs src/ next to utils/.
+
+How to read this file
+---------------------
+    s31, read_rows          decode the raw words, one row at a time, with layout checks
+    geometry_from_name      rows x cols x skips from the file name
+    robust_std, n_values    small statistics helpers (MAD-based sigma, log-spaced N list)
+    main                    runs the steps below in order:
+      parse_args            command line
+      setup                 geometry, skip counts, list of N, composite sizes
+      decode_rows           one pass over the file: N-skip averages, Allan sigmas, transient
+                            profile, skip spectrum, composite images (per row)
+      find_gain             gain from the electron comb of the full average (or --gain)
+      pixel_charges         electron content of every pixel and the pixels used for 'image' noise
+      image_noise           'image' noise for every N
+      noise_summaries       within-pixel curve, sigma_1, white-noise floor
+      write_composites      composite FITS images + composites.txt/.csv (--composites only)
+      write_table           <name>_noise_vs_skips.csv
+      write_average_fits    <name>_avg.fits
+      plot_noise            <name>_noise_vs_skips.png (3 panels)
 """
 import argparse
 import csv
@@ -81,6 +100,11 @@ def s31(x):
 
 
 def geometry_from_name(path):
+    """(rows, cols, skips) from a level-1 file name such as img_200x1500x4000_1x1_L1_..., else None.
+
+    The readout writes the image size into the name; the binary file itself has no header
+    with it, so without the name (or --geometry) the rows cannot be cut.
+    """
     m = re.search(r"_(\d+)x(\d+)x(\d+)_\d+x\d+_L1_", os.path.basename(path))
     return tuple(int(v) for v in m.groups()) if m else None
 
@@ -117,14 +141,25 @@ def read_rows(path, ncols, nskip, max_rows=None):
 
 
 def robust_std(x):
+    """Gaussian-equivalent standard deviation from the median absolute deviation (1.4826 * MAD).
+
+    Unlike np.std it ignores the few pixels with charge, tracks or jumps, so it measures the
+    width of the noise core. x: array of any shape (flattened by the medians); same units back.
+    """
     return 1.4826 * np.median(np.abs(x - np.median(x)))
 
 
 def n_values(nmax):
+    """Numbers of skips N at which the noise is evaluated: ~45 log-spaced integers from 1 to nmax.
+
+    Rounding merges duplicates at small N, so the list is shorter than 45; nmax is always
+    the last entry (the full average). Returns a sorted list of int.
+    """
     return sorted({int(round(v)) for v in np.logspace(0, np.log10(nmax), 45)} | {nmax})
 
 
-def main():
+def parse_args():
+    """Command-line options (see the module docstring); returns the argparse namespace."""
     ap = argparse.ArgumentParser(description="Decode a level-1 (per-skip) skipper image and plot noise vs skips.")
     ap.add_argument("infile")
     ap.add_argument("-o", "--outdir", default=".")
@@ -135,8 +170,21 @@ def main():
     ap.add_argument("--max-rows", type=int, help="decode only the first rows (quick look)")
     ap.add_argument("--composites", type=int, metavar="N",
                     help="also write N images, each the average of a consecutive 1/N of the used skips")
-    args = ap.parse_args()
+    return ap.parse_args()
 
+
+def setup(args):
+    """Image geometry and the skip bookkeeping; creates the output folder.
+
+    Returns (nrows, ncols, nskip, K, M, ns, nb, name, NC, LC):
+        K   skips dropped at the start of each pixel (--skip-first)
+        M   skips used per pixel (nskip - K)
+        ns  N values for the 'image' noise (n_values(M), last = M)
+        nb  the N values with at least two blocks of N skips (within-pixel method)
+        name  input file name without extension (prefix of every output)
+        NC, LC  number of composite images and skips per composite (both None without --composites)
+    Exits with a message if the geometry is unknown or --composites is out of range.
+    """
     geo = (tuple(int(v) for v in args.geometry.lower().split("x")) if args.geometry
            else geometry_from_name(args.infile))
     if not geo:
@@ -148,6 +196,7 @@ def main():
     nb = [n for n in ns if M // n >= 2]                 # block sizes for the within-pixel method
     name = os.path.basename(args.infile).split(".")[0]
     NC = args.composites
+    LC = None
     if NC is not None:
         if not 1 <= NC <= M:
             sys.exit(f"--composites must be between 1 and {M} (the used skips)")
@@ -157,7 +206,30 @@ def main():
               + (f" ({M - NC * LC} left-over skips at the end not used)" if M % NC else "")
               + (f"; needs ~{gb:.1f} GB of memory" if gb > 1 else ""))
     os.makedirs(args.outdir, exist_ok=True)
+    return nrows, ncols, nskip, K, M, ns, nb, name, NC, LC
 
+
+def decode_rows(args, ncols, nskip, K, M, ns, nb, NC, LC):
+    """One pass over the file; everything that needs the per-skip values is computed here, row by row.
+
+    Per row (q = pixel value per skip in ADU, d = q without the first K skips):
+      * first-N-skip averages of every pixel for every N in ns (cumulative sums of d)
+      * composite images: d cut into NC blocks of LC skips, each averaged (with --composites)
+      * within-pixel (Allan) sigma for every block size in nb: each pixel's mean and the
+        pattern common to all pixels (median over the row, e.g. the transient tail) are
+        removed first, then the robust std of the difference of consecutive block means / sqrt(2)
+      * start-of-pixel transient: median over pixels of the offset of each skip from the
+        pixel's mean (all nskip skips, including the dropped ones)
+      * power spectrum of the skip sequence, every 4th row (saves time)
+    Returns (img, prof, psd, comp, s_rows, rows, n, t0):
+        img    float [len(ns), rows, ncols] N-skip averages (ADU); img[-1] = all M used skips
+        prof   float [nskip] mean over rows of the transient profile (ADU)
+        psd    float [M//2+1] skip-sequence power per frequency bin (ADU^2), averaged over pixels
+        comp   list of float32 [NC, ncols] per row (empty without --composites)
+        s_rows list of per-row within-pixel sigmas (ADU), one per block size in nb
+        rows   number of rows decoded; n = samples per window; t0 = start time (time.time())
+    Exits if the file has no complete row.
+    """
     t0 = time.time()
     img_n = []                        # [row] -> [len(ns), ncols] first-N-skip averages (ADU)
     s_rows = []                       # [row] -> within-pixel (Allan) sigma per block size (ADU)
@@ -191,9 +263,17 @@ def main():
     img = np.stack(img_n, axis=1)                                   # [len(ns), rows, ncols]
     prof /= rows
     psd /= sum(1 for r in range(rows) if r % 4 == 0) * ncols
-    print(f"decoded {rows} rows x {ncols} cols x {nskip} skips ({n} samples per window) in {time.time() - t0:.0f} s")
+    return img, prof, psd, comp, s_rows, rows, n, t0
 
-    # ---- gain from the comb of the full average
+
+def find_gain(args, img):
+    """Gain (ADU/e-) from the electron comb of the full average, unless --gain is given.
+
+    full = the average of all used skips with each row's median subtracted (pedestal); its
+    noise is ~0.1 e-, so the pixel values form a comb of peaks one gain apart. find_gain
+    finds the spacing (searched between 0.6 and 3.0 ADU/e-), refine_gain fits it more
+    precisely after aligning the rows on the comb. Returns (full, g); exits if no comb.
+    """
     full = img[-1] - np.median(img[-1], axis=1, keepdims=True)
     import autoconfig_panaSKImg as A
     g = args.gain
@@ -203,56 +283,102 @@ def main():
             sys.exit("no electron comb in the full average; give --gain")
         g = A.refine_gain(A.clip_tails(A.align_rows(full, g0).ravel()), g0)[0]
     print(f"gain {g:.4f} ADU/e-")
+    return full, g
 
-    # ---- electron content of every pixel (full average), then the 'image' noise per N
+
+def pixel_charges(full, g, max_e):
+    """Electron content of every pixel, read from the full average.
+
+    The rows are aligned on the comb, the comb's offset is removed and the value is rounded
+    to whole electrons. Returns (ne, use): ne float [rows, ncols] electrons, use bool mask of
+    the pixels with 0 <= ne <= max_e (the pixels used for the 'image' noise).
+    """
+    import autoconfig_panaSKImg as A
     xa = A.align_rows(full, g)
     off = A.comb_offset(A.clip_tails(xa.ravel()), g)
     ne = np.round((xa - off) / g)
-    use = (ne >= 0) & (ne <= args.max_e)
+    use = (ne >= 0) & (ne <= max_e)
+    return ne, use
+
+
+def image_noise(img, ns, ne, use, g):
+    """'image' noise (e-) for every N in ns: what an image averaged over N skips would show.
+
+    The known charge (ne * g) is subtracted from each N-skip average, one pedestal per row
+    (median of the used pixels) is removed, and the robust std over the used pixels is
+    converted to electrons. Returns float array [len(ns)].
+    """
     s_img = []
     for i, k in enumerate(ns):
         res = img[i] - ne * g                                       # noise + pedestal of the row
         res = res - np.nanmedian(np.where(use, res, np.nan), axis=1, keepdims=True)
         s_img.append(robust_std(res[use]) / g)
     s_img = np.array(s_img)
+    return s_img
+
+
+def noise_summaries(s_rows, psd, g, M):
+    """Within-pixel curve and the white-noise references, all in e-.
+
+    Returns (s_blk, s1, f, white):
+        s_blk  median over rows of the within-pixel sigma, one per block size in nb
+        s1     single-skip noise (s_blk[0], N = 1)
+        f      frequencies of psd [1/skip]
+        white  white-noise floor per skip: sqrt of the median power at 0.02-0.05 / skip,
+               a band above the slow drifts and below the high-frequency structure
+    """
     s_blk = np.median(np.array(s_rows), axis=0) / g
     s1 = s_blk[0]
     f = np.fft.rfftfreq(M)
     white = np.sqrt(np.median(psd[(f > 0.02) & (f < 0.05)])) / g    # white-noise floor per skip (e-)
+    return s_blk, s1, f, white
 
-    # ---- composite images (--composites)
-    if NC is not None:
-        from astropy.io import fits
-        cdir = os.path.join(args.outdir, f"{name}_composites_N{NC}")
-        os.makedirs(cdir, exist_ok=True)
-        comp = np.stack(comp, axis=1)                               # [NC, rows, ncols]
-        paths, ctab = [], []
-        for j in range(NC):
-            a, b = K + j * LC, K + (j + 1) * LC - 1
-            res = comp[j] - ne * g
-            res = res - np.nanmedian(np.where(use, res, np.nan), axis=1, keepdims=True)
-            sj = robust_std(res[use]) / g
-            hdu = fits.PrimaryHDU(comp[j])
-            hdu.header.update(NSKIPS=(LC, "skips averaged"), SKIPSTRT=(a, "first skip (0 = first in file)"),
-                              SKIPEND=(b, "last skip"), COMPIDX=(j, f"composite {j + 1} of {NC}"), NSAMP=n,
-                              GAIN=(round(g, 5), "ADU/e- (full average)"), NOISE_E=(round(float(sj), 5), "e-"),
-                              NROWSF=(rows, "complete rows decoded"), SRCFILE=os.path.basename(args.infile)[:68])
-            pth = os.path.join(cdir, f"{name}_skips{a}-{b}.fits")
-            hdu.writeto(pth, overwrite=True)
-            paths.append(os.path.abspath(pth))
-            ctab.append((j, a, b, LC, sj))
-        with open(os.path.join(cdir, "composites.txt"), "w") as fh:
-            fh.write("".join(p + "\n" for p in paths))
-        with open(os.path.join(cdir, "composites.csv"), "w", newline="") as fh:
-            wr = csv.writer(fh)
-            wr.writerow(["index", "first_skip", "last_skip", "n_skips", "noise_image_e"])
-            wr.writerows([(j, a, b, l, f"{sj:.5f}") for j, a, b, l, sj in ctab])
-        nz = np.array([t[4] for t in ctab])
-        print(f"composites: {NC} images of {LC} skips in {cdir}; noise {nz.mean():.4f} e- "
-              f"(min {nz.min():.4f}, max {nz.max():.4f})")
-        del comp
 
-    # ---- table
+def write_composites(args, name, NC, LC, K, comp, ne, use, g, n, rows):
+    """Write the --composites images and their lists (see 'Composite images' in the module docstring).
+
+    comp: list (one entry per row) of float32 [NC, ncols]. Each composite gets the same 'image'
+    noise as image_noise() (charge removed, one pedestal per row, robust std in e-), stored in
+    its FITS header (NOISE_E) and in composites.csv. Files: OUTDIR/<name>_composites_N<NC>/
+    <name>_skips<a>-<b>.fits, composites.txt (absolute paths), composites.csv.
+    """
+    from astropy.io import fits
+    cdir = os.path.join(args.outdir, f"{name}_composites_N{NC}")
+    os.makedirs(cdir, exist_ok=True)
+    comp = np.stack(comp, axis=1)                               # [NC, rows, ncols]
+    paths, ctab = [], []
+    for j in range(NC):
+        a, b = K + j * LC, K + (j + 1) * LC - 1
+        res = comp[j] - ne * g
+        res = res - np.nanmedian(np.where(use, res, np.nan), axis=1, keepdims=True)
+        sj = robust_std(res[use]) / g
+        hdu = fits.PrimaryHDU(comp[j])
+        hdu.header.update(NSKIPS=(LC, "skips averaged"), SKIPSTRT=(a, "first skip (0 = first in file)"),
+                          SKIPEND=(b, "last skip"), COMPIDX=(j, f"composite {j + 1} of {NC}"), NSAMP=n,
+                          GAIN=(round(g, 5), "ADU/e- (full average)"), NOISE_E=(round(float(sj), 5), "e-"),
+                          NROWSF=(rows, "complete rows decoded"), SRCFILE=os.path.basename(args.infile)[:68])
+        pth = os.path.join(cdir, f"{name}_skips{a}-{b}.fits")
+        hdu.writeto(pth, overwrite=True)
+        paths.append(os.path.abspath(pth))
+        ctab.append((j, a, b, LC, sj))
+    with open(os.path.join(cdir, "composites.txt"), "w") as fh:
+        fh.write("".join(p + "\n" for p in paths))
+    with open(os.path.join(cdir, "composites.csv"), "w", newline="") as fh:
+        wr = csv.writer(fh)
+        wr.writerow(["index", "first_skip", "last_skip", "n_skips", "noise_image_e"])
+        wr.writerows([(j, a, b, l, f"{sj:.5f}") for j, a, b, l, sj in ctab])
+    nz = np.array([t[4] for t in ctab])
+    print(f"composites: {NC} images of {LC} skips in {cdir}; noise {nz.mean():.4f} e- "
+          f"(min {nz.min():.4f}, max {nz.max():.4f})")
+    del comp
+
+
+def write_table(args, name, ns, nb, s_img, s_blk, s1):
+    """Write OUTDIR/<name>_noise_vs_skips.csv and return its path.
+
+    One line per N: 'image' noise, within-pixel noise (empty where N has fewer than two
+    blocks) and sigma_1/sqrt(N), all in e- with 5 decimals.
+    """
     csv_path = os.path.join(args.outdir, f"{name}_noise_vs_skips.csv")
     with open(csv_path, "w", newline="") as fh:
         wr = csv.writer(fh)
@@ -260,15 +386,25 @@ def main():
         for i, k in enumerate(ns):
             wb = s_blk[nb.index(k)] if k in nb else ""
             wr.writerow([k, f"{s_img[i]:.5f}", f"{wb:.5f}" if wb != "" else "", f"{s1 / np.sqrt(k):.5f}"])
+    return csv_path
 
-    # ---- average image (used skips) as FITS
+
+def write_average_fits(args, name, img, M, K, n, g, rows):
+    """Write OUTDIR/<name>_avg.fits: the average of the M used skips (ADU, float32, no pedestal subtraction)."""
     from astropy.io import fits
     hdu = fits.PrimaryHDU(img[-1].astype(np.float32))
     hdu.header.update(NSKIPS=M, SKIPFRST=(K, "skips dropped per pixel"), NSAMP=n, GAIN=(round(g, 5), "ADU/e-"),
                       NROWSF=(rows, "complete rows decoded"), SRCFILE=os.path.basename(args.infile)[:68])
     hdu.writeto(os.path.join(args.outdir, f"{name}_avg.fits"), overwrite=True)
 
-    # ---- plot
+
+def plot_noise(args, name, ns, nb, s_img, s_blk, s1, white, M, f, psd, g, nskip, prof, K, rows, ncols):
+    """Write OUTDIR/<name>_noise_vs_skips.png and return its path.
+
+    Panels: (1) noise vs N, both methods with the sigma_1/sqrt(N) and white-floor lines;
+    (2) power spectrum of the skip sequence in e-^2; (3) start-of-pixel transient for the
+    first 200 skips (dashed line: end of the dropped skips).
+    """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -304,6 +440,38 @@ def main():
     plt.tight_layout()
     png = os.path.join(args.outdir, f"{name}_noise_vs_skips.png")
     plt.savefig(png, dpi=130)
+    return png
+
+
+def main():
+    """Decode the file, compute the noise curves and write the CSV, FITS and PNG (see 'How to read this file')."""
+    args = parse_args()
+    nrows, ncols, nskip, K, M, ns, nb, name, NC, LC = setup(args)
+
+    img, prof, psd, comp, s_rows, rows, n, t0 = decode_rows(args, ncols, nskip, K, M, ns, nb, NC, LC)
+    print(f"decoded {rows} rows x {ncols} cols x {nskip} skips ({n} samples per window) in {time.time() - t0:.0f} s")
+
+    # ---- gain from the comb of the full average
+    full, g = find_gain(args, img)
+
+    # ---- electron content of every pixel (full average), then the 'image' noise per N
+    ne, use = pixel_charges(full, g, args.max_e)
+    s_img = image_noise(img, ns, ne, use, g)
+    s_blk, s1, f, white = noise_summaries(s_rows, psd, g, M)
+
+    # ---- composite images (--composites)
+    if NC is not None:
+        write_composites(args, name, NC, LC, K, comp, ne, use, g, n, rows)
+    del comp
+
+    # ---- table
+    csv_path = write_table(args, name, ns, nb, s_img, s_blk, s1)
+
+    # ---- average image (used skips) as FITS
+    write_average_fits(args, name, img, M, K, n, g, rows)
+
+    # ---- plot
+    png = plot_noise(args, name, ns, nb, s_img, s_blk, s1, white, M, f, psd, g, nskip, prof, K, rows, ncols)
     print(f"single skip {s1:.2f} e- (white floor {white:.2f} e-); {ns[-1]} skips: {s_img[-1]:.3f} e- (image)")
     print(f"wrote {png}\n      {csv_path}\n      {os.path.join(args.outdir, name + '_avg.fits')}")
 

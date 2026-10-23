@@ -11,15 +11,24 @@ comm_scripts/
   src/     the pipeline modules     autoconfig_panaSKImg.py, gain_dc_split.py,
                                     gain_vs_charge.py, fit_quality.py
   utils/   standalone helpers       compare_dcfit_vs_skips.py, split_clustersRec_by_ext.py,
-                                    skip_noise_L1.py
-  docs/    reports and notes        gain_correction_report.pdf, gain_correction_Am241.pdf,
+                                    skip_noise_L1.py, compare_runs.py
+  tests/   unit tests               python -m unittest discover -s tests -v
+  docs/    guide, notes, reports    PIPELINE_GUIDE.md (start here: the physics and code of each step),
+                                    gain_correction_method/ (g(n) method note, LaTeX + figure scripts),
+                                    am241_note/ (Am-241 10-30 keV analysis: scripts + LaTeX source),
+                                    AMtest_Am241_10-30keV_note_overleaf.zip,
+                                    gain_correction_report.pdf, gain_correction_Am241.pdf,
+                                    report_scripts/ (the scripts that made those two PDFs),
                                     CONTEXT_2026-10-16.md (hand-over notes: what was done, open items),
-                                    patches/ (local pysimdamicm change), data/, report_scripts/
+                                    patches/ (local pysimdamicm change), data/
 ```
 
 Keep `bin/` and `src/` together: `run_WADERs` loads the modules from `../src`, and the `src/`
 scripts import each other from their own folder. `utils/` scripts are independent, except
 `skip_noise_L1.py`, which uses the gain finder in `src/`.
+
+New to the code? Read [docs/PIPELINE_GUIDE.md](docs/PIPELINE_GUIDE.md) first: the data flow,
+the physics behind each step, and which function does what.
 
 ## Quick start
 
@@ -106,6 +115,7 @@ Then panaSKImg runs once per CCD (`--ext N`), in parallel, and the results are c
 | `src/fit_quality.py` | chi2/ndf, scaled errors and dark-current bias of the fits in a panaSKImg output folder |
 | `src/gain_vs_charge.py` | gain vs electrons per pixel g(n) from the electron comb (`measure`: images -> curve, fit, plot; `--model interpolated`/`broken`/`linear`) and the cluster-energy correction (`apply`: cluster ROOT files -> corrected copies) |
 | `utils/split_clustersRec_by_ext.py` | split a cluster file with all CCDs (`_ext1234.root`) into one file per CCD |
+| `utils/compare_runs.py` | compare two `run_WADERs` output folders (summary, fits, JSONs, every cluster energy, composite tables); use it to check that a code change leaves the results unchanged |
 | `utils/compare_dcfit_vs_skips.py` | tile the DC-fit PDFs of several runs (e.g. different skip numbers) into one PDF per CCD |
 | `utils/skip_noise_L1.py` | decode a level-1 image (every skip kept, `*.RJ45ADCDATA<ch>`) and plot noise vs number of skips, the noise spectrum over skips and the start-of-pixel transient; writes `<name>_noise_vs_skips.png/.csv` and `<name>_avg.fits` to `-o` (default: current folder); `--composites N` also writes N images, each the average of a consecutive 1/N of the skips, to `<name>_composites_N<N>/`. Needs `src/` next to `utils/` (gain finder) |
 
@@ -117,3 +127,20 @@ e.g. `python src/autoconfig_panaSKImg.py image.fz -o auto.json`.
 
 Note: the wider DC-fit plot (fit 2 peaks, show 5) uses an `x_max_plot` option that is only in
 patched pysimdamicm versions; without it the scripts simply leave it out.
+
+## Tests
+
+```bash
+python -m unittest discover -s tests -v      # from the comm_scripts folder, with the panaSKImg python
+```
+
+Unit tests cover the input handling of `run_WADERs`, the g(n) models of `gain_vs_charge.py` and the Am-241 fit model;
+they need no data and run in seconds. For changes to the pipeline itself, compare the outputs of `run_WADERs` on the
+same images before and after with `utils/compare_runs.py OLD NEW` (the pipeline is deterministic; see
+docs/PIPELINE_GUIDE.md, section 6).
+
+## Data
+
+Data are not kept in this folder (`.gitignore` excludes raw level-1 files). The level-1 noise study data
+(`img_200x1500x4000_..._L1_101_..._15.RJ45ADCDATA0` and its `skip_noise_L1.py` outputs) are in
+`~/Documents/comm_scripts_data/L1_noise/`.

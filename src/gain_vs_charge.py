@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
 """Gain as a function of the charge in a pixel, g(n), from skipper-CCD images.
 
+Place in the pipeline (bin/run_WADERs): raw image -> autoconfig_panaSKImg.py /
+gain_dc_split.py (one panaSKImg JSON per CCD, gain from the 0e-/1e-... peaks) -> panaSKImg
+-> cluster ROOT files -> [this script: measure g(n) on the images, then rewrite the cluster
+energies] -> MakeComposite. The step is optional; run_WADERs calls measure(), plot(),
+plot_nonlinearity() and apply() directly.
+
 Why: the usual gain is the spacing of the 0e- and 1e- peaks. The amplifier gain falls
 slowly as the charge in the pixel grows (~3% lower at ~1000 e- in the AMT images), so
-cluster energies converted with the 1e- gain come out too low at keV energies.
+cluster energies converted with the 1e- gain come out too low at keV energies. (The
+output stage is not perfectly linear: the more charge sits on the sense node, the fewer
+ADU each further electron adds. At low charge this is invisible; summed over the
+hundreds to thousands of electrons of an X-ray pixel it is a percent-level energy shift.)
 
 How: pixel values in a skipper image form a comb, one peak per electron count. Wherever
 pixels hold many electrons (X-ray clusters, tracks) the comb continues; its LOCAL spacing
@@ -45,6 +54,22 @@ measured on its own and the comb powers are added (the combs of different images
 line up; for one image this is the plain periodogram).
 Needs numpy, scipy, astropy (measure) and PyROOT (apply); uses autoconfig_panaSKImg.py
 from the same folder for the geometry and the low-charge gain.
+
+Main entry points: measure(images, exts) -> {ext: result}; plot() and plot_nonlinearity()
+draw it; apply(model_json, rootfiles, outdir) corrects cluster files; E_PER_E is the
+eV-per-electron constant shared with panaSKImg.
+
+How to read this file:
+  model        g(n) and its integral A(n) for the three forms, ADU -> electrons (A^-1),
+               fit_model() (measured points -> model dict)
+  measurement  periodogram / best_period (comb spacing), ext_pixels (pedestal-subtracted,
+               comb-aligned pixels), clean_rows, measure() and its steps (_measure_*),
+               nonlinearity() and the two plots
+  correction   apply(): rewrite pixels_E and Energy of panaSKImg cluster files
+  CLI          main()
+A model is a plain dict (stored as-is in the JSON): "form", "a" = g(0) [ADU/e-], "n_cap"
+[e-], plus "b" (linear), "b1", "b2", "n_knot" (broken) or "n_pts", "g_pts", "slope_end"
+(interpolated).
 """
 import argparse
 import json
@@ -59,26 +84,41 @@ sys.path.insert(0, SCRIPT_DIR)
 
 E_PER_E = 3.74          # eV per electron used by panaSKImg (pysimdamicm units.e2eV)
 BLOCK = 25              # rows per block for the clean-row test
+# Edges [e-] of the charge windows in which the local comb spacing is measured: roughly
+# geometric, so every window holds enough pixels while the curve is sampled densely at low
+# charge. Each window gives one point g(n) at n = sqrt(lo * hi).
 N_EDGES = np.r_[20, 35, 55, 80, 110, 150, 200, 270, 360, 480, 640, 850, 1130, 1500, 2000, 2700, 3600, 5000, 7000]
 
 
 # =============================================================================
 # model
 # =============================================================================
+# The linear form has closed-form expressions (g_model, adu_of_n, n_of_adu). The other
+# forms go through g_of() and a numerical table of A(n) (_table, electrons_of_adu, _adu).
 def g_model(n, a, b, n_cap):
     """Local gain [ADU/e-] at n electrons: linear, held constant above n_cap."""
     return a + b * np.minimum(np.asarray(n, float), n_cap)
 
 
 def adu_of_n(n, a, b, n_cap):
-    """A(n) = integral_0^n g(m) dm (closed form)."""
+    """A(n) = integral_0^n g(m) dm (closed form) for the linear model [ADU].
+
+    Below n_cap: a*n + b*n^2/2; above it the gain is constant, g(n_cap) = a + b*n_cap, so A
+    grows linearly. n may be a scalar or an array.
+    """
     n = np.asarray(n, float)
     m = np.minimum(n, n_cap)
     return a * m + 0.5 * b * m * m + (a + b * n_cap) * np.maximum(n - n_cap, 0)
 
 
 def n_of_adu(adu, model):
-    """Electrons of pixels with the given ADU (inverse of A; negative ADU: /a)."""
+    """Electrons of pixels with the given ADU (inverse of A; negative ADU: /a).
+
+    Linear model only. Below A(n_cap), A = a*n + b*n^2/2 is solved for n (the root
+    n = (-a + sqrt(a^2 + 2*b*A)) / b, which goes to A/a as b -> 0); above it n grows with the
+    constant gain a + b*n_cap. Pixels with ADU <= 0 (noise around the zero peak) are divided
+    by a. Returns a float array of the same shape as adu [e-].
+    """
     a, b, ncap = model["a"], model["b"], model["n_cap"]
     adu = np.asarray(adu, float)
     out = adu / a
@@ -95,16 +135,27 @@ def n_of_adu(adu, model):
 
 
 MODELS = ("interpolated", "broken", "linear")
-_TABLES = {}
+_TABLES = {}            # cache of _table(): A(n) on a 1 e- grid, keyed by the model dict
 
 
 def model_form(model):
+    """Form of a model dict: "interpolated", "broken" or "linear".
+
+    Model files written before the --model option have no "form" key or the old form string
+    "a + b*min(n, n_cap)"; both mean linear.
+    """
     f = model.get("form", "linear")
     return "linear" if f.startswith("a + b") else f
 
 
 def g_of(n, model):
-    """Local gain [ADU/e-] at n electrons for any model form (held constant above n_cap)."""
+    """Local gain [ADU/e-] at n electrons for any model form (held constant above n_cap).
+
+    linear: a + b*n. broken: a + b1*min(n, nk) + b2*max(n - nk, 0) (two straight lines that
+    meet at the knot nk). interpolated: PCHIP (monotone cubic, no overshoot between points)
+    through the measured points, constant g_pts[0] below the first point and a straight line
+    with slope_end above the last one. n may be a scalar (returns a scalar) or an array.
+    """
     f = model_form(model)
     n = np.minimum(np.asarray(n, float), model["n_cap"])
     if f == "linear":
@@ -128,7 +179,11 @@ def g_of(n, model):
 
 
 def _table(model):
-    """A(n) on a 1 e- grid up to n_cap (cached per model)."""
+    """A(n) on a 1 e- grid up to n_cap (cached per model).
+
+    A is the trapezoid integral of g_of() on n = 0, 1, ..., n_cap. Returns (n grid [e-],
+    A [ADU], g at the last grid point [ADU/e-], the constant gain used beyond the grid).
+    """
     key = json.dumps(model, sort_keys=True)
     if key not in _TABLES:
         n = np.arange(0.0, float(model["n_cap"]) + 1.0)
@@ -139,7 +194,13 @@ def _table(model):
 
 
 def electrons_of_adu(adu, model):
-    """Electrons of pixels with the given ADU for any model form (negative ADU: / g(0))."""
+    """Electrons of pixels with the given ADU for any model form (negative ADU: / g(0)).
+
+    This is the energy correction: a pixel's ADU is A(n) = integral_0^n g, so its electron
+    number is A^-1(ADU). Linear models use the closed form (n_of_adu); the other forms invert
+    the tabulated A(n) by linear interpolation, and continue with the constant gain g(n_cap)
+    above the table. Returns a float array of the same shape as adu [e-].
+    """
     if model_form(model) == "linear":
         return n_of_adu(adu, model)                         # closed form, as before
     adu = np.asarray(adu, float)
@@ -155,7 +216,18 @@ def electrons_of_adu(adu, model):
 
 def fit_model(good, form, extrap_factor):
     """g(n) model of the given form from the significant points; also the straight-line fit
-    (used by the reliability check for every form)."""
+    (used by the reliability check for every form).
+
+    good: list of point dicts from measure() (keys n, g, err, n_hi, ...), all significant.
+    form: "interpolated", "broken" or "linear". extrap_factor: n_cap = extrap_factor * n_max,
+    n_max = upper edge of the highest measured charge window.
+    broken: least-squares fit (weighted by the point errors) of the two-line form, started
+    from several knot positions (80 ... 600 e-, those inside the measured range); the best
+    one is kept. interpolated: the points themselves, sorted by n, plus the end slope from a
+    straight line through the last 4 points.
+    Returns (model dict, linear-fit dict with a_err/b_err, n_max [e-], rms of the points
+    around the model [ADU/e-]).
+    """
     n = np.array([p["n"] for p in good]); g = np.array([p["g"] for p in good])
     e = np.array([p["err"] for p in good])
     (b, a), cov = np.polyfit(n, g, 1, cov=True)
@@ -194,6 +266,13 @@ def fit_model(good, form, extrap_factor):
 # measurement
 # =============================================================================
 def periodogram(v, gs):
+    """Rayleigh periodogram of the pixel values v [ADU] at the trial periods gs [ADU/e-].
+
+    For a trial period g every pixel value becomes a phase 2 pi v / g. If the values sit on
+    a comb with spacing g, all phases agree and |mean of exp(i phase)| is large (1 for sharp
+    peaks, smaller for peaks broadened by noise); for values spread at random it is ~1/sqrt(N).
+    The maximum over g is the comb spacing, i.e. the local gain. Returns an array like gs.
+    """
     ph = 2j * np.pi * v
     return np.array([np.abs(np.mean(np.exp(ph / g))) for g in gs])
 
@@ -209,7 +288,11 @@ def periodogram_multi(vs, gs):
 
 
 def best_period(v, g0, lo=0.85, hi=1.10):
-    """Local comb spacing near g0; v is one array of pixel values or a list (one per image)."""
+    """Local comb spacing near g0; v is one array of pixel values or a list (one per image).
+
+    Coarse scan of 351 trial periods from lo*g0 to hi*g0, then a fine scan of 121 periods
+    around the best one. Returns (spacing [ADU/e-], comb visibility R at that spacing).
+    """
     vs = v if isinstance(v, list) else [v]
     gs = np.linspace(g0 * lo, g0 * hi, 351)
     p = periodogram_multi(vs, gs)
@@ -221,7 +304,15 @@ def best_period(v, g0, lo=0.85, hi=1.10):
 
 
 def ext_pixels(data, cfg, g0):
-    """Pedestal-subtracted, comb-aligned active pixels (rows x cols) of one extension."""
+    """Pedestal-subtracted, comb-aligned active pixels (rows x cols) of one extension.
+
+    data: the raw 2D image of the extension [ADU]; cfg: geometry from autoconfig_panaSKImg
+    (id_row_start, n_cols_prescan, ccd_cols); g0: low-charge gain [ADU/e-].
+    The pedestal of each row is the median of its overscan (or, without overscan, of the
+    active pixels, which is the zero-electron peak). A remaining offset of a fraction of an
+    electron is removed by aligning the phase of the low-charge comb (|x| < 3 g0) of each row
+    to zero, so that n electrons sit at n * g0. Returns a float array [ADU].
+    """
     r0 = cfg["id_row_start"] + 3                     # skip the first rows (transient)
     a0, a1 = max(cfg["n_cols_prescan"], 1), cfg["ccd_cols"]
     d = data[r0:].astype(float)
@@ -237,7 +328,15 @@ def ext_pixels(data, cfg, g0):
 
 
 def clean_rows(x, g0, frac=0.6):
-    """Boolean mask of rows in blocks whose 1-30 e- comb is clearly visible."""
+    """Boolean mask of rows in blocks whose 1-30 e- comb is clearly visible.
+
+    After the readout has seen a lot of charge (a large cluster or track) the following
+    pixels are disturbed (baseline shifts, charge left behind) and the comb is blurred; such
+    rows would wash out the high-charge comb too. The rows are cut into blocks of BLOCK rows;
+    a block is clean if the visibility of its 0.5-30 e- comb at the period g0 is at least
+    frac times that of the best block (blocks with <= 300 such pixels count as not clean).
+    Returns (mask per row, visibility per block).
+    """
     nb = int(math.ceil(x.shape[0] / BLOCK))
     vis = np.zeros(nb)
     for b in range(nb):
@@ -249,8 +348,13 @@ def clean_rows(x, g0, frac=0.6):
     return mask, vis
 
 
-def measure(images, exts=None, verbose=True, extrap_factor=3.0, model="interpolated"):
-    """{ext: result} from a list of images of the same CCDs; model: interpolated, broken or linear."""
+def _measure_setup(images, exts):
+    """Geometry, extensions and gain priors from autoconfig_panaSKImg, for measure().
+
+    Uses the reference JSON and the first image (its header and extensions). Returns
+    (autoconfig module, astropy fits module, opened first image, extensions, geometry cfg,
+    autoconfig arguments, {EXTn: gain prior}).
+    """
     import argparse as _ap
     from astropy.io import fits
     import autoconfig_panaSKImg as A
@@ -264,6 +368,114 @@ def measure(images, exts=None, verbose=True, extrap_factor=3.0, model="interpola
     aargs = A.parse_args()
     sys.argv = sys_argv
     gp = A.gain_priors(ref, [f"EXT{e}" for e in exts], aargs)
+    return A, fits, hdul0, exts, cfg, aargs, gp
+
+
+def _measure_clean_values(fits, images, e, cfg, g0):
+    """Pixel values [ADU] of the clean rows of extension e, one array per image.
+
+    Only pixels above 0.9 * N_EDGES[0] electrons are kept (the lowest charge window).
+    Returns (list of arrays, number of clean rows, number of rows), rows summed over images.
+    """
+    vals, nrows_clean, nrows = [], 0, 0
+    for f in images:
+        x = ext_pixels(fits.open(f)[e].data, cfg, g0)
+        mask, _ = clean_rows(x, g0)
+        nrows += x.shape[0]
+        nrows_clean += int(mask.sum())
+        v = x[mask]
+        vals.append(v[v > N_EDGES[0] * 0.9 * g0])
+    return vals, nrows_clean, nrows
+
+
+def _measure_comb_points(vals, g0):
+    """Local comb spacing g(n) in each charge window of N_EDGES, from low to high charge.
+
+    vals: clean pixel values [ADU], one array per image; g0: low-charge gain [ADU/e-].
+    Per window (lo, hi) e-: at most 300000 / (number of images) pixels per image (random
+    subset, fixed seed; with several images, images with < 50 pixels in the window are left
+    out), then the best period g and its visibility R (best_period). The point is significant if R is above
+    4 times the visibility expected from pure noise (4 / sqrt(N) for one image). The error
+    of g follows from the phase lever arm: the pixels of a window spread over (hi - lo)/sqrt(12)
+    electrons (rms), and a comb of visibility R from N pixels fixes the phase to ~1/(R sqrt(N)).
+    The scan stops when a window has fewer than 400 pixels or after two non-significant
+    windows in a row. Returns a list of point dicts (n = sqrt(lo * hi), n_lo, n_hi, g, err,
+    visibility, npix, significant).
+    """
+    # Several images: each image's comb is measured separately and the comb powers are
+    # added. Pooling all pixels into one comb would need every image's comb to sit at the
+    # same place, A(n) = integral of g, to << 1 e-: a 0.1% gain difference between images
+    # shifts it by ~1 e- at 850 e- and washes the pooled comb out at high charge.
+    pts = []
+    misses = 0
+    cap = 300000 // max(len(vals), 1)
+    for lo, hi in zip(N_EDGES[:-1], N_EDGES[1:]):
+        vs = [v[(v > lo * g0) & (v < hi * g0)] for v in vals]
+        if sum(v.size for v in vs) < 400:
+            break
+        vs = [np.random.default_rng(0).choice(v, cap, replace=False) if v.size > cap else v for v in vs]
+        vs = [v for v in vs if v.size >= (50 if len(vals) > 1 else 1)]
+        ntot = sum(v.size for v in vs)
+        g, R = best_period(vs, g0)
+        noise = np.sqrt(sum(float(v.size) for v in vs) / sum(float(v.size) ** 2 for v in vs))
+        sig = R > 4 * noise                     # = 4 / sqrt(N) for one image
+        err = g / (2 * np.pi * ((hi - lo) / np.sqrt(12)) * R * np.sqrt(ntot)) if R > 0 else float("nan")
+        pts.append(dict(n=float(np.sqrt(lo * hi)), n_lo=int(lo), n_hi=int(hi), g=float(g), err=float(err),
+                        visibility=float(R), npix=int(ntot), significant=bool(sig)))
+        misses = 0 if sig else misses + 1
+        if misses >= 2:
+            break
+    return pts
+
+
+def _measure_fit(pts, g0, nrows_clean, nrows, model, extrap_factor):
+    """Result dict of one extension: the points and, with >= 4 significant points, the model.
+
+    The curve is marked not ok (no correction) when the comb was measured only below 400 e-
+    or the straight-line fit has a rising gain (b > 0): neither is a trustworthy curve.
+    """
+    good = [p for p in pts if p["significant"]]
+    res = dict(ok=False, g_1e=g0, clean_rows=nrows_clean, rows=nrows, points=pts)
+    if len(good) >= 4:
+        mdl, lin, nmax, rms = fit_model(good, model, extrap_factor)
+        b = lin["b"]
+        res.update(ok=True, model=mdl, linear=lin, rms=rms, n_max_measured=nmax,
+                   drop_at_1000=float(1 - g_of(1000.0, mdl) / g_of(0.0, mdl)),
+                   nonlinearity=nonlinearity(good, mdl))
+        # not trustworthy: the comb barely extends to high charge, or the gain seems to rise
+        # (slope of the straight-line fit, for every model form)
+        if nmax < 400 or b > 0:
+            res.update(ok=False, reason=f"unreliable curve (measured to {nmax:.0f} e-, slope "
+                                        f"{b * 1e5:+.1f}e-5/e-): no correction")
+    else:
+        res["reason"] = f"comb visible in only {len(good)} charge bins (need 4)"
+    return res
+
+
+def _measure_print(name, res, g0, nrows_clean, nrows):
+    """One-line report of one extension's result (verbose measure())."""
+    if res["ok"]:
+        m = res["model"]
+        print(f"  {name}: g(n) {model_form(m)}, g(0) = {m['a']:.4f} ADU/e-, measured up to "
+              f"{res['n_max_measured']:.0f} e-, {res['drop_at_1000'] * 100:.1f}% lower at 1000 e-  "
+              f"({nrows_clean}/{nrows} clean rows; 1e- gain {g0:.4f})")
+    else:
+        print(f"  {name}: no g(n) fit ({res.get('reason')})")
+
+
+def measure(images, exts=None, verbose=True, extrap_factor=3.0, model="interpolated"):
+    """{ext: result} from a list of images of the same CCDs; model: interpolated, broken or linear.
+
+    images: paths of .fz/.fits images of the same CCDs; exts: extension numbers (default:
+    those of the reference JSON present in the first image); extrap_factor: n_cap / n_max.
+    Per extension: the low-charge gain g0 from autoconfig's analysis of the first image (the
+    starting point of the comb search), the clean pixels of every image, the comb spacing in
+    each charge window and the g(n) fit. Result keys ("EXTn"): ok, g_1e, clean_rows, rows,
+    points and, with a fit, model, linear, rms, n_max_measured, drop_at_1000 (fractional
+    drop of g from 0 to 1000 e-), nonlinearity; reason when not ok. Extensions without
+    resolved electron peaks give dict(ok=False, reason=...).
+    """
+    A, fits, hdul0, exts, cfg, aargs, gp = _measure_setup(images, exts)
 
     results = {}
     for e in exts:
@@ -275,66 +487,17 @@ def measure(images, exts=None, verbose=True, extrap_factor=3.0, model="interpola
                 print(f"  {name}: skipped ({results[name]['reason']})")
             continue
         g0 = float(r["gain"])
-        vals, nrows_clean, nrows = [], 0, 0
-        for f in images:
-            x = ext_pixels(fits.open(f)[e].data, cfg, g0)
-            mask, _ = clean_rows(x, g0)
-            nrows += x.shape[0]
-            nrows_clean += int(mask.sum())
-            v = x[mask]
-            vals.append(v[v > N_EDGES[0] * 0.9 * g0])
-        # Several images: each image's comb is measured separately and the comb powers are
-        # added. Pooling all pixels into one comb would need every image's comb to sit at the
-        # same place, A(n) = integral of g, to << 1 e-: a 0.1% gain difference between images
-        # shifts it by ~1 e- at 850 e- and washes the pooled comb out at high charge.
-        pts = []
-        misses = 0
-        cap = 300000 // max(len(vals), 1)
-        for lo, hi in zip(N_EDGES[:-1], N_EDGES[1:]):
-            vs = [v[(v > lo * g0) & (v < hi * g0)] for v in vals]
-            if sum(v.size for v in vs) < 400:
-                break
-            vs = [np.random.default_rng(0).choice(v, cap, replace=False) if v.size > cap else v for v in vs]
-            vs = [v for v in vs if v.size >= (50 if len(vals) > 1 else 1)]
-            ntot = sum(v.size for v in vs)
-            g, R = best_period(vs, g0)
-            noise = np.sqrt(sum(float(v.size) for v in vs) / sum(float(v.size) ** 2 for v in vs))
-            sig = R > 4 * noise                     # = 4 / sqrt(N) for one image
-            err = g / (2 * np.pi * ((hi - lo) / np.sqrt(12)) * R * np.sqrt(ntot)) if R > 0 else float("nan")
-            pts.append(dict(n=float(np.sqrt(lo * hi)), n_lo=int(lo), n_hi=int(hi), g=float(g), err=float(err),
-                            visibility=float(R), npix=int(ntot), significant=bool(sig)))
-            misses = 0 if sig else misses + 1
-            if misses >= 2:
-                break
-        good = [p for p in pts if p["significant"]]
-        res = dict(ok=False, g_1e=g0, clean_rows=nrows_clean, rows=nrows, points=pts)
-        if len(good) >= 4:
-            mdl, lin, nmax, rms = fit_model(good, model, extrap_factor)
-            b = lin["b"]
-            res.update(ok=True, model=mdl, linear=lin, rms=rms, n_max_measured=nmax,
-                       drop_at_1000=float(1 - g_of(1000.0, mdl) / g_of(0.0, mdl)),
-                       nonlinearity=nonlinearity(good, mdl))
-            # not trustworthy: the comb barely extends to high charge, or the gain seems to rise
-            # (slope of the straight-line fit, for every model form)
-            if nmax < 400 or b > 0:
-                res.update(ok=False, reason=f"unreliable curve (measured to {nmax:.0f} e-, slope "
-                                            f"{b * 1e5:+.1f}e-5/e-): no correction")
-        else:
-            res["reason"] = f"comb visible in only {len(good)} charge bins (need 4)"
+        vals, nrows_clean, nrows = _measure_clean_values(fits, images, e, cfg, g0)
+        pts = _measure_comb_points(vals, g0)
+        res = _measure_fit(pts, g0, nrows_clean, nrows, model, extrap_factor)
         results[name] = res
         if verbose:
-            if res["ok"]:
-                m = res["model"]
-                print(f"  {name}: g(n) {model_form(m)}, g(0) = {m['a']:.4f} ADU/e-, measured up to "
-                      f"{res['n_max_measured']:.0f} e-, {res['drop_at_1000'] * 100:.1f}% lower at 1000 e-  "
-                      f"({nrows_clean}/{nrows} clean rows; 1e- gain {g0:.4f})")
-            else:
-                print(f"  {name}: no g(n) fit ({res.get('reason')})")
+            _measure_print(name, res, g0, nrows_clean, nrows)
     return results
 
 
 def _adu(n, model):
-    """A(n) for any model form (closed form for linear, table otherwise)."""
+    """A(n) for any model form (closed form for linear, table otherwise); scalar n [e-] -> ADU."""
     if model_form(model) == "linear":
         return float(adu_of_n(n, model["a"], model["b"], model["n_cap"]))
     nt, A, gcap = _table(model)
@@ -346,7 +509,12 @@ def nonlinearity(points, model):
     n_meas = A(n) / g(0), Delta(n) = n_meas - n (measured charge minus true electron number).
     Points: A(n) as the trapezoid integral of the measured local gains (g held at the first point
     below it), with errors of the bins added in quadrature; and a quadratic c2 x^2 + c1 x through
-    the origin fitted to Delta vs n_meas (x = measured charge)."""
+    the origin fitted to Delta vs n_meas (x = measured charge).
+
+    This is the familiar way to show a nonlinearity: how many electrons a pixel seems to
+    hold if converted with one constant gain, minus how many it holds. Returns dict(g_ref,
+    n_meas, delta, delta_err, c2, c1, delta_at_1000 = Delta at 1000 e- from the model).
+    """
     n = np.array([p["n"] for p in points]); g = np.array([p["g"] for p in points])
     e = np.array([p["err"] for p in points]); w = np.array([p["n_hi"] - p["n_lo"] for p in points], float)
     g0 = float(g_of(0.0, model))
@@ -360,7 +528,11 @@ def nonlinearity(points, model):
 
 
 def plot_nonlinearity(results, path, title):
-    """One panel per extension: measured charge - peak number vs measured charge, g_ref = g(0)."""
+    """One panel per extension: measured charge - peak number vs measured charge, g_ref = g(0).
+
+    results: output of measure(); writes the PNG to path. Shows the points from the measured
+    local gains, the model's curve and the quadratic fit of nonlinearity().
+    """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -395,6 +567,12 @@ def plot_nonlinearity(results, path, title):
 
 
 def plot(results, path, title):
+    """Plot g(n) of every extension: absolute [ADU/e-] (left) and relative to g(0) (right).
+
+    results: output of measure(); writes the PNG to path. Points: significant comb spacings;
+    lines: the model (for reliable curves), dotted: the highest measured charge, above which
+    the curve is extrapolated.
+    """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -442,6 +620,12 @@ def apply(model_json, rootfiles, outdir, verbose=True, anchor="comb"):
     The extension is taken from the file name (_ext<N>.root) or, for a file with all
     extensions, from each cluster's row (needs 'rows_per_ext' in the model file).
     Returns [(input, output, n_clusters, median ratio new/old for E > 1 keV)].
+
+    Each pixel's ADU is recovered from pixels_E with the fitted gain, converted to electrons
+    with the model and back to keV with E_PER_E. Output: outdir/<same file name>, with the
+    clustersRec tree rewritten and the info and process_config trees copied. Files without a
+    fit gain or for an extension without a reliable model are copied unchanged; files without
+    _ext<N> in the name are skipped.
     """
     import ROOT
     ROOT.gROOT.SetBatch(True)
@@ -464,6 +648,7 @@ def apply(model_json, rootfiles, outdir, verbose=True, anchor="comb"):
             print(f"  {base}: no clusters, skipped")
             fin.Close()
             continue
+        # gain panaSKImg used to convert ADU to keV for this extension
         gfit = None
         if info:
             info.GetEntry(0)
@@ -477,6 +662,8 @@ def apply(model_json, rootfiles, outdir, verbose=True, anchor="comb"):
         for i in range(tin.GetEntries()):
             tin.GetEntry(i)
             if mod.get("ok") and gfit:
+                # Energy and pixels_E hold one element per cluster of this tree entry
+                # (pixels_E: the pixel energies [keV]); they are edited in place before Fill()
                 pe, en = tin.pixels_E, tin.Energy
                 for k in range(pe.size()):
                     v = np.array(pe[k], float)
@@ -510,6 +697,11 @@ def apply(model_json, rootfiles, outdir, verbose=True, anchor="comb"):
 # CLI
 # =============================================================================
 def main():
+    """Command line: `measure` (images -> JSON and plots) or `apply` (model + cluster files).
+
+    A first argument that is not a subcommand means `measure`. measure writes
+    OUTDIR/NAME_gain_vs_charge.json, NAME_gain_vs_charge.png and NAME_nonlinearity.png.
+    """
     argv = sys.argv[1:]
     if argv and argv[0] not in ("measure", "apply", "-h", "--help"):
         argv = ["measure"] + argv
