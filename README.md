@@ -55,6 +55,10 @@ Results go to `WADERs_analysis_<image or list name>/` in the current folder (`-o
 `-j N` (parallel panaSKImg runs, default 4), `--overwrite`, `--no-clusters` (noise, gain and
 dark current only; much faster), `--tune` (check each CCD's pedestal method and fit window
 with panaSKImg, by smallest total fit error; ~1 min more per image),
+`--autoconfig-args "--cluster-threshold-e auto"` (optional, not the default: cluster thresholds in
+electrons chosen per CCD from its dark charge - the smallest k with P(Poisson(lambda) >= k) <= 10 %,
+pixel > k - 0.5 e-, seed > 9.5 e-; on Fe-55 back-side (diffuse) clusters it removed most of the 4-9 %
+low bias of the default thresholds, see docs/HANDOFF_2026-10-23_clustering.md),
 `--autoconfig-args "--cluster-threshold-e 2 5"` (cluster thresholds in electrons; faster on
 images with high dark current), `--all-ext` (also run flooded/unresolved CCDs),
 `--gain-correction` (measure gain vs charge per pixel and write gain-corrected cluster files;

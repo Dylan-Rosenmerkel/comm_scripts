@@ -897,6 +897,10 @@ def measure_dark_current(xga, xo, off, g, nrows, args):
     return dict(
         row_end=row_end,
         lam=float(np.nanmean(lam_row[:row_end])),
+        # dark charge over ALL rows (it grows along a long readout): median and 90th percentile,
+        # used by --cluster-threshold-e auto
+        lam_all_median=float(np.nanmedian(lam_row)),
+        lam_all_p90=float(np.nanpercentile(lam_row, 90)),
         lam01=lam01,                  # lambda from the 0e-/1e- peaks only
         k_poisson=k_poisson,          # number of peaks consistent with a single Poisson
         poisson_ratios=ratios,        # data / Poisson prediction for peaks 0, 1, 2, ...
@@ -1321,6 +1325,77 @@ def set_dark_current_fit(j, results):
     return outliers
 
 
+AUTO_ALPHA = 0.10        # --cluster-threshold-e auto: allowed fraction of dark-current pixels above the threshold
+AUTO_SEED_E = 9.5        # --cluster-threshold-e auto: seed threshold [e-] (a cluster needs a pixel with >= 10 e-)
+
+
+def auto_cluster_thresholds(results, alpha=AUTO_ALPHA, seed_e=AUTO_SEED_E):
+    """Pixel thresholds in electrons from the dark charge of each CCD (--cluster-threshold-e auto).
+
+    In a skipper image the pixels around a cluster are not Gaussian noise but dark-current
+    electrons: Poisson-distributed with mean lambda (0.2-1.7 e-/pix here, growing along the
+    readout). A pixel threshold of k electrons lets a fraction P(Poisson(lambda) >= k) of the
+    background pixels join clusters; once that fraction approaches the 8-neighbour percolation
+    threshold (~0.41) they link up and clusters merge with the background, and well below it
+    they still add charge at the cluster edge. Too high a threshold drops the faint edge of
+    diffuse (back-side) clusters instead. The choice: the smallest k >= 2 with
+    P(Poisson(lambda) >= k) <= alpha (alpha = 0.10), lambda = the median per-row dark charge
+    of that CCD over all rows (the median, because rows crossed by tracks or bright clusters
+    inflate the per-row estimate; the 90th percentile was 1.6-1.8x the median on DM10).
+    Pixel values are electrons plus a small read noise, so "n >= k" is written as a
+    threshold of k - 0.5 e-. Thresholds: k = 2 for lambda <= 0.53, 3 up to 1.10, 4 up to
+    1.74, 5 up to 2.43, 6 up to 3.15 e-/pix. alpha = 0.10 was chosen on the 2025-08-27
+    DM09/DM10 Image 5s: there pixels >= 2 e- at ~0.25 e-/pix and >= 3 e- at ~1.0 e-/pix gave
+    back-side Fe-55 K-alpha within ~1 % (injection-recovery and real clusters), where the
+    default (10 x the pedestal width) lost 5-15 % on high-dark-charge images; alpha = 0.05
+    would pick 4 e- at 1.0 e-/pix (-1.5 % on injected diffuse clusters).
+    CCDs without resolved peaks (no electron counts, so no lambda) keep the reference
+    setting. Returns {ext: (pixel_e, seed_e, lambda_used, k) or None}.
+    """
+    from scipy.stats import poisson
+    out = {}
+    for r in results:
+        lam = r.get("lam_all_median")
+        if not r.get("resolved") or lam is None or not np.isfinite(lam):
+            out[r["ext"]] = None
+            continue
+        k = 2
+        while poisson.sf(k - 1, lam) > alpha and k < 50:
+            k += 1
+        out[r["ext"]] = (k - 0.5, max(seed_e, k + 0.5), float(lam), int(k))
+    return out
+
+
+def apply_cluster_thresholds(j, results, setting):
+    """Write --cluster-threshold-e into the config: setting is (pixel_e, seed_e) or "auto"."""
+    if setting == "auto":
+        thr = auto_cluster_thresholds(results)
+        cf = j["process"].setdefault("ClusterFinder", {})
+        ref = cf.get("spr_threshold")
+        new = dict(ref) if isinstance(ref, dict) else {}
+        for ext, t in thr.items():
+            if t is not None:
+                new[ext] = [1.0, t[0], t[1]]
+            elif isinstance(ref, dict) and ext in ref:
+                new[ext] = ref[ext]
+        cf["spr_threshold"] = new
+        return thr
+    set_cluster_threshold(j, results, *setting)
+    return None
+
+
+def describe_cluster_thresholds(thr):
+    """One line per CCD for --cluster-threshold-e auto."""
+    lines = []
+    for ext, t in sorted(thr.items()):
+        if t is None:
+            lines.append(f"ClusterFinder {ext}: no resolved peaks - reference thresholds kept")
+        else:
+            lines.append(f"ClusterFinder {ext}: dark charge {t[2]:.2f} e-/pix (median of rows) -> pixels "
+                         f">= {t[3]} e- (> {t[0]:g}), seed > {t[1]:g} e-")
+    return lines
+
+
 def set_cluster_threshold(j, results, pix_e, seed_e):
     """Make ClusterFinder use fixed thresholds in electrons.
 
@@ -1422,7 +1497,10 @@ def write_per_ext(base, results, outliers, args):
         set_pedestal(j, [r])
         set_dark_current_fit(j, [r])
         if args.cluster_threshold_e is not None:
-            set_cluster_threshold(j, [r], *args.cluster_threshold_e)
+            thr = apply_cluster_thresholds(j, [r], args.cluster_threshold_e)
+            if thr:
+                for line in describe_cluster_thresholds(thr):
+                    print("  " + line)
         # a flooded/unresolved CCD among good ones: its fit is not reliable and
         # ClusterFinder would spend minutes on it, so it is left out of the run script
         skip = r["ext"] in outliers and not r["resolved"] and not args.cluster_all
@@ -1982,12 +2060,13 @@ def parse_args():
                    help="upper limit for --peaks auto (default: 10)")
 
     k = ap.add_argument_group("clusters")
-    k.add_argument("--cluster-threshold-e", type=float, nargs=2, metavar=("PIXEL_E", "SEED_E"),
+    k.add_argument("--cluster-threshold-e", nargs="+", metavar="PIXEL_E SEED_E | auto",
                    default=None,
                    help="ClusterFinder thresholds in electrons: a pixel joins a cluster if it has more "
                         "than PIXEL_E e-, and a cluster needs at least one pixel above SEED_E e- "
-                        "(e.g. 2 5). Default: keep the reference JSON's spr_threshold, which is in units "
-                        "of the per-row pedestal noise")
+                        "(e.g. 2.5 9.5), or 'auto': per CCD from its dark charge (smallest k with "
+                        "P(Poisson(lambda) >= k) <= 10%, pixel > k - 0.5 e-, seed > 9.5 e-). Default: keep "
+                        "the reference JSON's spr_threshold, which is in units of the per-row pedestal noise")
     k.add_argument("--cluster-all", action="store_true",
                    help="also search clusters in CCDs flagged as unresolved outliers (e.g. a flooded "
                         "CCD); by default they get an unreachable threshold, since clustering them "
@@ -2018,9 +2097,17 @@ def parse_args():
     if args.peaks not in ("auto", "all") and not (args.peaks.isdigit() and int(args.peaks) >= 1):
         ap.error("--peaks must be 'auto', 'all' or an integer >= 1")
     if args.cluster_threshold_e is not None:
-        pix, seed = args.cluster_threshold_e
-        if pix <= 0 or seed < pix:
-            ap.error("--cluster-threshold-e: need 0 < PIXEL_E <= SEED_E")
+        v = args.cluster_threshold_e
+        if v == ["auto"]:
+            args.cluster_threshold_e = "auto"
+        else:
+            try:
+                pix, seed = (float(x) for x in v)
+            except ValueError:
+                ap.error("--cluster-threshold-e: give PIXEL_E SEED_E (two numbers) or 'auto'")
+            if pix <= 0 or seed < pix:
+                ap.error("--cluster-threshold-e: need 0 < PIXEL_E <= SEED_E")
+            args.cluster_threshold_e = (pix, seed)
     if (args.tune or args.per_ext) and not args.panaskimg:
         ap.error("panaSKImg not found: activate the environment where pysimdamicm is installed, "
                  "or give --panaskimg /path/to/panaSKImg (or set $PANASKIMG)")
@@ -2175,7 +2262,10 @@ def write_single_json(j, results, outliers, args):
     write_measured(re.sub(r"\.json$", "", args.output) + "_measured.json", args.infile, results, outliers)
 
     print_report(results, outliers, j["process"]["FitDarkCurrentProcess"], args.output)
-    if args.cluster_threshold_e is not None:
+    if args.cluster_threshold_e == "auto":
+        for line in describe_cluster_thresholds(auto_cluster_thresholds(results)):
+            print(line)
+    elif args.cluster_threshold_e is not None:
         pix, seed = args.cluster_threshold_e
         print(f"ClusterFinder: pixels > {pix:g} e-, seed > {seed:g} e- (spr_threshold sigma = 1 e-)")
     if no_cls:
@@ -2225,7 +2315,7 @@ def main():
     set_pedestal(j, results)
     outliers = set_dark_current_fit(j, results)
     if args.cluster_threshold_e is not None:
-        set_cluster_threshold(j, results, *args.cluster_threshold_e)
+        apply_cluster_thresholds(j, results, args.cluster_threshold_e)
     if args.tune and not args.per_ext:         # --per-ext tunes every CCD on its own
         work, src = prepare_workdir(os.path.abspath(args.infile), args.tune_dir)
         j, _ = tune_pedestal(j, src, work, results, args.panaskimg)
