@@ -15,6 +15,7 @@ Run with the python that has PyROOT (e.g. the conda environment with panaSKImg):
 import argparse
 import glob
 import os
+import sys
 
 import numpy as np
 import ROOT
@@ -58,6 +59,10 @@ def main():
         c = read_ccd(os.path.join(p.corr, "root_gaincorr_epochs"), ext)    # corrected per gain period
         same = len(o["Energy"]) == len(c["Energy"]) and np.allclose(o["PosX"], c["PosX"]) and np.allclose(o["PosY"], c["PosY"])
         print(f"ext{ext}: {len(c['Energy'])} clusters, same clusters in both runs: {same}")
+        if not same:
+            # E_orig must belong to the same clusters as the corrected table (fit_all_peaks indexes both with one mask)
+            sys.exit(f"ext{ext}: the corrected cluster files do not match the originals (an image missing from "
+                     f"root_gaincorr_epochs/? check correct_gain_per_period.py --periods); nothing written")
         np.savez(cluster_table(p.work, ext), E_orig=o["Energy"], **c)
 
 

@@ -181,7 +181,7 @@ def setup(args):
         M   skips used per pixel (nskip - K)
         ns  N values for the 'image' noise (n_values(M), last = M)
         nb  the N values with at least two blocks of N skips (within-pixel method)
-        name  input file name without extension (prefix of every output)
+        name  input file name without extension, + _ch<k> for a .RJ45ADCDATA<k> file (prefix of every output)
         NC, LC  number of composite images and skips per composite (both None without --composites)
     Exits with a message if the geometry is unknown or --composites is out of range.
     """
@@ -192,9 +192,15 @@ def setup(args):
     nrows, ncols, nskip = geo
     K = args.skip_first
     M = nskip - K
+    if M < 2:
+        sys.exit(f"--skip-first {K} leaves {M} of the {nskip} skips; at least 2 are needed")
     ns = n_values(M)
     nb = [n for n in ns if M // n >= 2]                 # block sizes for the within-pixel method
-    name = os.path.basename(args.infile).split(".")[0]
+    # file name without extension, plus the ADC channel (x.RJ45ADCDATA0 / x.RJ45ADCDATA1 are different channels of
+    # the same image and must not overwrite each other's outputs)
+    base = os.path.basename(args.infile)
+    ch = re.search(r"\.RJ45ADCDATA(\d+)$", base)
+    name = base.split(".")[0] + (f"_ch{ch.group(1)}" if ch else "")
     NC = args.composites
     LC = None
     if NC is not None:

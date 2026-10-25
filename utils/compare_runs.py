@@ -15,12 +15,14 @@ Compared:
   root*/panaSKImg_clustersRec_*.root   cluster energies (Energy) and pixel energies (pixels_E), exactly
   composite*/.../*.csv the MakeComposite result tables
 Not compared: PDFs and PNGs (they embed creation dates) and logs (they hold timings).
+A file present in only one of the two runs counts as a difference ("only in OLD" / "only in NEW").
 Exit code 0 if everything is identical, 1 otherwise. Needs PyROOT and numpy.
 """
 import argparse
 import glob
 import json
 import os
+import re
 import sys
 
 import numpy as np
@@ -28,8 +30,9 @@ import numpy as np
 
 def find_run(path):
     """The WADERs_analysis_<run> folder: path itself, or the single one inside it."""
-    if os.path.basename(os.path.normpath(path)).startswith("WADERs_analysis_"):
-        return os.path.normpath(path)
+    path = os.path.abspath(path)           # summary.txt holds absolute paths, replaced by <OUT> below
+    if os.path.basename(path).startswith("WADERs_analysis_"):
+        return path
     found = glob.glob(os.path.join(path, "WADERs_analysis_*"))
     if len(found) != 1:
         sys.exit(f"compare_runs: expected one WADERs_analysis_* folder in {path}, found {len(found)}")
@@ -38,7 +41,9 @@ def find_run(path):
 
 def summary_lines(path, root):
     """summary.txt without its first line (run time) and with the run folder replaced by <OUT>."""
-    text = open(path).read().replace(root, "<OUT>")
+    # any absolute path ending in the run folder's name (also when one of the two is reached through a symlink,
+    # e.g. /var -> /private/var on macOS)
+    text = re.sub(r"/\S*?/" + re.escape(os.path.basename(root)) + r"(?=[/\s)]|$)", "<OUT>", open(path).read())
     return [l for l in text.splitlines() if not l.startswith("run_WADERs summary:")]
 
 
@@ -70,24 +75,32 @@ def main():
         if not ok or not args.quiet:
             print(("  ok    " if ok else "  DIFF  ") + what)
 
+    def rels(pattern):
+        """relative paths matching pattern in OLD or NEW (a file in only one of them is a difference)"""
+        return sorted({os.path.relpath(p, X) for X in (A, B) for p in glob.glob(os.path.join(X, pattern))})
+
+    def both(rel):
+        pa, pb = os.path.join(A, rel), os.path.join(B, rel)
+        if os.path.exists(pa) and os.path.exists(pb):
+            return pa, pb
+        report(False, rel + (" (only in OLD)" if os.path.exists(pa) else " (only in NEW)"))
+        return None
+
     report(summary_lines(f"{A}/summary.txt", A) == summary_lines(f"{B}/summary.txt", B), "summary.txt")
-    for rel in ["fit_quality.csv"] + sorted(os.path.relpath(p, A) for p in glob.glob(f"{A}/json/*/final/*.json")):
-        pa, pb = f"{A}/{rel}", f"{B}/{rel}"
-        report(os.path.exists(pa) and os.path.exists(pb) and open(pa).read() == open(pb).read(), rel)
-    for pa in sorted(glob.glob(f"{A}/gain_vs_charge/*.json")):
-        rel = os.path.relpath(pa, A); pb = f"{B}/{rel}"
-        same = os.path.exists(pb) and json.dumps(json.load(open(pa)).get("extensions"), sort_keys=True) == \
-            json.dumps(json.load(open(pb)).get("extensions"), sort_keys=True)
-        report(same, rel)
-    for pa in sorted(glob.glob(f"{A}/root*/panaSKImg_clustersRec_*.root")):
-        rel = os.path.relpath(pa, A); pb = f"{B}/{rel}"
-        if not os.path.exists(pb):
-            report(False, rel + " (missing in NEW)"); continue
-        (ea, xa), (eb, xb) = cluster_arrays(pa), cluster_arrays(pb)
-        report(ea.shape == eb.shape and np.array_equal(ea, eb) and np.array_equal(xa, xb), f"{rel} ({len(ea)} clusters)")
-    for pa in sorted(glob.glob(f"{A}/composite*/Fe_55_Analysis_Plots/*/*/*.csv")):
-        rel = os.path.relpath(pa, A); pb = f"{B}/{rel}"
-        report(os.path.exists(pb) and open(pa).read() == open(pb).read(), rel)
+    for rel in ["fit_quality.csv"] + rels("json/*/final/*.json"):
+        if (p := both(rel)):
+            report(open(p[0]).read() == open(p[1]).read(), rel)
+    for rel in rels("gain_vs_charge/*.json"):
+        if (p := both(rel)):
+            ext = [json.dumps(json.load(open(q)).get("extensions"), sort_keys=True) for q in p]
+            report(ext[0] == ext[1], rel)
+    for rel in rels("root*/panaSKImg_clustersRec_*.root"):
+        if (p := both(rel)):
+            (ea, xa), (eb, xb) = cluster_arrays(p[0]), cluster_arrays(p[1])
+            report(ea.shape == eb.shape and np.array_equal(ea, eb) and np.array_equal(xa, xb), f"{rel} ({len(ea)} clusters)")
+    for rel in rels("composite*/Fe_55_Analysis_Plots/*/*/*.csv"):
+        if (p := both(rel)):
+            report(open(p[0]).read() == open(p[1]).read(), rel)
     print("RESULT:", "IDENTICAL" if not bad else f"{bad} difference(s)")
     sys.exit(1 if bad else 0)
 
