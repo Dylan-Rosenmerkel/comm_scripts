@@ -33,11 +33,20 @@ def md(rows, header):
     return "\n".join(lines)
 
 
+# ------------------------------------------------------------------------------------------------ inputs
+def latest(name, sub="", n_min=1):
+    """the re-run of a result folder with the audited code (<name>_v3, 2026-10-25) when it is complete, else <name>"""
+    v3 = name + "_v3"
+    return v3 if len(glob.glob(os.path.join(D, v3, sub, "*"))) >= n_min else name
+
+
 # ------------------------------------------------------------------------------------------------ wide test
 _n_all = len(glob.glob(os.path.join(D, "results_wide", "*.json")))
 _v2 = os.path.join(D, "results_wide_adaptive_v2")
 EXTRA = {"adaptive": "results_wide_adaptive_v2" if os.path.isdir(_v2) and len(glob.glob(os.path.join(_v2, "*.json"))) >= _n_all else "results_wide_adaptive_merged",
-         "GMX": "results_wide_gmx", "adaptive+GMX": "results_wide_adaptive_gmx"}
+         "GMX": latest("results_wide_gmx", n_min=_n_all), "adaptive+GMX": latest("results_wide_adaptive_gmx", n_min=_n_all)}
+VAL = latest("results_adaptive_gmx", "crowded")     # GMX / A_GMX validation (fe55, tracks, lowE, crowded)
+print("inputs:", EXTRA, VAL)
 recs = []
 for f in sorted(glob.glob(os.path.join(D, "results_wide", "*.json"))):
     rec = json.load(open(f)); ok = True
@@ -95,7 +104,7 @@ save(fig, "fig21_adaptive_switch.png")
 
 # ------------------------------------------------------------------------------------------------ Fe-55 injection
 S = collections.defaultdict(list); P = collections.defaultdict(list); K = collections.defaultdict(list)
-for dd, skip_mhc in ((os.path.join(D, "results_fe55"), False), (os.path.join(D, "results_adaptive_gmx", "fe55"), True)):
+for dd, skip_mhc in ((os.path.join(D, "results_fe55"), False), (os.path.join(D, VAL, "fe55"), True)):
     for f in glob.glob(os.path.join(dd, "inject_*.json")):
         d = json.load(open(f))
         for s, v in d["single"].items():
@@ -134,7 +143,7 @@ TABLES.append(("Fe-55 injection (DM09 / DM10, EXT1 / EXT4, images 0-1): median E
 rs = []
 for f in glob.glob(os.path.join(D, "results_tracks", "*.json")):
     d = json.load(open(f)); rs += [dict(r, ext=d["ext"]) for r in d.get("inject", [])]
-for f in glob.glob(os.path.join(D, "results_adaptive_gmx", "tracks", "*.json")):
+for f in glob.glob(os.path.join(D, VAL, "tracks", "*.json")):
     rs += [r for r in json.load(open(f)) if r["method"] != "MHC"]
 KT = ["muon", "worm", "blob", "single", "fe55", "alpha", "hotcol", "lowE", "pair3", "pair4", "pair6"]
 sc = lambda v, k: np.mean([r["resolved"] for r in v]) if k.startswith("pair") else np.mean([r["n"] == 1 and abs(r["frac_largest"] - 1) < 0.05 for r in v])
@@ -155,7 +164,7 @@ fig.tight_layout(); save(fig, "fig23_tracks.png")
 
 # ------------------------------------------------------------------------------------------------ few-electron
 R_ = collections.defaultdict(list); F_ = collections.defaultdict(list)
-for dd, skip in ((os.path.join(D, "results_lowE"), ()), (os.path.join(D, "results_adaptive_gmx", "lowE"), ("MHC",))):
+for dd, skip in ((os.path.join(D, "results_lowE"), ()), (os.path.join(D, VAL, "lowE"), ("MHC",))):
     for f in glob.glob(os.path.join(dd, "sim_*.json")):
         d = json.load(open(f))
         for m, rows in d["inject"].items():
@@ -187,7 +196,7 @@ from amfit import Model, summary
 from scan import load as wload
 _cwd = os.getcwd(); os.chdir(os.path.expanduser("~/Documents/JH1_Testing/AMTEst/runs_29img/analysis"))
 dW = wload(4); os.chdir(_cwd); EW = dW["Energy"][dW["sxy"] < 0.7]
-fs = sorted(glob.glob(os.path.join(D, "results_adaptive_gmx", "crowded", "*.npz")))
+fs = sorted(glob.glob(os.path.join(D, VAL, "crowded", "*.npz")))
 EA, SA, BA = (np.concatenate([np.load(f)[f"adaptive_GMX_{k}"] for f in fs]) for k in ("E", "sxy", "blend"))
 fig, ax = plt.subplots(1, 2, figsize=(15, 4.5))
 b = np.arange(10, 30.01, 0.2)

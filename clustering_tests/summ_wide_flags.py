@@ -22,8 +22,8 @@ def ka(rows):
 
 
 def tex(rows, header):
-    L = ["\\begin{table}[H]\\centering\\footnotesize", "\\begin{tabular}{l" + "c" * (len(header) - 1) + "}", "\\toprule", " & ".join(header) + " \\\\", "\\midrule"]
-    L += [" & ".join(str(c) for c in r) + " \\\\" for r in rows] + ["\\bottomrule", "\\end{tabular}", "\\end{table}"]
+    L = ["\\begin{table}[H]\\centering\\footnotesize", "\\resizebox{\\textwidth}{!}{%", "\\begin{tabular}{l" + "c" * (len(header) - 1) + "}", "\\toprule", " & ".join(header) + " \\\\", "\\midrule"]
+    L += [" & ".join(str(c) for c in r) + " \\\\" for r in rows] + ["\\bottomrule", "\\end{tabular}}", "\\end{table}"]
     return "\n".join(L).replace("%", "\\%").replace("_", "\\_").replace(">=", "$\\ge$")
 
 

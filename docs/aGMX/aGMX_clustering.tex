@@ -16,6 +16,7 @@
 \newcommand{\N}{\mathcal{N}}
 \renewcommand{\arraystretch}{1.15}
 \setlength{\parskip}{4pt}
+\setlength{\emergencystretch}{3em}   % no overfull lines from long code names
 
 \title{\textbf{A\_GMX: adaptive Gaussian-mixture clustering\\for skipper-CCD images}\\[4pt]
 \large what every step does, the mathematics behind it, and how it performs against WADERs}
@@ -28,7 +29,7 @@
 \noindent\small Code: \code{clustering\_tests/adaptive.py} (\code{adaptive\_cluster(..., engine="gmx")}) and
 \code{clustering\_tests/gmx.py} (\code{general\_cluster}). Figures are produced by \code{make\_agmx\_figures.py} (every
 algorithm step, run on a real image) and \code{make\_agmx\_perf.py} (performance). All numbers are recomputed from the saved
-results in \code{\textasciitilde/Documents/comm\_scripts\_data/session\_2026-10-23\_clustering/clustering\_2026-10-25/}.\normalsize
+results in \path{~/Documents/comm_scripts_data/session_2026-10-23_clustering/clustering_2026-10-25/}.\normalsize
 
 \tableofcontents
 \clearpage
