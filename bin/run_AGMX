@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""run_AGMX: A_GMX clusters for a finished run_WADERs output folder, written as panaSKImg cluster files.
+
+    run_AGMX WADERs_analysis_<run> [-j N] [--no-gaincorr] [--per-image] [--anchor comb|fit] [-o DIR] [--env NAME]
+
+A_GMX (adaptive + Gaussian-mixture clustering, docs/aGMX/) runs on the calibrated images panaSKImg saved
+(<image>_EXT<n>_waders.fits.bz2) and writes one file per CCD in the WADERs ClusterFinder format
+(panaSKImg_clustersRec_<image>_ext<n>.root: clustersRec / info / process_config, the same branches computed by
+pysimdamicm's own Cluster class) plus the branches agmx_cls, agmx_blend, agmx_ped, agmx_peakfrac, agmx_chi2,
+agmx_sig, agmx_regime and a TNamed agmx_config. Anything that reads WADERs cluster files reads these.
+
+Output, inside the run folder (nothing existing is changed):
+    root_agmx/                    A_GMX on the images as calibrated by panaSKImg (fitted gain)
+    root_agmx_gaincorr/           if the run has gain_vs_charge/ (run_WADERs --gain-correction): A_GMX on the
+                                  images converted with the module's g(n) curve (--per-image: the image's own curve,
+                                  -> root_agmx_gaincorr_per_image/); --no-gaincorr skips it
+    each with root_files.txt (full paths, the input list for MakeComposite)
+
+Recommended selection for X-ray lines: agmx_blend < 0.02 and agmx_ped < 10 (e-/pix), plus the usual
+sigma_xy cut of the analysis (details: docs/aGMX/aGMX_clustering.tex, section 'Running A_GMX').
+The same step runs inside the pipeline with run_WADERs --clusterer agmx (or both).
+
+Needs the python environment of run_WADERs (numpy, astropy, PyROOT, pysimdamicm); like run_WADERs it re-runs itself
+inside the conda environment with panaSKImg if this python lacks them (--env NAME or $WADERS_ENV).
+"""
+import argparse
+import importlib.machinery
+import importlib.util
+import os
+import subprocess
+import sys
+
+SCRIPT_PATH = os.path.realpath(__file__)
+BIN = os.path.dirname(SCRIPT_PATH)
+SRC = os.path.join(os.path.dirname(BIN), "src")
+INSIDE_FLAG = "RUN_AGMX_IN_ENV"
+
+
+def run_waders_module():
+    """bin/run_WADERs as a module (for its environment helpers)"""
+    loader = importlib.machinery.SourceFileLoader("run_WADERs_mod", os.path.join(BIN, "run_WADERs"))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+def ensure_environment(env_name):
+    """as run_WADERs: return if this python has everything, else re-run this script inside the conda env"""
+    W = run_waders_module()
+    if W.env_ready():
+        return
+    if os.environ.get(INSIDE_FLAG):
+        sys.exit("run_AGMX: the environment is missing " + ", ".join(m for m in W.NEEDED_MODULES if importlib.util.find_spec(m) is None))
+    conda = W.find_conda()
+    env = W.find_env(conda, env_name) if conda else None
+    if not env:
+        sys.exit("run_AGMX: this python lacks ROOT/pysimdamicm and no conda environment with panaSKImg was found; use --env NAME")
+    print(f"run_AGMX: using environment {env}", flush=True)
+    cmd = [conda, "run"] + ([] if os.path.basename(conda).startswith("micromamba") else ["--no-capture-output"])
+    cmd += ["-p", env, "python", SCRIPT_PATH] + sys.argv[1:]
+    sys.exit(subprocess.run(cmd, env=dict(os.environ, **{INSIDE_FLAG: "1", "PYTHONUNBUFFERED": "1"})).returncode)
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="run_AGMX", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("run_dir", metavar="RUN_DIR", help="a run_WADERs output folder (WADERs_analysis_<run>)")
+    ap.add_argument("-j", "--jobs", type=int, default=min(4, os.cpu_count() or 1), help="CCDs clustered at the same time (default 4)")
+    ap.add_argument("-o", "--outdir", metavar="DIR", help="write root_agmx*/ here instead of inside RUN_DIR")
+    ap.add_argument("--no-gaincorr", action="store_true", help="only root_agmx/, even if the run has gain_vs_charge/")
+    ap.add_argument("--per-image", action="store_true", help="gain correction with each image's own g(n) curve "
+                    "(needs run_WADERs --gain-correction per-image/both) -> root_agmx_gaincorr_per_image/")
+    ap.add_argument("--anchor", choices=("comb", "fit"), default="comb", help="as run_WADERs --gain-anchor (default comb)")
+    ap.add_argument("--env", metavar="NAME", default=os.environ.get("WADERS_ENV"), help="conda environment (as run_WADERs)")
+    a = ap.parse_args()
+    run_dir = os.path.abspath(a.run_dir)
+    if not os.path.isdir(os.path.join(run_dir, "root")):
+        sys.exit(f"run_AGMX: {run_dir} has no root/ folder; give a run_WADERs output folder")
+    ensure_environment(a.env)
+    sys.path.insert(0, SRC)
+    import agmx_root as AR
+    if not AR.tasks_for_run(run_dir):
+        sys.exit(f"run_AGMX: no CCDs found in {run_dir} (needs root/, json/<image>/final/ and the *_waders.fits images)")
+    base = os.path.abspath(a.outdir) if a.outdir else run_dir
+    sets = [("root_agmx", None)]
+    gc = os.path.join(run_dir, "gain_vs_charge")
+    if os.path.isdir(gc) and not a.no_gaincorr:
+        sets.append(("root_agmx_gaincorr_per_image", gc + ":per-image") if a.per_image else ("root_agmx_gaincorr", gc))
+    nfail = 0
+    for name, curve in sets:
+        outdir = os.path.join(base, name)
+        print(f"run_AGMX: {name}/" + (f" (g(n) from {os.path.basename(gc)}/, anchor {a.anchor})" if curve else ""), flush=True)
+        files, failed = AR.run(run_dir, outdir, curve, a.anchor, a.jobs, log=lambda m: print(m, flush=True))
+        print(f"run_AGMX: {len(files)} cluster files in {outdir} (list: root_files.txt)" + (f"; {len(failed)} CCD(s) failed" if failed else ""))
+        nfail += len(failed)
+    sys.exit(1 if nfail else 0)
+
+
+if __name__ == "__main__":
+    main()

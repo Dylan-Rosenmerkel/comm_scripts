@@ -74,12 +74,13 @@ def hysteresis(Q, region, sigma, k_pix, n_pix=10.0, n_seed=30.0, seed_e=9.5):
         E = float(q.sum() * AM.E_PER_E)
         ext = max(sl[0].stop - sl[0].start, sl[1].stop - sl[1].start)
         cls = "big deposit" if E > 75 else ("extended" if ext >= 10 else ("x-ray diffuse" if sxy >= 1 else "x-ray"))
-        out.append(dict(E=E, y=float(my), x=float(mx), sxy=float(sxy), npix=int(m.sum()), cls=cls, qmax=float(q.max())))
+        out.append(dict(E=E, y=float(my), x=float(mx), sxy=float(sxy), npix=int(m.sum()), cls=cls, qmax=float(q.max()),
+                        _pix=(ys, xs, q)))           # pixels and their charge [e-] (sums to E)
     return out
 
 
 def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.3, box=31, margin=8, excess_ratio=3.0,
-                     return_info=False, engine="mhc", **mhc_kw):
+                     return_info=False, engine="mhc", return_pixels=False, **mhc_kw):
     """engine='mhc' : unmodelled -> hysteresis; else per region crowded -> hysteresis, sparse -> MHC.
     engine='gmx' : unmodelled -> hysteresis; else GMX on the whole image (GMX shares charge by model responsibility,
                    so it needs no crowded / sparse split; occupancy is still reported per cluster)."""
@@ -104,7 +105,7 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
     if engine == "gmx":
         import gmx as GX
         out = []
-        for c in GX.general_cluster(Q, valid, bg):
+        for c in GX.general_cluster(Q, valid, bg, return_pixels=return_pixels):
             y, x = int(round(c["y"])), int(round(c["x"]))
             o = float(occ[y, x]) if 0 <= y < Q.shape[0] and 0 <= x < Q.shape[1] else np.nan
             out.append(dict(c, regime="crowded" if o >= occ_thr else "sparse", occ=o))

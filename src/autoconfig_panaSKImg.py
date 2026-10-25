@@ -2065,7 +2065,7 @@ def parse_args():
                    help="ClusterFinder thresholds in electrons: a pixel joins a cluster if it has more "
                         "than PIXEL_E e-, and a cluster needs at least one pixel above SEED_E e- "
                         "(e.g. 2.5 9.5), or 'auto': per CCD from its dark charge (smallest k with "
-                        "P(Poisson(lambda) >= k) <= 10%, pixel > k - 0.5 e-, seed > 9.5 e-). Default: keep "
+                        "P(Poisson(lambda) >= k) <= 10%%, pixel > k - 0.5 e-, seed > 9.5 e-). Default: keep "
                         "the reference JSON's spr_threshold, which is in units of the per-row pedestal noise")
     k.add_argument("--cluster-all", action="store_true",
                    help="also search clusters in CCDs flagged as unresolved outliers (e.g. a flooded "

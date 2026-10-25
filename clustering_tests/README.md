@@ -1,6 +1,7 @@
 # clustering_tests — alternative clustering methods and their test scripts
 
-Research code (not used by `run_WADERs`). It holds every clustering method compared with the WADERs /
+Research code. A_GMX from here is used by `run_WADERs --clusterer agmx|both` and `bin/run_AGMX` (through
+`src/agmx_root.py`); everything else is not part of the pipeline. It holds every clustering method compared with the WADERs /
 panaSKImg ClusterFinder on 2026-10-23..25 and the scripts that tested them.
 
 - **Recommended method: A_GMX** = `adaptive.adaptive_cluster(Q, valid, engine="gmx")`. Full description (every step,
@@ -35,6 +36,7 @@ data): `python -m unittest tests.test_clustering_methods` (from the repo root).
 | `am_test.py` | Am-241: real lines, injected 17.75 / 59.5 keV, big-event splitting | AMTEst 10 images |
 | `tracks_test.py`, `extscan.py` (+ `summ_tracks.py`), `mhc_tracks.py` (+ `summ_mhc.py`) | injected muons, worms, blobs, alphas, hot columns, X-ray pairs | AMTEst EXT1 / EXT3 |
 | `lowE_test.py`, `mhc_lowE.py` (+ `summ_lowE.py`) | few-electron events: efficiency, exact charge, fakes | simulated + AMTEst EXT1 |
+| `agmx_root_check.py` | `src/agmx_root.py` writes the WADERs format: real panaSKImg clusters replayed through the writer, every branch compared | runs_29img |
 | `am241_29img_recluster.py`, `am241_29img_fit.py`, `adaptive_tune_am241.py`, `adaptive_thr_scan_am241.py`, `adaptive_crowded_scan_am241.py`, `make_crowded_table.py` | crowded Am-241 CCD: constrained Lepy fit for every clustering, occupancy / threshold scans | runs_29img EXT4 |
 
 ## Documentation builders

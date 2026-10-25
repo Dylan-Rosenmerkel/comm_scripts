@@ -15,6 +15,8 @@ What happens, per image (each step is one function below)
   step3_collect_root_files   cluster files -> root/, dark-current fits -> root/dc_fits/
   step3b_gain_correction --gain-correction: gain vs charge per pixel g(n) measured from the images, corrected
                          cluster files (gain_vs_charge.py)
+  step3d_agmx            --clusterer agmx|both: A_GMX clusters (src/agmx_root.py) written as panaSKImg cluster
+                         files -> root_agmx/ (and root_agmx_gaincorr/ with --gain-correction)
   step3c_composite       --composite: MakeComposite_Fe55_Clusters_Extensions.cc on the cluster files
   step4_summary          fit_quality.csv and summary.txt (gain, noise, dark current per CCD with fit errors)
 
@@ -30,6 +32,7 @@ Output: WADERs_analysis_<run name>/   (run name = image name, or the .txt name f
     logs/                      panaSKImg and autoconfig logs
     summary.txt, fit_quality.csv   gain, noise, dark current per CCD with fit errors
     gain_vs_charge/, root_gaincorr*/   with --gain-correction;   composite*/   with --composite
+    root_agmx*/                with --clusterer agmx/both (A_GMX cluster files, same format as root/)
 
 A list .txt has one image path per line (relative paths are relative to the .txt;
 empty lines and lines starting with # are ignored).
@@ -223,6 +226,7 @@ output (WADERs_analysis_<run name>/):
   json/<image>/gain/, dc/      intermediate JSONs (many-peak gain fit, 0e-/1e- fit)
   logs/                        panaSKImg and autoconfig logs
   composite/                   with --composite: MakeComposite plots and its input lists
+  root_agmx/, root_agmx_gaincorr/   with --clusterer agmx/both: A_GMX cluster files
 
 what it does, per image (gain_dc_split.py --per-ext, always on):
   1. autoconfig measures every CCD from the raw pixels and writes two JSONs per CCD:
@@ -298,6 +302,21 @@ what it does, per image (gain_dc_split.py --per-ext, always on):
   109 -> DMb, 106 -> DMc), else ACM<id>. Macro: --composite-macro, $MAKECOMPOSITE_MACRO,
   else ~/Documents/LSM_Module_Testing_Analysis/src/MakeComposite_Fe55_Clusters_Extensions.cc.
 
+--clusterer waders|agmx|both (default waders): which clusters the analysis gets.
+  waders  panaSKImg's ClusterFinder only (root/), as before.
+  agmx    also A_GMX (adaptive + Gaussian-mixture clustering, docs/aGMX/aGMX_clustering.tex) on the calibrated
+          images panaSKImg saved (*_EXT<n>_waders.fits.bz2), after the panaSKImg runs and the gain correction:
+            root_agmx/            the images as calibrated by panaSKImg
+            root_agmx_gaincorr/   with --gain-correction: the images converted with the module's g(n) curve
+                                  (root_agmx_gaincorr_per_image/ with --gain-correction per-image/both)
+          The files have the WADERs ClusterFinder format (panaSKImg_clustersRec_<image>_ext<n>.root, trees
+          clustersRec/info/process_config, every branch computed by pysimdamicm's Cluster class) plus agmx_*
+          branches (class, blend, ped, peakfrac, chi2, significance, regime). Recommended for X-ray lines:
+          agmx_blend < 0.02 and agmx_ped < 10 with the usual sigma_xy cut. --composite uses the A_GMX files.
+          panaSKImg's ClusterFinder still runs (root/ is kept and gives info/process_config).
+  both    as agmx, but --composite runs on the WADERs files (composite/) and on the A_GMX files (composite_agmx/).
+  For a run that is already finished: bin/run_AGMX WADERs_analysis_<run>.
+
 settings you can pass with --autoconfig-args "..." (all inside one quoted string):
   --cluster-threshold-e PIX SEED  cluster thresholds in e- (pixel > PIX, seed > SEED);
                                   much faster on images with high dark current
@@ -326,6 +345,8 @@ examples:
   run_WADERs images.txt --gain-correction both   per-image and per-module curves, compared
   run_WADERs images.txt --composite --gain-correction --module 109=DM02
                                                  then MakeComposite on the corrected files
+  run_WADERs images.txt --gain-correction --clusterer both --composite
+                                                 WADERs and A_GMX clusters, both through MakeComposite
 
 environment variables: WADERS_ENV (conda environment), PANASKIMG (panaSKImg script),
   MAKECOMPOSITE_MACRO (MakeComposite_Fe55_Clusters_Extensions.cc for --composite)
@@ -383,6 +404,9 @@ def build_parser(full=False):
                     help="with --gain-correction: convert with the comb's g(n) including its low-charge gain "
                          "(comb, default), or keep each image's fitted gain and correct only the charge "
                          "dependence (fit)")
+    ap.add_argument("--clusterer", choices=("waders", "agmx", "both"), default="waders",
+                    help="waders (default): panaSKImg's ClusterFinder only. agmx: also A_GMX cluster files in the same "
+                         "format (root_agmx*/), used by --composite. both: as agmx, --composite on both (details: -h -v)")
     ap.add_argument("--composite", action="store_true",
                     help="after panaSKImg, run MakeComposite_Fe55_Clusters_Extensions.cc on the cluster files, "
                          "once per image type and module (output in composite/; details: -h -v)")
@@ -574,6 +598,8 @@ def check_request(args):
     if os.path.exists(out) and os.listdir(out) and not args.overwrite:
         sys.exit(f"run_WADERs: {out} already exists; use --overwrite to replace it")
     modules = parse_modules(args.module)
+    if args.clusterer != "waders" and args.no_clusters:
+        sys.exit(f"run_WADERs: --clusterer {args.clusterer} needs panaSKImg's cluster files; it cannot be used with --no-clusters")
     if args.composite:
         if args.no_clusters:
             sys.exit("run_WADERs: --composite needs the cluster files; it cannot be used with --no-clusters")
@@ -836,11 +862,46 @@ def step3b_gain_correction(run, configs, tasks):
     return gc_lines, gc_dirs
 
 
-def step3c_composite(run, configs, gc_dirs):
+def step3d_agmx(run, gc_dirs):
+    """Step 3d, --clusterer agmx|both: A_GMX clusters as panaSKImg cluster files (src/agmx_root.py).
+
+    A_GMX runs on each CCD's calibrated image (<image>_EXT<n>_waders.fits.bz2, from step 2); its clusters become
+    pysimdamicm Cluster objects (the ClusterFinder's class) and are written with the trees info/process_config of
+    the CCD's panaSKImg file (root/). With --gain-correction the image is first converted to electrons with the
+    same g(n) curves as root_gaincorr*/ (gain_vs_charge/, same --gain-anchor). Returns (lines, dirs, failed):
+    summary lines, {'plain': root_agmx, 'pooled' / 'per-image': root_agmx_gaincorr*} and failed CCDs.
+    """
+    args, D = run.args, run.dirs
+    if args.clusterer == "waders" or args.no_clusters:
+        return [], {}, []
+    import agmx_root as AR
+    sets = {"plain": (os.path.join(run.out, "root_agmx"), None)}
+    for mode in gc_dirs:
+        name = "root_agmx_gaincorr" if mode == "pooled" else "root_agmx_gaincorr_per_image"
+        sets[mode] = (os.path.join(run.out, name), D["gc"] + (":per-image" if mode == "per-image" else ""))
+    lines = [f"A_GMX clusters (--clusterer {args.clusterer}, src/agmx_root.py, version {AR.AGMX_VERSION}; "
+             f"recommended: agmx_blend < 0.02, agmx_ped < 10):"]
+    failed = []
+    dirs = {}
+    for key, (outdir, curve) in sets.items():
+        print(f"  {run.stamp()} A_GMX -> {os.path.basename(outdir)}/")
+        files, bad = AR.run(run.out, outdir, curve, args.gain_anchor, args.jobs,
+                            log=lambda m: print(f"  {run.stamp()} {m.strip()}", flush=True))
+        dirs[key] = outdir
+        lines.append(f"  {os.path.basename(outdir)}/: {len(files)} cluster files (list: "
+                     f"{os.path.join(outdir, 'root_files.txt')})" + (f"; FAILED: {len(bad)} CCD(s)" if bad else ""))
+        lines += [f"    FAILED {s} EXT{e}: {why}" for s, e, why in bad]
+        failed += [f"A_GMX {s} EXT{e}" for s, e, _ in bad]
+    return lines, dirs, failed
+
+
+def step3c_composite(run, configs, gc_dirs, agmx_dirs=None):
     """Step 3c, --composite: MakeComposite_Fe55_Clusters_Extensions.cc once per image type and module.
 
     Runs on the gain-corrected cluster files if there are any (root_gaincorr/), else on root/; with
-    --gain-correction both also on root_gaincorr_per_image/ -> composite_per_image/. The image type N (CCD geometry
+    --gain-correction both also on root_gaincorr_per_image/ -> composite_per_image/. With --clusterer agmx the
+    A_GMX files (root_agmx_gaincorr*/ or root_agmx/) are used instead; with --clusterer both they go to
+    composite_agmx/ (composite_per_image_agmx/) in addition. The image type N (CCD geometry
     in the macro) comes from Image_<N> in the name or --image-number; the module from module_name(). Returns
     (comp_lines, comp_failed): summary lines and the names of failed runs.
     """
@@ -852,6 +913,14 @@ def step3c_composite(run, configs, gc_dirs):
     comp_sets = [(D.get("root_gc", D["root"]), os.path.join(run.out, "composite"), "")]
     if len(gc_dirs) == 2:           # --gain-correction both: also the per-image corrected files
         comp_sets.append((gc_dirs["per-image"], os.path.join(run.out, "composite_per_image"), "_per_image"))
+    if agmx_dirs:                   # --clusterer agmx: the A_GMX files instead; both: in addition
+        a_sets = [(agmx_dirs.get("pooled", agmx_dirs.get("per-image", agmx_dirs["plain"])), "composite", "")]
+        if "pooled" in agmx_dirs and "per-image" in agmx_dirs:
+            a_sets.append((agmx_dirs["per-image"], "composite_per_image", "_per_image"))
+        if args.clusterer == "both":
+            comp_sets += [(d, os.path.join(run.out, c + "_agmx"), t + "_agmx") for d, c, t in a_sets]
+        else:
+            comp_sets = [(d, os.path.join(run.out, c), t) for d, c, t in a_sets]
     root_exe = shutil.which("root") or os.path.join(os.path.dirname(sys.executable), "root")
     for rootdir, cdir, tag in comp_sets:
         os.makedirs(os.path.join(cdir, "lists"), exist_ok=True)
@@ -892,7 +961,7 @@ def step3c_composite(run, configs, gc_dirs):
     return comp_lines, comp_failed
 
 
-def step4_summary(run, configs, roots, failed, gc_lines, comp_lines, comp_failed):
+def step4_summary(run, configs, roots, failed, gc_lines, comp_lines, comp_failed, agmx_lines=(), agmx_failed=()):
     """Step 4: fit_quality.csv and summary.txt (also printed).
 
     Per CCD, the dark-current fit of panaSKImg (root/dc_fits/) gives gain, noise and dark current; their errors are
@@ -945,12 +1014,16 @@ def step4_summary(run, configs, roots, failed, gc_lines, comp_lines, comp_failed
                  f"cluster files: {len(roots)} (list: {os.path.join(D['root'], 'root_files.txt')})")
     if gc_lines:
         lines += [""] + gc_lines
+    if agmx_lines:
+        lines += [""] + list(agmx_lines)
     if comp_lines:
         lines += [""] + comp_lines
     if failed:
         lines.append("FAILED runs: " + ", ".join(f"{s} {e}" for s, e, _ in failed))
     if comp_failed:
         lines.append("FAILED MakeComposite runs: " + ", ".join(comp_failed))
+    if agmx_failed:
+        lines.append("FAILED A_GMX CCDs: " + ", ".join(agmx_failed))
     text = "\n".join(lines)
     with open(os.path.join(run.out, "summary.txt"), "w") as fh:
         fh.write(text + "\n")
@@ -974,13 +1047,14 @@ def main():
     tasks, failed = step2_run_panaskimg(run, configs)               # panaSKImg per CCD
     roots = step3_collect_root_files(run)                           # cluster files -> root/
     gc_lines, gc_dirs = step3b_gain_correction(run, configs, tasks) # --gain-correction
-    comp_lines, comp_failed = step3c_composite(run, configs, gc_dirs)   # --composite
-    step4_summary(run, configs, roots, failed, gc_lines, comp_lines, comp_failed)
+    agmx_lines, agmx_dirs, agmx_failed = step3d_agmx(run, gc_dirs)  # --clusterer agmx|both
+    comp_lines, comp_failed = step3c_composite(run, configs, gc_dirs, agmx_dirs)   # --composite
+    step4_summary(run, configs, roots, failed, gc_lines, comp_lines, comp_failed, agmx_lines, agmx_failed)
 
     if not args.keep_work:
         shutil.rmtree(run.dirs["work"], ignore_errors=True)
     print(f"\nresults: {out}")
-    sys.exit(1 if failed or comp_failed else 0)
+    sys.exit(1 if failed or comp_failed or agmx_failed else 0)
 
 
 if __name__ == "__main__":

@@ -363,7 +363,7 @@ def _aggregate(I, K, G, M, lab, H, W):
 def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, nsig_res=5.0, n_iter=30, sig_min=4.0,
                     r_merge=0.5, w_ratio=1.6, hotcol=True, p_count=1e-5, count_E_max=100, grow=3, return_info=False,
                     residual_pass=True, eps_k=1.0, arbitrate=True, link_alpha=0.01, island_max=4000, bic_margin=30.0, f_sat=0.01, seed_mode="scalespace",
-                    sat_e_max=1.0, ped_ring=(5.0, 8.0), ped_q=25):
+                    sat_e_max=1.0, ped_ring=(5.0, 8.0), ped_q=25, return_pixels=False):
     bg = get_bg(Q, valid, bg)
     H, W = Q.shape
     info = {}
@@ -516,6 +516,18 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
             maj = rc > 0.5
             n_e = np.round((Qc - bg.o).ravel()[pI])
             En = np.bincount(pL[maj], n_e[maj] - bg.lam.ravel()[pI][maj], nc)
+        if return_pixels:
+            # per-cluster pixels and the charge [e-] the cluster takes from each (sums exactly to its energy):
+            # shared pixels (rc * R), grown pixels (R), or for counting-mode clusters the counted electrons
+            Rf = R.ravel()
+            po = np.argsort(pL, kind="stable"); pIs, vals = pI[po], (rc * Rf[pI])[po]
+            pcut = np.searchsorted(pL[po], np.arange(nc + 1))
+            if gpix is not None:
+                go = np.argsort(gpix[2], kind="stable"); gys, gxs = gpix[0][go], gpix[1][go]
+                gcut = np.searchsorted(gpix[2][go], np.arange(nc + 1))
+            if counting:
+                mo = np.argsort(pL[maj], kind="stable"); mIs = pI[maj][mo]
+                mvals = (n_e[maj] - bg.lam.ravel()[pI][maj])[mo]; mcut = np.searchsorted(pL[maj][mo], np.arange(nc + 1))
         for k in range(nc):
             comps = np.nonzero(lab == k)[0]
             if ncomp[k] == 1:
@@ -529,6 +541,17 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
                      ped=float(ped[k]), peakfrac=float(peakfrac[k]), chi2=float(chi2[k]))
             if counting and e < count_E_max:
                 c["E"] = float(En[k] * E_PER_E); c["E_fit"] = e * E_PER_E
+            if return_pixels:
+                if counting and e < count_E_max:
+                    ii, vv = mIs[mcut[k]:mcut[k + 1]], mvals[mcut[k]:mcut[k + 1]]
+                    py_, px_ = ii // W, ii % W
+                else:
+                    ii, vv = pIs[pcut[k]:pcut[k + 1]], vals[pcut[k]:pcut[k + 1]]
+                    py_, px_ = ii // W, ii % W
+                    if gpix is not None and gcut[k + 1] > gcut[k]:
+                        gy, gx = gys[gcut[k]:gcut[k + 1]], gxs[gcut[k]:gcut[k + 1]]
+                        py_, px_, vv = np.r_[py_, gy], np.r_[px_, gx], np.r_[vv, R[gy, gx]]
+                c["_pix"] = (np.asarray(py_, int), np.asarray(px_, int), np.asarray(vv, float))
             out.append(c)
         # 6. classes
         _classify(out, mix, lab, R, Rp, pI, pL, rc, W)
@@ -616,5 +639,6 @@ def _counting(Qc, valid, bg, covered, p_count):
             ys, xs = np.nonzero(m); q = nn[sl][m]
             out.append(dict(E=float((S - bg.lam[sl][m].sum()) * E_PER_E), y=float((q * (ys + sl[0].start)).sum() / S),
                             x=float((q * (xs + sl[1].start)).sum() / S), sxy=np.nan, npix=int(m.sum()), cls="low-E",
-                            n_comp=0, sig=float(stats.norm.isf(max(p, 1e-300)))))
+                            n_comp=0, sig=float(stats.norm.isf(max(p, 1e-300))),
+                            _pix=(ys + sl[0].start, xs + sl[1].start, q - bg.lam[sl][m])))
     return out
