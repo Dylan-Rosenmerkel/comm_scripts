@@ -12,6 +12,8 @@ comm_scripts/
                                     gain_vs_charge.py, fit_quality.py
   utils/   standalone helpers       compare_dcfit_vs_skips.py, split_clustersRec_by_ext.py,
                                     skip_noise_L1.py, compare_runs.py
+  clustering_tests/  research code   alternative clustering methods (A_GMX, GMX, MHC, MFD+G, ...) and the
+                                    scripts that tested them; NOT used by run_WADERs (see "Alternative clustering")
   tests/   unit tests               python -m unittest discover -s tests -v
   docs/    guide, notes, reports    PIPELINE_GUIDE.md (start here: the physics and code of each step),
                                     gain_correction_method/ (g(n) method note, LaTeX + figure scripts),
@@ -20,6 +22,9 @@ comm_scripts/
                                     gain_correction_report.pdf, gain_correction_Am241.pdf,
                                     report_scripts/ (the scripts that made those two PDFs),
                                     CONTEXT_2026-10-16.md (hand-over notes: what was done, open items),
+                                    aGMX/ (A_GMX clustering: LaTeX document + Overleaf zip, figures, tables),
+                                    clustering_methods_report.pdf (all clustering methods, all tests),
+                                    CONTEXT_2026-10-24.md (hand-over notes of the clustering study),
                                     patches/ (local pysimdamicm change), data/
 ```
 
@@ -136,13 +141,36 @@ e.g. `python src/autoconfig_panaSKImg.py image.fz -o auto.json`.
 Note: the wider DC-fit plot (fit 2 peaks, show 5) uses an `x_max_plot` option that is only in
 patched pysimdamicm versions; without it the scripts simply leave it out.
 
+## Alternative clustering (research; not part of run_WADERs)
+
+`run_WADERs` clusters with panaSKImg's ClusterFinder (WADERs: pixel > 10 sigma, seed > 30 sigma), or with thresholds in
+electrons (`--autoconfig-args "--cluster-threshold-e auto"`). The clustering study of 2026-10-23..25 produced better
+clusterers in `clustering_tests/`; they are Python functions that run **after** `run_WADERs`, on the calibrated
+images it writes (`*_EXT<n>_waders.fits.bz2`, in electrons), not inside the chain:
+
+```python
+import sys; sys.path.insert(0, "comm_scripts/clustering_tests")
+import adaptive as AD                                   # A_GMX = adaptive switch + GMX (recommended)
+clusters = AD.adaptive_cluster(Q_electrons, valid_mask, engine="gmx")
+good = [c for c in clusters if c["blend"] < 0.02 and c.get("ped", 0) < 10 and not c.get("edge")]
+```
+
+Each cluster is a dict: `E` [keV], `y`, `x`, `sxy` [px], `cls` (x-ray / x-ray diffuse / low-E / muon / worm / alpha /
+artifact-row / artifact-column), quality flags `blend`, `ped`, `peakfrac`, `chi2`, `sig`, `edge`. Against WADERs (878
+image-CCDs): unbiased Fe-55 energies at every cluster width, 2.7x better energy resolution, close X-ray pairs resolved,
+few-electron events found without fakes; on a crowded CCD more significant lines with the right energy scale. Method,
+equations, figures and all results: `docs/aGMX/aGMX_clustering.tex` (Overleaf: `docs/aGMX/aGMX_clustering_overleaf.zip`)
+and `docs/clustering_methods_report.pdf`; code map: `clustering_tests/README.md`. Integrating A_GMX into `run_WADERs`
+(an optional flag writing the clusters next to panaSKImg's ROOT files) has not been done.
+
 ## Tests
 
 ```bash
 python -m unittest discover -s tests -v      # from the comm_scripts folder, with the panaSKImg python
 ```
 
-Unit tests cover the input handling of `run_WADERs`, the g(n) models of `gain_vs_charge.py` and the Am-241 fit model;
+Unit tests cover the input handling of `run_WADERs`, the g(n) models of `gain_vs_charge.py`, the Am-241 fit model, the
+automatic cluster thresholds and the clustering methods of `clustering_tests/` (simulated images);
 they need no data and run in seconds. For changes to the pipeline itself, compare the outputs of `run_WADERs` on the
 same images before and after with `utils/compare_runs.py OLD NEW` (the pipeline is deterministic; see
 docs/PIPELINE_GUIDE.md, section 6).

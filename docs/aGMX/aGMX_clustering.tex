@@ -419,8 +419,10 @@ clouds of cluster $c$), and
 The \textbf{measured} charge $R_p$ is shared (not the model), so the energy does not depend on the Gaussian being exact; shared
 pixels are split, never counted twice.
 \begin{itemize}
-\item \textbf{Satellites.} A cluster with $E<1\,\%$ of a neighbour's energy whose centre lies in that neighbour's domain or within
-$6\sigma$ (Mahalanobis) of one of its clouds is a tail fragment and is merged into it.
+\item \textbf{Satellites.} A cluster with $E<1\,\%$ of a neighbour's energy \emph{and} $E<1$\,keV whose centre lies in that
+neighbour's domain or within $6\sigma$ (Mahalanobis) of one of its clouds is a tail fragment and is merged into it. (Until
+25 October there was no 1-keV limit, and a real X-ray next to a very large deposit could be swallowed by it; see
+section~\ref{sec:contam}.)
 \item \textbf{Growth.} Pixels above the Poisson-tail threshold ($\alpha=0.01$) within 3\,px of a covered pixel and connected to it,
 but covered by no cloud (CTI trails along the readout), are added to the nearest cluster.
 \end{itemize}
@@ -666,6 +668,105 @@ $\sim$40\,s on a crowded 1.75-Mpix CCD.}
 \end{figure}
 
 %======================================================================================================
+\section{Contamination: the high-side tail and the quality flags (25 October)}\label{sec:contam}
+
+On the crowded Am-241 CCD the 59.5\,keV line of \AGMX{} has a high-side tail and the lines sit slightly high
+($k=1.0014$; figure~\ref{fig:tail}). This section shows where it comes from, what was tried, and what changed in the code.
+
+\begin{figure}[H]\centering
+\includegraphics[width=0.75\textwidth]{figures/fig30_tail.png}
+\caption{The 59.5\,keV line of the crowded CCD (29 images): WADERs, \AGMX{} with the cuts of section~\ref{sec:perf}, and
+\AGMX{} with the new pedestal cut. Scaled to the peak.}\label{fig:tail}
+\end{figure}
+
+\subsection{Is the algorithm biased? No.}
+Clusters of 5.9, 17.75, 26.34 and 59.54\,keV were injected at \emph{random} positions (also next to real events) into
+real images. Away from real events \AGMX{} is unbiased at every energy (median $E_\mathrm{rec}/E_\mathrm{true}=0.9998$,
+spread 0.03\,\% at 59.5\,keV, no high tail), on the clean and the crowded CCD. Next to real events every method adds charge
+of the neighbour: median 1.033 (clean CCD) and 1.063 (crowded CCD) for \AGMX{}, similar for WADERs (figure~\ref{fig:inj}).
+
+\begin{figure}[H]\centering
+\includegraphics[width=\textwidth]{figures/fig31_injected_contamination.png}
+\caption{$E_\mathrm{rec}/E_\mathrm{true}$ of injected X-rays (17.75--59.5\,keV) away from and next to real events.}\label{fig:inj}
+\end{figure}
+
+\subsection{Where the excess comes from}
+Two mechanisms, both real charge of other deposits:
+\begin{enumerate}
+\item \textbf{A charge sheet under the cluster} (dominant on the crowded CCD). Many small overlapping deposits make a
+diffuse sheet of 20--200\,\el/pix. Sharing gives the part of the sheet under a cluster's footprint to the cluster; the cluster
+still looks clean (one cloud, good $\chi^2$, blend $\approx0$). The median charge in a ring 5--8\,px around 59.5-keV-like
+clusters is 24\,\el/pix for clusters at the peak but 116--218\,\el/pix for clusters at 60.5--66\,keV (figure~\ref{fig:ring}).
+WADERs mostly avoids it because it only sums core pixels above $\sim$80\,\el.
+\item \textbf{A neighbouring deposit merged into the cluster} (smaller effect on real data): such clusters have several clouds
+and a bad fit of their own model (median $\chi^2$ 15 vs 1; figure~\ref{fig:flags}).
+\end{enumerate}
+
+\begin{figure}[H]\centering
+\includegraphics[width=0.75\textwidth]{figures/fig32_ring_level.png}
+\caption{Charge in a ring 5--8\,px around each 59.5-keV-like cluster against its energy: clusters above the line sit on a charge sheet.}\label{fig:ring}
+\end{figure}
+
+\begin{figure}[H]\centering
+\includegraphics[width=\textwidth]{figures/fig33_flags.png}
+\caption{Injected X-rays: peak fraction, $\chi^2$ of the cluster's own model and number of clouds for clean (within 1\,\%)
+and contaminated ($>+2\,\%$) clusters.}\label{fig:flags}
+\end{figure}
+
+\subsection{What does not work: re-measuring the energy}
+Growth off, pixel clipping at model $+3$--$4\sigma$, a local background from unexplained pixels, a core aperture (2 or
+3\,$\sigma$) with a model correction, a local pedestal from the ring (median or 25th percentile) subtracted over the
+footprint, and a joint fit of the cluster's shape + a flat level were all tested on the injections and the real lines. They
+either change nothing or add so much noise (the sheet is not uniform) that the lines broaden: e.g.\ subtracting the ring
+median removes the tail (0.60 $\to$ 0.22) but destroys the Np L fit ($Z$ 34 $\to$ 5, $k=0.965$).
+
+\subsection{What works: flags and a selection}
+Energies are left unchanged; every cluster now carries three quality flags (\code{gmx.general\_cluster}):
+\begin{equation}
+\mathrm{ped}_c=P_{25}\big\{R_p:\ 5\le|\mathbf x_p-\mathbf c|\le8\ \mathrm{px}\big\},\qquad
+\mathrm{peakfrac}_c=\frac{\max_{k\in c}A_k}{\sum_{k\in c}A_k},\qquad
+\chi^2_c=\frac{1}{n_c}\sum_{p:\ \tilde r_{pc}>0.5}\frac{(R_p-M_p)^2}{V_p+M_p},
+\end{equation}
+the local pedestal (25th percentile of the residual charge in the ring; robust against neighbours in the ring), the share of
+the cluster's fitted charge in its largest cloud, and the fit quality of its own model. On injected X-rays,
+$\mathrm{peakfrac}>0.95$ keeps 98\,\% of clean clusters and rejects 67\,\% of contaminated ones; on the real crowded CCD the
+pedestal is what matters (figure~\ref{fig:tradeoff}):
+
+\begin{table}[H]\centering\small
+\begin{tabular}{lcccccc}
+\toprule
+selection (crowded CCD, 29 images) & clusters & 59.5 tail/peak & $k$ & dev/ndf & $Z$ & L$\beta$ / L$\gamma$ / $\gamma$26.3 / Ag K \\
+\midrule
+WADERs ($\sigma_{xy}<0.7$) & 62\,665 & 0.10 & 0.984 & 1.74 & 27.1 & 15.5 / 16.0 / 14.8 / 12.9 \\
+\AGMX{} ($\sigma_{xy}<0.7$, blend $<0.02$) & 65\,876 & 0.60 & 1.0014 & 1.98 & 34.3 & 19.9 / 19.1 / 19.9 / 18.3 \\
+\quad + ped $<10$\,\el/pix & 43\,143 & 0.22 & 0.9995 & 1.60 & 28.7 & 16.1 / 16.0 / 17.3 / 15.6 \\
+\quad + ped $<5$\,\el/pix & 37\,507 & 0.18 & 0.9994 & 1.54 & 26.9 & 14.7 / 15.3 / 16.2 / 14.6 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]\centering
+\includegraphics[width=0.7\textwidth]{figures/fig34_pedestal_tradeoff.png}
+\caption{Purity against statistics: the 59.5\,keV tail and the Np L significance for pedestal cuts of 20, 10, 5, 2\,\el/pix.}\label{fig:tradeoff}
+\end{figure}
+
+\paragraph{Satellites.} Satellite merging absorbed any cluster with $<1\,\%$ of a neighbour's energy, so a 5.9-keV X-ray next
+to a $>600$-keV deposit was swallowed (crowded CCD, injected: median $E_\mathrm{rec}/E_\mathrm{true}$ 8.7). Only fragments
+below 1\,keV are merged now (\code{sat\_e\_max}); the X-ray stays its own cluster (unit test
+\code{test\_xray\_next\_to\_big\_deposit\_not\_merged}), with an energy a few \% low when it sits on the big deposit's wing.
+
+\paragraph{Recommended selection for spectroscopy.} $\sigma_{xy}<0.7$ (or the front-side cut of the analysis), blend $<0.02$,
+ped $<10$\,\el/pix, not on the edge; add peakfrac $>0.95$ where merged neighbours matter. The flags are outputs: nothing is
+removed by \code{general\_cluster} itself.
+
+\subsection{Effect on all X-ray lines and on Fe-55}
+Every Am-241 line fitted alone (Gaussian + linear background) on EXT1, EXT3 and EXT4 of the 29-image run, old and new code,
+with and without the flags (\code{am241\_lines\_flags.py}), and the front-side Fe-55 K$\alpha$ of every data set of the wide
+test (\code{wide\_agmx\_flags.py}, \code{summ\_wide\_flags.py}):
+\IfFileExists{lines_flags_table.tex}{\input{lines_flags_table}}{}
+\IfFileExists{fe55_flags_tables.tex}{\input{fe55_flags_tables}}{}
+
+%======================================================================================================
 \section{Does \AGMX{} supersede the other methods?}\label{sec:supersede}
 
 \textbf{Yes, as the general clusterer.} Against each alternative:
@@ -735,7 +836,8 @@ parameter & default & where & meaning \\
 \code{r\_merge} & 0.5 & GMX & ridge ratio for merging \\
 \code{w\_ratio} & 1.6 & GMX & width ratio (sharp-on-diffuse protection) \\
 \code{link\_alpha}, \code{island\_max}, \code{bic\_margin} & 0.01, 4000\,px, 30 & GMX & island test \\
-\code{f\_sat} & 0.01 & GMX & satellite absorption \\
+\code{f\_sat}, \code{sat\_e\_max} & 0.01, 1\,keV & GMX & satellite absorption (only fragments $<1$\,keV) \\
+\code{ped\_ring}, \code{ped\_q} & (5, 8)\,px, 25 & GMX & local pedestal flag (ring, percentile) \\
 \code{grow} & 3\,px & GMX & CTI-trail growth \\
 \code{p\_count}, \code{count\_E\_max} & $10^{-5}$, 100\,\el & GMX & few-electron finder, counting energies \\
 \bottomrule
@@ -746,9 +848,12 @@ parameter & default & where & meaning \\
 import sys; sys.path.insert(0, "comm_scripts/clustering_tests")
 import adaptive as AD
 clusters = AD.adaptive_cluster(Q_electrons, valid_mask, engine="gmx")
-# each cluster: E [keV], y, x, sxy [px], cls, blend, sig, n_comp, edge,
+# each cluster: E [keV], y, x, sxy [px], cls, blend, sig, n_comp, edge, ped [e-/pix], peakfrac, chi2,
 #               regime ('sparse' / 'crowded' / 'unmodelled'), occ
-good = [c for c in clusters if c.get("blend", 0) < 0.02 and not c.get("edge")]
+# spectroscopy selection (section on contamination):
+good = [c for c in clusters if c.get("blend", 0) < 0.02 and not c.get("edge")
+        and not c.get("ped", 0) >= 10          # not sitting on a charge sheet (crowded fields)
+        and c.get("peakfrac", 1) > 0.95]       # not merged with a neighbouring deposit
 \end{lstlisting}
 
 Test scripts (all in \code{clustering\_tests/}, README there): \code{wide\_test.py} + \code{wide\_adaptive\_gmx.py} (all images),

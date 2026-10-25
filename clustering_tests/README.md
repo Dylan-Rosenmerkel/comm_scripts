@@ -21,7 +21,7 @@ data): `python -m unittest tests.test_clustering_methods` (from the repo root).
 | `agent_methods.py` | MFD+G | background map, Poisson tails, matched-filter detection + disk + growth (`mf_detect`), Cash / Naylor / multi-fit (`pipeline`) |
 | `methods2.py` | hybrid v1 / v2 | merges of MFD+G pieces (B region, saddle, `mfdg_hybrid`), track-first, counting energies |
 | `mhc.py` | MHC | multi-hypothesis clustering: specialised finders + chi2 / BIC arbitration + classes |
-| `gmx.py` | GMX | Gaussian-mixture EM deblending (`general_cluster`) - from the exploratory agent, verified |
+| `gmx.py` | GMX | Gaussian-mixture EM deblending (`general_cluster`) - from the exploratory agent, verified; quality flags `blend`, `ped`, `peakfrac`, `chi2` |
 | `pws.py` | PWS | persistence-simplified watershed (control in the GMX study; not recommended) |
 | `adaptive.py` | adaptive / **A_GMX** | regime switch: 'unmodelled' -> hysteresis; engine 'mhc' (crowded -> hysteresis, sparse -> MHC) or 'gmx' (GMX everywhere) |
 
@@ -44,3 +44,13 @@ data): `python -m unittest tests.test_clustering_methods` (from the repo root).
 | `make_agmx_figures.py` | `docs/aGMX/figures/fig00-13` (every A_GMX step run on a real image) |
 | `make_agmx_perf.py` | `docs/aGMX/figures/fig20-26`, `docs/aGMX/perf_tables.tex` |
 | `make_clustering_report.py` (+ `report_text_methods.py`, `report_figs.py`) | `docs/clustering_methods_report.pdf` |
+| `make_agmx_contamination_figs.py` | `docs/aGMX/figures/fig30-34` (the 59.5 keV tail, its cause, the quality flags) |
+| `make_overleaf_zip.py` | `docs/aGMX/aGMX_clustering_overleaf.zip` |
+
+## 2026-10-25 additions
+
+- `gmx.py`: quality flags `ped` (local pedestal), `peakfrac`, `chi2` on every cluster; satellite merging only for
+  fragments < 1 keV (`sat_e_max`). Energies unchanged. Why: docs/aGMX, section "Contamination".
+- `am241_lines_flags.py`: every Am-241 line fitted alone, old vs new code, with / without the flag cuts (EXT1/3/4).
+- `wide_agmx_flags.py` (+ `summ_wide_flags.py`): Fe-55 K-alpha of every data set with the flag cuts, and the injection
+  test, for the new code.

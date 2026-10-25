@@ -76,5 +76,36 @@ class ClusteringMethods(unittest.TestCase):
         self.assertIn(near(self.mhc, 200, 150, 22)[0]["cls"], ("muon", "worm"))
 
 
+class GMXQualityFlags(unittest.TestCase):
+    """GMX quality flags (ped, peakfrac, chi2) and the satellite limit (a real X-ray next to a big deposit is not
+    merged into it)."""
+
+    @classmethod
+    def setUpClass(cls):
+        import gmx as GX
+        rng = np.random.default_rng(2)
+        H, W = 200, 300
+        Q = rng.poisson(0.01, (H, W)) + rng.normal(0, 0.15, (H, W))
+
+        def add(n, y, x, s):
+            np.add.at(Q, (np.round(y + rng.normal(0, s, n)).astype(int), np.round(x + rng.normal(0, s, n)).astype(int)), 1.0)
+        add(1580, 60, 60, 0.5)                       # isolated Fe-55
+        add(160000, 120, 180, 2.0)                   # ~600 keV blob
+        add(1580, 120, 187, 0.4)                     # Fe-55 7 px from the blob centre
+        valid = np.zeros((H, W), bool); valid[3:-3, 3:-3] = True
+        cls.cl = GX.general_cluster(Q, valid)
+
+    def test_flags_isolated(self):
+        c = near(self.cl, 60, 60, 3)[0]
+        self.assertLess(abs(c["ped"]), 0.5)
+        self.assertGreater(c["peakfrac"], 0.95)
+        self.assertLess(c["chi2"], 5)
+
+    def test_xray_next_to_big_deposit_not_merged(self):
+        c = near(self.cl, 120, 187, 2)
+        self.assertEqual(len(c), 1)
+        self.assertLess(abs(c[0]["E"] / (1580 / NE) - 1), 0.15)
+
+
 if __name__ == "__main__":
     unittest.main()

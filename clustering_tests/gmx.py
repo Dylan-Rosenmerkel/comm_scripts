@@ -362,7 +362,8 @@ def _aggregate(I, K, G, M, lab, H, W):
 # ------------------------------------------------------------------------------------------------ main
 def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, nsig_res=5.0, n_iter=30, sig_min=4.0,
                     r_merge=0.5, w_ratio=1.6, hotcol=True, p_count=1e-5, count_E_max=100, grow=3, return_info=False,
-                    residual_pass=True, eps_k=1.0, arbitrate=True, link_alpha=0.01, island_max=4000, bic_margin=30.0, f_sat=0.01, seed_mode="scalespace"):
+                    residual_pass=True, eps_k=1.0, arbitrate=True, link_alpha=0.01, island_max=4000, bic_margin=30.0, f_sat=0.01, seed_mode="scalespace",
+                    sat_e_max=1.0, ped_ring=(5.0, 8.0), ped_q=25):
     bg = get_bg(Q, valid, bg)
     H, W = Q.shape
     info = {}
@@ -455,7 +456,8 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
                         best, bE = L, E[L]
                 if best >= 0:
                     d_[k] = best
-            sat = (d_ >= 0) & (d_ != np.arange(nc)) & (E < f_sat * E[np.maximum(d_, 0)])
+            # only small fragments (< sat_e_max keV) are merged: a real X-ray next to a big deposit stays its own cluster
+            sat = (d_ >= 0) & (d_ != np.arange(nc)) & (E < f_sat * E[np.maximum(d_, 0)]) & (E * E_PER_E < sat_e_max)
             if sat.any():
                 tgt = np.arange(nc); tgt[sat] = d_[sat]
                 for _ in range(5):
@@ -497,6 +499,18 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
         edge = np.zeros(nc, bool)
         vd = ndimage.binary_erosion(valid, iterations=2)
         edge[np.unique(pL[~vd.ravel()[pI]])] = True
+        # quality flags (energies are not changed by them):
+        #   peakfrac: share of the cluster's fitted charge carried by its largest cloud (merged neighbours -> < 1)
+        #   chi2    : sum (R - M)^2 / (V + M) per pixel over the pixels the cluster dominates (its own model's fit)
+        #   ped     : local pedestal = ped_q-th percentile of R in a ring ped_ring px around the centre (charge sheet
+        #             under the cluster in crowded fields; its share of that sheet is inside E)
+        Asum = np.bincount(lab, mix.A, nc); Amax = np.zeros(nc); np.maximum.at(Amax, lab, mix.A)
+        peakfrac = Amax / np.maximum(Asum, 1e-12)
+        dmn = rc > 0.5
+        Rv, Mv = R.ravel()[pI], M[pI]
+        chi = np.bincount(pL[dmn], ((Rv - Mv) ** 2 / (V.ravel()[pI] + np.clip(Mv, 0, None)))[dmn], nc)
+        chi2 = chi / np.maximum(np.bincount(pL[dmn], minlength=nc), 1)
+        ped = _pedestal(R, valid, cy, cx, ped_ring, ped_q)
         # counting energies for few-electron clusters (photon-counting CCDs)
         if counting:
             maj = rc > 0.5
@@ -511,7 +525,8 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
                 sx = float(sxy_m[k])
             e = float(E[k])
             c = dict(E=e * E_PER_E, y=float(cy[k]), x=float(cx[k]), sxy=sx, sxy_mom=float(sxy_m[k]), n_comp=int(ncomp[k]),
-                     sig=float(e / np.sqrt(max(varE[k], 1e-9))), edge=bool(edge[k]), blend=float(blend[k]))
+                     sig=float(e / np.sqrt(max(varE[k], 1e-9))), edge=bool(edge[k]), blend=float(blend[k]),
+                     ped=float(ped[k]), peakfrac=float(peakfrac[k]), chi2=float(chi2[k]))
             if counting and e < count_E_max:
                 c["E"] = float(En[k] * E_PER_E); c["E_fit"] = e * E_PER_E
             out.append(c)
@@ -526,6 +541,27 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
     if return_info:
         info["mix"] = mix; info["lab"] = lab
         return out, info
+    return out
+
+
+def _pedestal(R, valid, cy, cx, ring=(5.0, 8.0), q=25, min_pix=15):
+    """local pedestal of each cluster: the q-th percentile of the residual charge R in the ring r_in <= r <= r_out
+    (px) around its centre, all active pixels (the 25th percentile is robust against neighbouring deposits in the
+    ring). NaN when fewer than min_pix active ring pixels."""
+    H, W = R.shape
+    r_in, r_out = ring; ro = int(np.ceil(r_out))
+    out = np.full(len(cy), np.nan)
+    for k in range(len(cy)):
+        y, x = cy[k], cx[k]
+        yi, xi = int(round(y)), int(round(x))
+        y0, y1, x0, x1 = max(yi - ro, 0), min(yi + ro + 1, H), max(xi - ro, 0), min(xi + ro + 1, W)
+        if y1 <= y0 or x1 <= x0:
+            continue
+        yy, xx = np.mgrid[y0:y1, x0:x1]
+        r = np.hypot(yy - y, xx - x)
+        m = (r >= r_in) & (r <= r_out) & valid[y0:y1, x0:x1]
+        if m.sum() >= min_pix:
+            out[k] = float(np.percentile(R[y0:y1, x0:x1][m], q))
     return out
 
 
