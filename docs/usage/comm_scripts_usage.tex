@@ -97,8 +97,8 @@ algorithm is described in \cc{docs/aGMX/aGMX_clustering.tex}.
 \cc{clustering_tests/} & research code & the clustering methods (A\_GMX, GMX, MHC, MFD+G, hybrid, \dots) and
   the scripts that tested them \\
 \cc{tests/} & unit tests & simulated inputs, no data needed; run in under a minute \\
-\cc{docs/} & guides, notes, reports & \cc{PIPELINE_GUIDE.md}, the A\_GMX document, the Am-241 note, the
-  gain-correction note and reports, this guide, hand-over notes \\
+\cc{docs/} & guides, notes, reports & \cc{README.md} (index), this guide, \cc{PIPELINE_GUIDE.md}, the A\_GMX
+  document, the Am-241 note, the gain-correction note and reports, \cc{notes/} (hand-over notes, open items) \\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -415,7 +415,9 @@ Every branch is therefore computed by panaSKImg's own code, and the file is writ
 \bottomrule
 \end{tabularx}
 \end{center}
-The file also contains a \cc{TNamed agmx_config} with the version, the parameters and the codes, as JSON.
+A flag value of $-999$ means ``not computed'': \cc{agmx_chi2} of clusters the mixture did not fit (few-electron
+finder, hysteresis), or \cc{agmx_ped} with fewer than 15 active pixels in the ring (next to the mask). The file also
+contains a \cc{TNamed agmx_config} with the version, the parameters and the codes, as JSON.
 
 \begin{note}[Recommended selection for X-ray lines]
 \cc{agmx_blend < 0.02} and \cc{agmx_ped < 10}, plus the analysis' usual $\sigma_{xy}$ cut (e.g.\ $<0.7$ for the
@@ -502,10 +504,11 @@ the fits; \cc{--run-full OUT} also runs the full panaSKImg sequence.
 
 \subsection{\texttt{fit\_quality.py}: how good are the dark-current fits}
 \begin{lstlisting}
-python src/fit_quality.py PANASKIMG_OUTPUT_FOLDER [--ref FOLDER ...] [--csv out.csv]
+python src/fit_quality.py FOLDER [--ref FOLDER ...] [--csv out.csv]
 \end{lstlisting}
-It reports $\chi^2/$ndf, the scaled errors, and the dark-current bias against the 0\,e$^-$/1\,e$^-$ counts of the
-autoconfig \cc{*_measured.json}.
+FOLDER is a panaSKImg output folder or a \cc{run_WADERs} output folder (fits in \cc{root/dc_fits/}, references in
+\cc{json/<image>/}). It reports $\chi^2/$ndf, the scaled errors, and the dark-current bias against the
+0\,e$^-$/1\,e$^-$ counts of the autoconfig \cc{*_measured.json}.
 
 \subsection{\texttt{gain\_vs\_charge.py} and \texttt{agmx\_root.py}}
 See Sections~\ref{sec:gain} and~\ref{sec:agmx}.
@@ -519,8 +522,8 @@ See Sections~\ref{sec:gain} and~\ref{sec:agmx}.
 \midrule
 \endhead
 \cc{compare_runs.py} & Are two \cc{run_WADERs} outputs identical? It compares \cc{summary.txt}, \cc{fit_quality.csv},
-  the final JSONs, the $g(n)$ curves, every cluster energy in \cc{root*/} and the composite tables. PDFs and logs
-  are not compared. Exit code 0 if identical. \newline \cc{python utils/compare_runs.py OLD NEW [-q]} \\
+  the final JSONs, the $g(n)$ curves, every cluster energy in \cc{root*/} and the composite tables; a file present
+  in only one run is a difference. PDFs and logs are not compared. Exit code 0 if identical. \newline \cc{python utils/compare_runs.py OLD NEW [-q]} \\
 \cc{split_clustersRec_by_ext.py} & Splits files made with \cc{--acm} (all CCDs stacked, \cc{_ext1234.root}) into
   one file per CCD. \newline \cc{python utils/split_clustersRec_by_ext.py files... -o OUTDIR [--nrows 500] [--list L]} \\
 \cc{compare_dcfit_vs_skips.py} & Tiles the per-CCD plots of runs with different skip numbers
@@ -528,7 +531,7 @@ See Sections~\ref{sec:gain} and~\ref{sec:agmx}.
   \cc{python utils/compare_dcfit_vs_skips.py analysis/ -o OUT [--ncols 4] [--plot FitDarkCurrentProcess_DCfit]} \\
 \cc{skip_noise_L1.py} & Decodes a level-1 image (every skip kept, \cc{*.RJ45ADCDATA<ch>}) and plots noise against
   the number of skips, the noise spectrum and the start-of-pixel transient. \cc{--composites N} also writes $N$
-  partial averages. It needs \cc{src/}. \newline
+  partial averages. Outputs are named after the file plus \cc{_ch<k>}. It needs \cc{src/}. \newline
   \cc{python utils/skip_noise_L1.py FILE -o OUT [--geometry RxCxS] [--skip-first 20] [--gain G] [--max-rows N]} \\
 \bottomrule
 \end{longtable}
@@ -574,7 +577,7 @@ with the scripts that tested them. Apart from A\_GMX, which the writer uses, non
 \textbf{script(s)} & \textbf{test} \\
 \midrule
 \endhead
-\cc{wide_test.py}, \cc{wide_adaptive.py}, \cc{wide_gmx.py}, \cc{wide_adaptive_gmx.py} (+ \cc{summ_wide.py}) &
+\cc{wide_test.py}, \cc{wide_run.py adaptive|GMX|adaptive+GMX} (+ \cc{summ_wide.py}) &
   every method on all 878 calibrated image-CCDs: injection, real K$\alpha$, 59.5\,keV \\
 \cc{wide_agmx_flags.py} (+ \cc{summ_wide_flags.py}) & Fe-55 K$\alpha$ with the quality-flag cuts; injection \\
 \cc{am241_lines_flags.py} (\cc{... fit}) & every Am-241 line, old vs new A\_GMX, with/without the flag cuts \\
@@ -647,9 +650,9 @@ The LaTeX source is \cc{note/main.tex}; the Overleaf upload is \cc{docs/AMtest_A
 \end{itemize}
 
 \subsection{Hand-over notes}
-\cc{docs/PIPELINE_GUIDE.md} gives the physics and the code map; read it first. \cc{CONTEXT_2026-10-16.md},
-\cc{CONTEXT_2026-10-24.md}, \cc{HANDOFF_2026-10-23_clustering.md} and \cc{PROGRESS_2026-10-23.md} record what was
-done and what is still open.
+\cc{docs/README.md} is the index of the documentation; \cc{docs/PIPELINE_GUIDE.md} gives the physics and the code
+map. \cc{docs/notes/} holds the dated hand-over notes (each starts with a status line: current, or what supersedes
+it); \cc{CONTEXT_2026-10-24.md} is the current one, and \cc{OPEN_ITEMS.md} lists everything still open in one place.
 
 %==================================================================================================================
 \section{Tests and changing the code safely}\label{sec:tests}
@@ -666,7 +669,9 @@ python -m unittest discover -s tests -v          # with the damic / panaSKImg py
 \cc{test_am241_model.py} & the constrained Am-241 fit on synthetic spectra \\
 \cc{test_cluster_thresholds.py} & the automatic cluster thresholds in electrons \\
 \cc{test_clustering_methods.py} & MFD+G, hybrid, MHC and the GMX quality flags on a simulated image \\
-\cc{test_agmx_root.py} & the A\_GMX writer: file structure, panaSKImg conventions, flags (simulated CCD) \\
+\cc{test_agmx_root.py} & the A\_GMX writer: file structure, panaSKImg conventions, flags, a reference without
+  clusters, binned columns (simulated CCD) \\
+\cc{test_utils.py} & \cc{compare_runs.py} on fake runs (relative paths, extra files, changed JSON) \\
 \bottomrule
 \end{tabularx}
 \end{center}

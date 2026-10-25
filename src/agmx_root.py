@@ -7,7 +7,8 @@ ClusterFinder uses - so every branch (positions, widths, fitted STD, PCA, projec
 pixel lists, ...) is computed by panaSKImg's own code, and written with pysimdamicm's `OutputDataManager` into
     panaSKImg_clustersRec_<stem>_ext<n>.root   (trees clustersRec, info, process_config)
 `info` and `process_config` are copied from the image's panaSKImg file; clustersRec gets the usual branches plus
-    agmx_cls, agmx_blend, agmx_ped, agmx_peakfrac, agmx_chi2, agmx_sig, agmx_regime   (vector per cluster)
+    agmx_cls, agmx_blend, agmx_ped, agmx_peakfrac, agmx_chi2, agmx_sig, agmx_regime   (vector per cluster;
+  -999 = not computed, e.g. agmx_chi2 of clusters the mixture did not fit)
 and the file gets a TNamed `agmx_config` (JSON: version, parameters, class and regime codes).
 
 Conventions (checked against panaSKImg files): pixels_x / pixels_y are 1-based indices of the calibrated image;
@@ -35,6 +36,7 @@ AGMX_VERSION = "2026-10-25"
 CLS_CODES = {"x-ray": 1, "x-ray diffuse": 2, "low-E": 3, "muon": 4, "worm": 5, "alpha": 6, "big deposit": 7,
              "artifact-row": 8, "artifact-column": 9, "extended": 10}
 REGIME_CODES = {"sparse": 0, "crowded": 1, "unmodelled": 2}
+NOT_COMPUTED = -999.0     # agmx_* flag that could not be computed (a real ped / chi2 / blend is never this low)
 
 
 class _Time:
@@ -140,7 +142,7 @@ def build_clusters(clusters, ref, adu, gain, H, W):
         cl.agmx_cls = int(CLS_CODES.get(c.get("cls"), 0))
         for k in ("blend", "ped", "peakfrac", "chi2", "sig"):
             v = c.get(k, np.nan)
-            setattr(cl, f"agmx_{k}", float(v) if v is not None and np.isfinite(v) else -1.0)
+            setattr(cl, f"agmx_{k}", float(v) if v is not None and np.isfinite(v) else NOT_COMPUTED)
         cl.agmx_regime = int(REGIME_CODES.get(c.get("regime"), -1))
         out.append(cl)
     closest(out)
@@ -210,7 +212,7 @@ def process(waders_fits, ref_root, final_json, out_path, ext, curve=None, agmx_k
     clusters = [c for c in clusters if np.isfinite(c.get("E", np.nan)) and "_pix" in c]
     cls = build_clusters(clusters, ref, adu, ref["gain"], *Q.shape)
     params = dict(method="A_GMX (clustering_tests/adaptive.py engine='gmx')", version=AGMX_VERSION,
-                  gain_corrected=curve is not None, gain_anchor=anchor if curve is not None else None, parameters=kw, cls_codes=CLS_CODES, regime_codes=REGIME_CODES,
+                  gain_corrected=curve is not None, gain_anchor=anchor if curve is not None else None, parameters=kw, cls_codes=CLS_CODES, regime_codes=REGIME_CODES, not_computed=NOT_COMPUTED,
                   source_image=os.path.basename(waders_fits), reference=os.path.basename(ref_root),
                   recommended_selection="agmx_blend < 0.02 and agmx_ped < 10 (and fSTD/sigma cut of the analysis)")
     return write_root(out_path, cls, ref, ref_root, params)

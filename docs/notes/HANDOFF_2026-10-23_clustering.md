@@ -1,5 +1,7 @@
 # Handoff: cluster thresholds and alternative clustering methods (session ending 2026-10-23)
 
+> **Status (2026-10-25): historical, superseded by `CONTEXT_2026-10-24.md`.** B was installed (acbac7d); the clustering methods are now in comm_scripts (`clustering_tests/`, A_GMX via `run_WADERs --clusterer` / `bin/run_AGMX`). Open items: `OPEN_ITEMS.md`.
+
 **The next step is to install B after checking, then move onto a review of the agents methods and pipeline and code and tests on real data.**
 
 Everything from this session is in `~/Documents/comm_scripts_data/session_2026-10-23_clustering/`.
@@ -16,7 +18,7 @@ Replace that prefix with this folder before re-running anything.
 ## State of comm_scripts (`~/Documents/Software/comm_scripts`, branch `main`)
 - `main` contains the reorganisation plus the coherent g(n) pooling. The pooling is commit `9550705`, merged in `0123ec5`/`00c06c1`, and makes `--gain-combine coherent` the default.
 - **Nothing from this clustering work is in the repo yet.** The working tree was clean at the end of the session.
-- Earlier docs: `docs/gain_correction_method/` (LaTeX note plus an Overleaf zip) and `docs/PROGRESS_2026-10-23.md` (from the reorganisation session).
+- Earlier docs: `docs/gain_correction_method/` (LaTeX note plus an Overleaf zip) and `PROGRESS_2026-10-23.md` (from the reorganisation session).
 
 ## The problem found
 - WADERs/panaSKImg ClusterFinder keeps a pixel if it is > 10·σ and keeps a cluster if one pixel is > 30·σ (8-connected).

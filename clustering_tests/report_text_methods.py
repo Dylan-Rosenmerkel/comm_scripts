@@ -180,6 +180,6 @@ CLOSING = [
     ]),
     ("Files", [
         "code: comm_scripts/clustering_tests/ (README); A_GMX document: docs/aGMX/aGMX_clustering.tex (Overleaf: docs/aGMX/aGMX_clustering_overleaf.zip); context: "
-        "docs/CONTEXT_2026-10-24.md; results: ~/Documents/comm_scripts_data/session_2026-10-23_clustering/clustering_2026-10-25/.",
+        "docs/notes/CONTEXT_2026-10-24.md; results: ~/Documents/comm_scripts_data/session_2026-10-23_clustering/clustering_2026-10-25/.",
     ]),
 ]

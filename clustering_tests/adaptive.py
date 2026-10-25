@@ -1,6 +1,6 @@
 """Adaptive clustering: choose the method per region of the image from what the region looks like.
 
-Lessons of the 2026-10-23/24 study (docs/CONTEXT_2026-10-24.md):
+Lessons of the 2026-10-23/24 study (docs/notes/CONTEXT_2026-10-24.md):
   - sparse regions (isolated X-rays, tracks, few-electron events): MHC is best (unbiased energies, close X-rays
     resolved, tracks joined, few-electron events without fakes, labels)
   - crowded regions (most pixels hold charge, clusters touch): WADERs-like hysteresis on the image is best; the

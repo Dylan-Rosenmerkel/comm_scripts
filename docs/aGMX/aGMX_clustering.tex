@@ -856,7 +856,7 @@ good = [c for c in clusters if c.get("blend", 0) < 0.02 and not c.get("edge")
         and c.get("peakfrac", 1) > 0.95]       # not merged with a neighbouring deposit
 \end{lstlisting}
 
-Test scripts (all in \code{clustering\_tests/}, README there): \code{wide\_test.py} + \code{wide\_adaptive\_gmx.py} (all images),
+Test scripts (all in \code{clustering\_tests/}, README there): \code{wide\_test.py} + \code{wide\_run.py adaptive+GMX} (all images),
 \code{adaptive\_validate.py} (tracks, few-electron, Fe-55, crowded), \code{make\_agmx\_figures.py}, \code{make\_agmx\_perf.py}.
 Unit tests: \code{python -m unittest tests.test\_clustering\_methods tests.test\_agmx\_root}.
 
@@ -891,6 +891,17 @@ its inputs:
         ``itself'' with \code{PosX != ... and PosY != ...}.
 \end{itemize}
 With the default \code{--clusterer waders} the pipeline output is identical to before (\code{utils/compare\_runs.py}).
+A flag value of $-999$ in the files means ``not computed'' (e.g.\ \code{agmx\_chi2} of a cluster the mixture did not
+fit). Every cluster carries the flags: clusters from the few-electron finder and the hysteresis branch get
+\code{edge} and \code{ped} like the others, \code{blend} $=0$ and \code{peakfrac} $=1$ (no charge is shared).
+
+\paragraph{Fixes of 25 October (audit).} (1) The peak search ignored masked pixels only after the local-maximum
+test, so the matched-filter significance just outside the mask (variance 0 there) could hide a peak on the first or
+last valid row or column: such an X-ray came out as a flag-less few-electron cluster. The local maximum is now taken
+over valid pixels only, and the X-ray is a normal cluster with \code{edge} set. (2) The Poisson check of residual
+few-electron seeds removed the dark charge twice; with it removed once, a simulation at $\lambda=0.5$\,\el/pix finds
+20 instead of 14 of 60 injected 15\,\el{} events, with no clusters on pure-noise images either way. Both change only
+events touching the mask and high-dark-current CCDs; the performance numbers of this document were made before them.
 
 %======================================================================================================
 \appendix
