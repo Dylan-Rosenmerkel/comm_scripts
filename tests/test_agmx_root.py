@@ -18,7 +18,7 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT_DIR, "src"))
 try:
     import ROOT  # noqa: F401
-    import pysimdamicm  # noqa: F401
+    import pysimdamicm  # noqa: F401  (availability check)
     from astropy.io import fits
     HAVE = True
 except ImportError:
@@ -112,6 +112,28 @@ class AGMXRootFile(unittest.TestCase):
             d[(X == X[i]) | (Y == Y[i])] = np.inf          # panaSKImg's rule for excluding itself
             if np.isfinite(d.min()):
                 self.assertAlmostEqual(self.v["closest_cls_dist"][i], d.min(), places=4)
+
+
+@unittest.skipUnless(HAVE, "needs PyROOT, pysimdamicm and astropy")
+class AGMXRootEdgeCases(unittest.TestCase):
+    def test_reference_without_cluster_tree(self):
+        """a panaSKImg file with info / process_config but no clustersRec tree"""
+        import agmx_root as AR
+        d = tempfile.mkdtemp()
+        make_inputs(d)
+        ref = os.path.join(d, "root", "panaSKImg_clustersRec_sim_ext1.root")
+        f = ROOT.TFile(ref, "UPDATE"); f.Delete("clustersRec;*"); f.Close()
+        r = AR.read_reference(ref, 1, os.path.join(d, "json", "sim", "final", "sim_EXT1.json"))
+        self.assertEqual(r["ccd"], 106)
+        self.assertAlmostEqual(r["sigma_seed_eV"], 0.15 * E2EV, places=6)
+
+    def test_valid_mask_binned_columns(self):
+        """ccd_cols is in unbinned columns: with NSBIN = 2 the overscan starts at ccd_cols / 2"""
+        import agmx_root as AR
+        d = tempfile.mkdtemp(); fj = os.path.join(d, "x.json")
+        json.dump({"input": {"image": {"id_row_start": 0, "n_cols_prescan": 0, "ccd_cols": 200}}}, open(fj, "w"))
+        self.assertEqual(np.nonzero(AR.valid_mask((50, 150), fj, nsbin=1)[10])[0].max(), 147)
+        self.assertEqual(np.nonzero(AR.valid_mask((50, 150), fj, nsbin=2)[10])[0].max(), 97)
 
 
 if __name__ == "__main__":

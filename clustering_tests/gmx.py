@@ -81,6 +81,12 @@ def mf_maps(R, V, scales):
     return np.array(out)
 
 
+def _local_max(T, valid, size):
+    """maximum of T over a size x size window, over valid pixels only: the matched-filter significance is not
+    defined outside the mask (variance 0 there), so masked pixels must not hide a peak on the mask border"""
+    return ndimage.maximum_filter(np.where(valid, T, -np.inf), size=size, mode="constant", cval=-np.inf)
+
+
 def poisson_keep(Q, valid, bg, py, px, nsig):
     """MFD+G's Poisson calibration of candidates (exact Poisson tail of the 3x3 / 5x5 box sum)."""
     p_thr = stats.norm.sf(nsig)
@@ -318,7 +324,7 @@ def scale_space_seeds(T, scales, Qc, valid, bg, nsig, min_sep=2.0):
     acc_y, acc_x, acc_s = [], [], []
     for k, s in enumerate(scales):
         Tk = T[k]
-        pk = (Tk == ndimage.maximum_filter(Tk, size=5, mode="constant")) & (Tk > nsig) & valid
+        pk = (Tk == _local_max(Tk, valid, 5)) & (Tk > nsig) & valid
         py, px = np.nonzero(pk)
         if py.size == 0:
             continue
@@ -384,7 +390,7 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
     T = mf_maps(R, np.where(valid, bg.var, 0.0), scales)
     if seed_mode == "maxscale":
         Tm = T.max(0); bk = T.argmax(0)
-        pk = (Tm == ndimage.maximum_filter(Tm, size=5, mode="constant")) & (Tm > nsig) & valid
+        pk = (Tm == _local_max(Tm, valid, 5)) & (Tm > nsig) & valid
         py, px = np.nonzero(pk)
         keep = poisson_keep(Qc, valid, bg, py, px, nsig)
         py, px = py[keep], px[keep]
@@ -401,10 +407,11 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
         Rr = np.where(valid, R - M, 0.0)
         Tr = mf_maps(Rr, np.where(valid, bg.var + np.clip(M, 0, None), 0.0), scales[:2])
         Trm = Tr.max(0)
-        pk2 = (Trm == ndimage.maximum_filter(Trm, size=3, mode="constant")) & (Trm > nsig_res) & valid
+        pk2 = (Trm == _local_max(Trm, valid, 3)) & (Trm > nsig_res) & valid
         qy, qx = np.nonzero(pk2)
         if qy.size:
-            k2 = poisson_keep(np.where(valid, Rr + bg.o, 0.0) if counting else Qc, valid, bg, qy, qx, nsig) if counting else np.ones(qy.size, bool)
+            # the residual plus the full background (o + lam): poisson_keep removes o and tests against Poisson(lam)
+            k2 = poisson_keep(np.where(valid, Rr + bg.mean, 0.0), valid, bg, qy, qx, nsig) if counting else np.ones(qy.size, bool)
             qy, qx = qy[k2], qx[k2]
             d, _ = cKDTree(mix.mu).query(np.c_[qy, qx]) if len(mix) else (np.full(qy.size, 9.0), None)
             new = d > 1.0
@@ -561,10 +568,32 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
         if len(mix):
             covered.ravel()[pI[rc > 0.05]] = True
         out += _counting(Qc, valid, bg, covered, p_count)
+    fill_flags(out, R, valid, ped_ring, ped_q)
     if return_info:
         info["mix"] = mix; info["lab"] = lab
         return out, info
     return out
+
+
+def fill_flags(clusters, R, valid, ped_ring=(5.0, 8.0), ped_q=25):
+    """quality flags for clusters the mixture did not fit (few-electron finder, hysteresis): edge (a pixel within
+    2 px of the mask, as for fitted clusters), ped (local pedestal of R), blend = 0 and peakfrac = 1 (no charge is
+    shared), chi2 = NaN (no model). Clusters that already have flags are left alone. Needs '_pix' or y/x."""
+    need = [c for c in clusters if "ped" not in c]
+    if not need:
+        return clusters
+    vd = ndimage.binary_erosion(valid, iterations=2)
+    cy = np.array([c["y"] for c in need]); cx = np.array([c["x"] for c in need])
+    ped = _pedestal(R, valid, cy, cx, ped_ring, ped_q)
+    for c, p in zip(need, ped):
+        if "_pix" in c:
+            ys, xs = np.asarray(c["_pix"][0], int), np.asarray(c["_pix"][1], int)
+        else:
+            ys, xs = np.array([int(round(c["y"]))]), np.array([int(round(c["x"]))])
+        c.setdefault("edge", bool((~vd[ys, xs]).any()))
+        c.update(ped=float(p))
+        c.setdefault("blend", 0.0); c.setdefault("peakfrac", 1.0); c.setdefault("chi2", np.nan)
+    return clusters
 
 
 def _pedestal(R, valid, cy, cx, ring=(5.0, 8.0), q=25, min_pix=15):

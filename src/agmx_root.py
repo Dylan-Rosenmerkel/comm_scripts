@@ -52,13 +52,23 @@ def read_reference(ref_root, ext, final_json=None):
     qmin_cluster_seed = seed threshold (ClusterFinder spr_threshold of the final JSON, default 30) x sigma_seed)"""
     import ROOT
     tf = ROOT.TFile.Open(ref_root)
-    t = tf.Get("clustersRec"); t.GetEntry(0)
+    try:
+        return _read_reference(tf, ext, final_json)
+    finally:
+        tf.Close()
+
+
+def _read_reference(tf, ext, final_json):
     info = tf.Get("info"); info.GetEntry(0)
     pc = tf.Get("process_config"); pc.GetEntry(0)
-    r = dict(RUNID=int(t.RUNID), gain=float(getattr(info, f"ext{ext}_gainext")), e2eV=float(pc.e2eV))
+    t = tf.Get("clustersRec")                   # absent when panaSKImg wrote no cluster tree for this CCD
+    if t:
+        t.GetEntry(0)
+    runid = int(t.RUNID) if t else int(getattr(info, "RUNID", 0))
+    r = dict(RUNID=runid, gain=float(getattr(info, f"ext{ext}_gainext")), e2eV=float(pc.e2eV))
     mu = getattr(info, f"EXT{ext}_pedestal_mu_row_ADU")
     r["mu_row"] = np.array(list(mu[0]), float) if len(mu) else None
-    n = int(t.Nclusters)
+    n = int(t.Nclusters) if t else 0
     for k in ("sigma_seed_eV", "qmin_cluster_seed", "readout_start", "readout_end"):
         r[k] = float(getattr(t, k)[0]) if n else None
     for k in ("ccd", "nfile"):
@@ -79,17 +89,19 @@ def read_reference(ref_root, ext, final_json=None):
                 if isinstance(v, list) and len(v) >= 3 and v[2] is not None:
                     k_seed = float(v[2])
             r["qmin_cluster_seed"] = k_seed * r["sigma_seed_eV"] * 1e-3      # keV, as in the files
-    tf.Close()
     return r
 
 
-def valid_mask(shape, final_json):
-    """active area as in the clustering study: rows from id_row_start + 3, columns from n_cols_prescan + 2 to
-    ccd_cols - 2, 2-px border (from the final panaSKImg JSON of the CCD)"""
-    im = json.load(open(final_json))["input"]["image"]
+def valid_mask(shape, final_json, nsbin=1):
+    """active area as in the clustering study: rows from id_row_start + 3, columns from n_cols_prescan + 2 to the
+    first overscan column - 2, 2-px border (from the final panaSKImg JSON of the CCD). ccd_cols is in UNBINNED
+    columns (panaSKImg: overscan starts at ccd_cols / NSBIN of the image)"""
+    with open(final_json) as fh:
+        im = json.load(fh)["input"]["image"]
     H, W = shape
+    a1 = min(int(im["ccd_cols"] // max(int(nsbin), 1)), W)
     v = np.zeros(shape, bool)
-    v[im["id_row_start"] + 3:H - 2, im["n_cols_prescan"] + 2:min(im["ccd_cols"], W) - 2] = True
+    v[im["id_row_start"] + 3:H - 2, im["n_cols_prescan"] + 2:a1 - 2] = True
     return v
 
 
@@ -166,7 +178,7 @@ def write_root(out_path, cls, ref, ref_root, params):
         om.fill_tree("clustersRec", ref["RUNID"], cls, isdata=True)
     src = ROOT.TFile.Open(ref_root)
     om.tfile.cd()
-    clones = [src.Get(n).CloneTree(-1) for n in ("info", "process_config") if src.Get(n)]
+    clones = [src.Get(n).CloneTree(-1) for n in ("info", "process_config") if src.Get(n)]   # noqa: F841 (kept alive until written)
     ROOT.TNamed("agmx_config", json.dumps(params)).Write()
     om.close()
     src.Close()
@@ -180,7 +192,9 @@ def process(waders_fits, ref_root, final_json, out_path, ext, curve=None, agmx_k
     image's fitted gain at low charge)"""
     from astropy.io import fits
     import adaptive as AD
-    cal = fits.open(waders_fits)[0].data.astype(float)
+    with fits.open(waders_fits) as hdul:
+        cal = hdul[0].data.astype(float)
+        nsbin = int(hdul[0].header.get("NSBIN", 1) or 1)
     ref = read_reference(ref_root, ext, final_json)
     adu = cal * ref["gain"]
     if curve is not None:
@@ -189,7 +203,7 @@ def process(waders_fits, ref_root, final_json, out_path, ext, curve=None, agmx_k
         Q = GVC.electrons_of_adu(a, curve).reshape(cal.shape)
     else:
         Q = cal
-    valid = valid_mask(Q.shape, final_json)
+    valid = valid_mask(Q.shape, final_json, nsbin)
     Q = np.where(valid, Q, 0.0)
     kw = dict(agmx_kw or {})
     clusters = AD.adaptive_cluster(Q, valid, engine="gmx", return_pixels=True, **kw)
@@ -237,7 +251,8 @@ def load_curve(path, ext):
     """g(n) model of extension ext from a gain_vs_charge JSON, or None (no file / no reliable curve)"""
     if not path:
         return None
-    res = json.load(open(path))["extensions"].get(f"EXT{ext}", {})
+    with open(path) as fh:
+        res = json.load(fh)["extensions"].get(f"EXT{ext}", {})
     m = res.get("model") if res.get("ok") in (True, "True") else None
     if isinstance(m, str):
         import ast; m = ast.literal_eval(m)
@@ -261,12 +276,12 @@ def _job(a):
         return stem, ext, 0, f"{type(e).__name__}: {e}", note
 
 
-def run(run_dir, outdir, curve=None, anchor="comb", jobs=4, log=print, stems=None):
+def run(run_dir, outdir, curve=None, anchor="comb", jobs=4, log=print):
     """A_GMX on every CCD of a run_WADERs output folder -> outdir/panaSKImg_clustersRec_<stem>_ext<n>.root and
     outdir/root_files.txt. curve: None, a g(n) JSON, or a gain_vs_charge/ folder (append ':per-image' for the
     per-image curves). Returns (files, failed [(stem, ext, reason)])."""
     os.makedirs(outdir, exist_ok=True)
-    tasks = [t + (outdir, curve, anchor) for t in tasks_for_run(run_dir) if stems is None or t[4] in stems]
+    tasks = [t + (outdir, curve, anchor) for t in tasks_for_run(run_dir)]
     failed = []
     if tasks:
         from multiprocessing import get_context

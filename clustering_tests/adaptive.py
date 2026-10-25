@@ -80,10 +80,23 @@ def hysteresis(Q, region, sigma, k_pix, n_pix=10.0, n_seed=30.0, seed_e=9.5):
 
 
 def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.3, box=31, margin=8, excess_ratio=3.0,
-                     return_info=False, engine="mhc", return_pixels=False, **mhc_kw):
+                     return_info=False, engine="mhc", return_pixels=False, **kw):
     """engine='mhc' : unmodelled -> hysteresis; else per region crowded -> hysteresis, sparse -> MHC.
     engine='gmx' : unmodelled -> hysteresis; else GMX on the whole image (GMX shares charge by model responsibility,
-                   so it needs no crowded / sparse split; occupancy is still reported per cluster)."""
+                   so it needs no crowded / sparse split; occupancy is still reported per cluster). A_GMX.
+
+    Q: image [e-]; valid: active pixels; bg: AM.background_map (computed if None)
+    sigma: READ noise [e-] (estimated from the quiet pixels if None); used by the 'unmodelled' switch
+    sigma_crowd, margin: engine 'mhc' only (pedestal sigma of the crowded-region hysteresis, region overlap)
+    **kw: passed to MH.mhc (engine 'mhc') or GX.general_cluster (engine 'gmx')
+    return_pixels: engine 'gmx' (and 'unmodelled'): every cluster gets '_pix' = (rows, cols, charge [e-]) summing to E
+    Each cluster: E [keV], y, x, sxy, cls, regime ('sparse' / 'crowded' / 'unmodelled'), occ; with engine 'gmx'
+    also the quality flags edge, blend, ped [e-/pix], peakfrac, chi2, sig (gmx.fill_flags for clusters that were
+    not fitted by the mixture: blend 0, peakfrac 1, chi2 NaN)."""
+    if engine not in ("mhc", "gmx"):
+        raise ValueError(f"adaptive_cluster: unknown engine {engine!r} (use 'mhc' or 'gmx')")
+    if return_pixels and engine != "gmx":
+        raise ValueError("adaptive_cluster: return_pixels needs engine='gmx' (MHC clusters have no pixel lists)")
     if sigma is None:
         act = Q[valid]; z = act[np.abs(act) < 0.5]
         sigma = float(1.4826 * np.median(np.abs(z - np.median(z)))) if z.size > 100 else 1.0
@@ -99,13 +112,16 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
         # the background model is not trusted here (its fitted offset can be off by several e-), so cluster the
         # image itself, as WADERs does
         out = [dict(c, regime="unmodelled", occ=np.nan) for c in hysteresis(np.where(valid, Q, 0.0), valid, sigma, k)]
+        if engine == "gmx":
+            import gmx as GX
+            GX.fill_flags(out, np.where(valid, Q, 0.0), valid)   # no trusted background here: ped from the image
         info.update(regime="unmodelled", crowded_frac=np.nan)
         return (out, info) if return_info else out
     occ = occupancy(Q, valid, sigma, box, lam, bg)
     if engine == "gmx":
         import gmx as GX
         out = []
-        for c in GX.general_cluster(Q, valid, bg, return_pixels=return_pixels):
+        for c in GX.general_cluster(Q, valid, bg, return_pixels=return_pixels, **kw):
             y, x = int(round(c["y"])), int(round(c["x"]))
             o = float(occ[y, x]) if 0 <= y < Q.shape[0] and 0 <= x < Q.shape[1] else np.nan
             out.append(dict(c, regime="crowded" if o >= occ_thr else "sparse", occ=o))
@@ -116,7 +132,7 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
     out = []
     if sparse.any():
         vs = valid & ~ndimage.binary_erosion(crowded, structure=EIGHT, iterations=margin)
-        for c in MH.mhc(np.where(vs, Q, bg.mean), vs, bg, **mhc_kw):
+        for c in MH.mhc(np.where(vs, Q, bg.mean), vs, bg, **kw):
             y, x = int(round(c["y"])), int(round(c["x"]))
             if 0 <= y < Q.shape[0] and 0 <= x < Q.shape[1] and sparse[y, x]:
                 out.append(dict(c, regime="sparse", occ=float(occ[y, x])))

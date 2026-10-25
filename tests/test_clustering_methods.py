@@ -107,5 +107,47 @@ class GMXQualityFlags(unittest.TestCase):
         self.assertLess(abs(c[0]["E"] / (1580 / NE) - 1), 0.15)
 
 
+class AGMXEdgesAndFlags(unittest.TestCase):
+    """A_GMX on the mask border and the flags of every cluster (2026-10-25 audit): an X-ray centred on the first
+    valid row used to lose its seed to the masked pixels next to it and came out as a flag-less 'low-E' cluster."""
+
+    @classmethod
+    def setUpClass(cls):
+        import adaptive as AD
+        cls.AD = AD
+        rng = np.random.default_rng(5)
+        H, W = 80, 120
+        Q = rng.poisson(0.01, (H, W)) + rng.normal(0, 0.15, (H, W))
+
+        def add(n, y, x, s):
+            np.add.at(Q, (np.round(y + rng.normal(0, s, n)).astype(int), np.round(x + rng.normal(0, s, n)).astype(int)), 1.0)
+        add(1500, 3.0, 60, 0.3)                      # X-ray on the first valid row
+        add(1500, 40, 30, 0.3)                       # interior X-ray
+        add(4, 40, 90, 0.3)                          # few-electron event
+        valid = np.zeros((H, W), bool); valid[3:-3, 3:-3] = True
+        cls.cl = AD.adaptive_cluster(np.where(valid, Q, 0.0), valid, engine="gmx", return_pixels=True)
+
+    def test_border_xray_is_a_fitted_edge_cluster(self):
+        c = [c for c in near(self.cl, 3, 60, 2) if c["E"] > 1]
+        self.assertEqual(len(c), 1)
+        self.assertGreaterEqual(c[0]["n_comp"], 1)
+        self.assertNotEqual(c[0]["cls"], "low-E")
+        self.assertTrue(c[0]["edge"])
+
+    def test_every_cluster_has_flags_and_conserves_charge(self):
+        for c in self.cl:
+            for k in ("edge", "blend", "ped", "peakfrac", "chi2"):
+                self.assertIn(k, c)
+            self.assertAlmostEqual(c["_pix"][2].sum() * AM.E_PER_E, c["E"], places=6)
+        self.assertFalse(near(self.cl, 40, 30, 2)[0]["edge"])
+
+    def test_bad_arguments_are_rejected(self):
+        Q = np.zeros((40, 40)); valid = np.ones((40, 40), bool)
+        with self.assertRaises(ValueError):
+            self.AD.adaptive_cluster(Q, valid, engine="GMX")
+        with self.assertRaises(ValueError):
+            self.AD.adaptive_cluster(Q, valid, engine="mhc", return_pixels=True)
+
+
 if __name__ == "__main__":
     unittest.main()
