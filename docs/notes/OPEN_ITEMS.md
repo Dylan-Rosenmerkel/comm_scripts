@@ -4,12 +4,6 @@ Collected from the dated notes in this folder; each item says where its details 
 is done (and say so in the note of that day).
 
 ## Pipeline and gain correction
-- **g(n) measurement ignores `--autoconfig-args`** (geometry / gain range overrides such as `--ccd-cols`, `--gain`,
-  `--gain-min/--gain-max`): `gain_vs_charge._measure_setup` always runs autoconfig with its defaults, so a run that
-  needed those settings can measure no curve. Fix: pass the parsed autoconfig arguments into `measure()`.
-  Deferred by Dylan (audit 2026-10-25).
-- **`--gain-combine incoherent` is image-order dependent** (g0 from the first image); the default (coherent) is not.
-  Making it order-independent changes incoherent results: Dylan's decision. (PROGRESS_2026-10-23.)
 - **Gain-correction coverage**: about 20 % of CCDs get no reliable g(n) (the comb fades after 1-3 charge bins).
   Ideas: reuse a higher-statistics image of the same module/day; per-row-block baseline correction.
   (CONTEXT_2026-10-16, section 7.)

@@ -1999,7 +1999,7 @@ def refine_peaks(j, src, work, results, args):
 # =============================================================================
 # Main
 # =============================================================================
-def parse_args():
+def parse_args(argv=None):
     """Command-line options (see -h); validates --peaks, --cluster-threshold-e, panaSKImg.
 
     Options are grouped as in the help: gain (prior and search range, when peaks
@@ -2007,7 +2007,7 @@ def parse_args():
     channels, clusters, tuning (--tune) and one JSON per extension (--per-ext).
     Exits with a usage error for an invalid --peaks, PIXEL_E/SEED_E not satisfying
     0 < PIXEL_E <= SEED_E, or --tune/--per-ext without a panaSKImg script.
-    Returns the argparse namespace.
+    argv: argument list (default: the command line). Returns the argparse namespace.
     """
     ap = argparse.ArgumentParser(description="Generate a panaSKImg JSON tuned to a raw skipper image.")
     ap.add_argument("infile", help="raw (skip-averaged) FITS image (.fz, .fits or .fits.bz2)")
@@ -2094,7 +2094,7 @@ def parse_args():
                         "runs panaSKImg once per CCD in parallel (--acm --ext N) and gives one "
                         "cluster file per CCD (..._extN.root)")
 
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     if args.peaks not in ("auto", "all") and not (args.peaks.isdigit() and int(args.peaks) >= 1):
         ap.error("--peaks must be 'auto', 'all' or an integer >= 1")
     if args.cluster_threshold_e is not None:

@@ -281,7 +281,9 @@ what it does, per image (gain_dc_split.py --per-ext, always on):
   (--gain-combine coherent): each image is measured and converted to electrons with its own
   curve, so the comb teeth of all images line up and their pixels can be pooled into one comb;
   this reaches higher charge than one image and does not depend on the image order.
-  --gain-combine incoherent adds each image's comb power instead (the earlier method).
+  --gain-combine incoherent adds each image's comb power instead (the earlier method; comb search
+  started at the mean low-charge gain of the images, so also independent of the image order). The comb
+  is measured with the run's --autoconfig-args (geometry, gain prior and range), as the JSONs.
   --gain-model interpolated (default) | broken | linear: the form of g(n): monotone
   interpolation through the measured points, two straight lines with a fitted knot, or
   one straight line (see gain_vs_charge.py; the straight line does not follow the measured
@@ -407,7 +409,7 @@ def build_parser(full=False):
     ap.add_argument("--gain-combine", choices=("coherent", "incoherent"), default="coherent",
                     help="with --gain-correction: how several images of a module are combined for the module curve: "
                          "coherent (default; each image converted with its own curve, then all pixels pooled - "
-                         "independent of the image order) or incoherent (comb powers added)")
+                         "independent of the image order) or incoherent (comb powers added; also order-independent)")
     ap.add_argument("--gain-anchor", choices=("comb", "fit"), default="comb",
                     help="with --gain-correction: convert with the comb's g(n) including its low-charge gain "
                          "(comb, default), or keep each image's fitted gain and correct only the charge "
@@ -773,7 +775,7 @@ def measure_curve(run, GVC, rs, name, title, run_exts):
     gain_vs_charge/<name>_gain_vs_charge.json (with the original image paths) and its plots
     (<name>_gain_vs_charge.png, <name>_nonlinearity.png). Returns (json path, result per CCD)."""
     res = GVC.measure([r["src"] for r in rs], run_exts, verbose=False, model=run.args.gain_model,
-                      combine=run.args.gain_combine)
+                      combine=run.args.gain_combine, autoconfig_args=shlex.split(run.args.autoconfig_args))
     mpath = os.path.join(run.dirs["gc"], f"{name}_gain_vs_charge.json")
     with open(mpath, "w") as fh:
         json.dump({"images": [r["orig"] for r in rs], "e_per_electron_eV": GVC.E_PER_E, "extensions": res}, fh, indent=1)
