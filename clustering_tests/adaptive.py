@@ -38,13 +38,7 @@ import mhc as MH
 EIGHT = np.ones((3, 3), bool)
 
 
-def simple_bg(Q, valid, sw):
-    act = Q[valid]; quiet = act[act < 3 * sw + 0.5]
-    p0 = np.mean(np.abs(quiet) < max(0.5, 2 * sw)) if quiet.size else 1.0
-    lam = float(-np.log(max(p0, 1e-6))) if sw < 0.5 else 0.0
-    mask = ndimage.binary_dilation(Q > 3 * sw + 1, iterations=2) & valid
-    f = lambda v: np.full(Q.shape, v, float)
-    return AM.Background(f(0.0), f(lam), f(sw * sw), mask, dict(lam_smooth=np.full(Q.shape[0], lam)))
+simple_bg = AM.simple_bg
 
 
 def occupancy(Q, valid, noise, box=31, lam=0.0, bg=None):

@@ -2308,7 +2308,7 @@ def main():
     base = copy.deepcopy(j)
 
     # ---- how many peaks to fit, then the per-extension fit settings
-    k_fit = choose_peaks(results, args)
+    choose_peaks(results, args)                 # sets r['k_fit'] of every extension
     for r in results:
         r["fit"] = fit_settings(r)
 

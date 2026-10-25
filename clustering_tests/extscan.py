@@ -1,4 +1,4 @@
-import tracks_test as TT, methods2 as M2, numpy as np, json, sys
+import os, tracks_test as TT, methods2 as M2, numpy as np, json
 from multiprocessing import Pool
 AM=TT.AM
 def meth(Q, valid, sw, bg):
@@ -18,4 +18,4 @@ def job(a):
     return out
 if __name__ == "__main__":
     with Pool(6) as p: res = sum(p.map(job, [(s, e) for s in TT.AT.IMGS[:3] for e in (1, 3)]), [])
-    json.dump(res, open("extscan.json", "w"))
+    json.dump(res, open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "extscan.json"), "w"))

@@ -32,7 +32,7 @@ def job(a):
 
 
 def fit():
-    sys.path.insert(0, os.path.expanduser("~/Documents/JH1_Testing/AMTEst/runs_29img/analysis"))
+    import am241_paths; am241_paths.setup()    # runs_29img analysis + the repo's amfit.py
     from amfit import Model, summary
     import am_test as AT
     res = {}

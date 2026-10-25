@@ -230,6 +230,22 @@ def fit_row_fast(v, min_frac=0.003):
     return dict(resolved=True, o=float(o_int + o_frac), lam=float(lam), s=float(s), n=int(v.size))
 
 
+def simple_bg(Q, valid, sw=None):
+    """fallback background when no row can be fitted (high noise / few skips): offset 0, noise sw (read noise; MAD
+    of the quiet pixels if None), dark charge from the fraction of empty pixels (-ln P0, as run_study.load),
+    clusters masked above 3 sigma (+2 px). (One copy for gmx, adaptive and the wide tests.)"""
+    act = Q[valid]
+    if sw is None:
+        z = act[np.abs(act) < 0.5]
+        sw = float(1.4826 * np.median(np.abs(z - np.median(z)))) if z.size > 100 else 1.0
+    quiet = act[act < 3 * sw + 0.5]
+    p0 = np.mean(np.abs(quiet) < max(0.5, 2 * sw)) if quiet.size else 1.0
+    lam = float(-np.log(max(p0, 1e-6))) if sw < 0.5 else 0.0
+    mask = ndimage.binary_dilation(Q > 3 * sw + 1, iterations=2) & valid
+    f = lambda v: np.full(Q.shape, v, float)
+    return Background(f(0.0), f(lam), f(sw * sw), mask, dict(lam_smooth=np.full(Q.shape[0], lam)))
+
+
 def background_map(Q, valid, n_iter=2, colbin=128, rowbin=60, smooth="local_linear", half=15, init_mask=None,
                    pool=16):
     """Robust dark-charge map.

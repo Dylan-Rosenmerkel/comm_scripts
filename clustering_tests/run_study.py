@@ -1,5 +1,5 @@
 """Compare clustering methods on real Fe-55 clusters and with injected clusters of known charge."""
-import argparse, glob, json, os, sys
+import argparse, json, os, sys
 import numpy as np
 from astropy.io import fits
 from scipy import optimize

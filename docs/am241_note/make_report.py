@@ -497,7 +497,7 @@ def main():
                                 capsize=3, label=f"EXT{e} {'with' if k else 'without'} correction")
         ax.axhline(1, color=MUTED, ls="--", lw=0.9); ax.set_xlim(10, 65)
         ax.set_xlabel("true line energy [keV]"); ax.set_ylabel("measured / true")
-        ax.set_title(f"energy scale from the lines that fit cleanly after the cut", loc="left", fontsize=10, color=INK)
+        ax.set_title("energy scale from the lines that fit cleanly after the cut", loc="left", fontsize=10, color=INK)
         ax.legend(fontsize=7.5, frameon=False, loc="lower right")
         page_title(fig, 9, f"The low-energy lines after the width cut (sigma_xy < {SXY_CUT})",
                    "top: spectra without / with the gain correction;  bottom: peak over neighbouring continuum, and fitted "

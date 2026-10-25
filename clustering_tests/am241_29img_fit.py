@@ -4,8 +4,9 @@ import csv, glob, os, sys
 import numpy as np
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
 HERE = os.path.dirname(os.path.abspath(__file__))
-AN = os.path.expanduser("~/Documents/JH1_Testing/AMTEst/runs_29img/analysis")
-sys.path.insert(0, AN)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import am241_paths  # noqa: E402
+AN = am241_paths.setup()    # runs_29img analysis + the repo's amfit.py
 from amfit import Model, summary
 METHOD = sys.argv[1] if len(sys.argv) > 1 else "hybrid_v1"
 CUT = float(sys.argv[2]) if len(sys.argv) > 2 else 0.7

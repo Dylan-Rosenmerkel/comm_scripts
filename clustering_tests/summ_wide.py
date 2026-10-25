@@ -20,6 +20,9 @@ for f in sorted(glob.glob(os.path.join(R, "*.json"))):
         if "inject" in rec and "inject" in a: rec["inject"][name] = a["inject"][name]
         else: rec.pop("inject", None)
     if ok_all: recs.append(rec)
+if not recs:      # do not overwrite the committed wide_summary.md with empty tables
+    sys.exit(f"summ_wide: no image-CCD with all methods in {R} (+ {list(EXTRA.values())}); the results are kept in "
+             "~/Documents/comm_scripts_data/session_2026-10-23_clustering/ - give the folders as arguments")
 print(f"{len(recs)} image-CCDs from {len({r['dataset'] for r in recs})} data sets")
 
 

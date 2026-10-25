@@ -54,7 +54,7 @@ def job(stem):
 
 
 def fit():
-    sys.path.insert(0, os.path.expanduser("~/Documents/JH1_Testing/AMTEst/runs_29img/analysis"))
+    import am241_paths; am241_paths.setup()    # runs_29img analysis + the repo's amfit.py
     from amfit import Model, summary
     fs = sorted(glob.glob(os.path.join(OUT, "*.npz"))); MAIN = ("La", "Lb", "Lg", "g26")
     for kind, d in VARIANTS:

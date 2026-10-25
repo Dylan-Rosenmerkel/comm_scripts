@@ -441,7 +441,7 @@ def plot_noise(args, name, ns, nb, s_img, s_blk, s1, white, M, f, psd, g, nskip,
     c.set_yscale("symlog", linthresh=1)
     c.set_xlabel("skip index in the pixel")
     c.set_ylabel("median offset from the pixel mean [e$^-$]")
-    c.set_title(f"start-of-pixel transient (left of dashed line: dropped)", fontsize=9)
+    c.set_title("start-of-pixel transient (left of dashed line: dropped)", fontsize=9)
     c.grid(True, alpha=0.3)
     plt.tight_layout()
     png = os.path.join(args.outdir, f"{name}_noise_vs_skips.png")

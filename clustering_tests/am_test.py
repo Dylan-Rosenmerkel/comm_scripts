@@ -1,6 +1,6 @@
 """MF disk+grow (MFD+G) on the Am-241 (AMTEst, 10 Image 8s, board 106) images vs WADERs default and B (auto).
 Real lines, injection of 17.75 / 59.54 keV clusters, and how tracks are split."""
-import argparse, glob, json, os, re, sys
+import argparse, json, os, re, sys
 import numpy as np
 from astropy.io import fits
 from scipy import optimize

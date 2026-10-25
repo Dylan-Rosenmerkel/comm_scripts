@@ -182,7 +182,7 @@ TABLES.append(("Few-electron events on simulated blanks (efficiency by event cha
                md(rows, ["dark e-/pix", "method", "2 e-", "3 e-", "4 e-", "5 e-", "7 e-", "fakes/Mpix"])))
 
 # ------------------------------------------------------------------------------------------------ crowded EXT4
-sys.path.insert(0, os.path.expanduser("~/Documents/JH1_Testing/AMTEst/runs_29img/analysis"))
+import am241_paths; am241_paths.setup()    # runs_29img analysis + the repo's amfit.py
 from amfit import Model, summary
 from scan import load as wload
 _cwd = os.getcwd(); os.chdir(os.path.expanduser("~/Documents/JH1_Testing/AMTEst/runs_29img/analysis"))

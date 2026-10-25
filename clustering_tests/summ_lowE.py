@@ -20,7 +20,7 @@ for t in tags:
         print(f'{m:16s}' + ''.join(f'  {e:.2f}/{x:.2f}' for e, x in zip(eff, ex)))
         out[(t, m)] = dict(eff=eff, exact=ex)
     if any((t, m) in F for m in meths):
-        print(f'   fakes per Mpix on a blank image (nothing injected), by reconstructed charge')
+        print('   fakes per Mpix on a blank image (nothing injected), by reconstructed charge')
         print(' ' * 16 + ''.join(f'{b:>9s}' for b in ['1', '2', '3', '4', '5', '6-10', '>10']))
         for m in meths:
             E = np.concatenate([np.round(e) for e in F[(t, m)]]) if F[(t, m)] else np.array([])

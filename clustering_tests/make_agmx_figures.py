@@ -1,7 +1,7 @@
 """Figures for docs/aGMX/aGMX_clustering.tex (Overleaf: docs/aGMX/aGMX_clustering_overleaf.zip): every step of adaptive+GMX run explicitly on a real low-background
 Am-241 image (AMTEst EXT1) with known objects injected in a quiet region, plus the performance comparisons.
   python make_agmx_figures.py            -> docs/aGMX/figures/*.png"""
-import glob, json, os, sys
+import json, os, sys
 import numpy as np
 from scipy import ndimage, stats
 import matplotlib; matplotlib.use("Agg")
@@ -11,7 +11,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import am_test as AT
 import gmx as GX
-import adaptive as AD
 AM, CM = GX.AM, AT.CM
 NE = 1 / AM.E_PER_E
 OUT = os.path.join(HERE, "..", "docs", "aGMX", "figures")
@@ -262,7 +261,7 @@ if dec:
     ax[0].scatter(d[:, 0], d[:, 1], c=np.where(d[:, 2] > 30, "tab:red", "tab:blue"), s=14)
     lim = [max(d[:, :2].min(), 1), d[:, :2].max() * 1.2]; ax[0].plot(lim, lim, "k:", lw=0.8)
     ax[0].set_xscale("log"); ax[0].set_yscale("log"); ax[0].set_xlabel("chi^2 of H_free (free-shape clouds)"); ax[0].set_ylabel("chi^2 of H_xr (K round X-rays)")
-    ax[0].set_title(f"islands of this image: red = one deposit (dBIC > 30), blue = separate", fontsize=9, loc="left")
+    ax[0].set_title("islands of this image: red = one deposit (dBIC > 30), blue = separate", fontsize=9, loc="left")
     ax[1].hist(np.clip(d[:, 2], -200, 2000), 60, color="0.5"); ax[1].axvline(30, color="r"); ax[1].set_xlabel("dBIC = BIC(H_xr) - BIC(H_free) (clipped)")
     ax[1].set_title("decision: dBIC > 30 -> merge the island into one deposit", fontsize=9, loc="left")
 fig.tight_layout(); save(fig, "fig09_island_bic.png")

@@ -4,7 +4,7 @@
   python adaptive_validate.py lowE      few-electron events on simulated blanks (lowE_test harness)
   python adaptive_validate.py fe55      Fe-55 injection + real Ka (compare.py harness, DM09/DM10 EXT1/EXT4 img 0-1)
   python adaptive_validate.py summary"""
-import glob, json, os, sys, collections
+import glob, json, os, sys
 import numpy as np
 from multiprocessing import Pool
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -45,7 +45,7 @@ def crowded_job(stem):
 
 
 def crowded_fit():
-    sys.path.insert(0, os.path.expanduser("~/Documents/JH1_Testing/AMTEst/runs_29img/analysis"))
+    import am241_paths; am241_paths.setup()    # runs_29img analysis + the repo's amfit.py
     from amfit import Model, summary
     fs = sorted(glob.glob(os.path.join(OUT, "crowded", "*.npz"))); MAIN = ("La", "Lb", "Lg", "g26")
     out = {}
@@ -107,7 +107,7 @@ def fe55_job(a):
 
 
 def summary():
-    import summ_mhc  # noqa: F401  (scoring rule reused below)
+    # scoring rule as summ_mhc.py (not imported: that script runs on import)
     rs = sum((json.load(open(f)) for f in glob.glob(os.path.join(OUT, "tracks", "*.json"))), [])
     K = ["muon", "worm", "blob", "single", "fe55", "alpha", "hotcol", "lowE", "pair3", "pair4", "pair6"]
     sc = lambda v, k: np.mean([r["resolved"] for r in v]) if k.startswith("pair") else np.mean([r["n"] == 1 and abs(r["frac_largest"] - 1) < 0.05 for r in v])

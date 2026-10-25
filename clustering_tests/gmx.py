@@ -41,17 +41,7 @@ PIX = 1.0 / 12.0
 
 
 # ------------------------------------------------------------------------------------------------ background
-def simple_bg(Q, valid, sw=None):
-    act = Q[valid]
-    if sw is None:
-        z = act[np.abs(act) < 0.5]
-        sw = float(1.4826 * np.median(np.abs(z - np.median(z)))) if z.size > 100 else 1.0
-    quiet = act[act < 3 * sw + 0.5]
-    p0 = np.mean(np.abs(quiet) < max(0.5, 2 * sw)) if quiet.size else 1.0
-    lam = float(-np.log(max(p0, 1e-6))) if sw < 0.5 else 0.0
-    mask = ndimage.binary_dilation(Q > 3 * sw + 1, iterations=2) & valid
-    f = lambda v: np.full(Q.shape, v, float)
-    return AM.Background(f(0.0), f(lam), f(sw * sw), mask, dict(lam_smooth=np.full(Q.shape[0], lam)))
+simple_bg = AM.simple_bg
 
 
 def get_bg(Q, valid, bg=None):
@@ -448,7 +438,6 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
             # ... or within 6 sigma (Mahalanobis) of a cloud of a much bigger cluster (tail fragments)
             a_, c_, b_ = _tot_cov(mix.S)
             det_ = np.maximum(a_ * c_ - b_ * b_, 1e-6)
-            Ecl = np.r_[E, 0.0]
             tree = cKDTree(mix.mu)
             for k in np.nonzero(d_ == np.arange(nc))[0]:
                 js = tree.query_ball_point([cy_[k], cx_[k]], 20.0)

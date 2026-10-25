@@ -14,7 +14,6 @@
 import os, sys
 import numpy as np
 from scipy import ndimage
-P = os.path.expanduser("~/Documents/comm_scripts_data/session_2026-10-23_clustering")
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import agent_methods as AM

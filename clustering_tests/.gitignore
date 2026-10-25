@@ -4,3 +4,5 @@ clusters*/
 *.png
 *.npz
 *.log
+extscan.json
+study.json

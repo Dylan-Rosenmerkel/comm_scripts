@@ -3,8 +3,9 @@
 import glob, json, os, sys
 import numpy as np
 D = os.path.expanduser("~/Documents/comm_scripts_data/session_2026-10-23_clustering/clustering_2026-10-25")
-AN = os.path.expanduser("~/Documents/JH1_Testing/AMTEst/runs_29img/analysis")
-sys.path.insert(0, AN)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import am241_paths  # noqa: E402
+AN = am241_paths.setup()    # runs_29img analysis + the repo's amfit.py
 from amfit import Model, summary
 from scan import load as wload
 MAIN = ("La", "Lb", "Lg", "g26")

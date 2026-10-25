@@ -13,8 +13,6 @@ Detection seeds, background and the few-electron counting finder are shared with
 import numpy as np
 from scipy import ndimage
 from skimage.segmentation import watershed
-from scipy.sparse.csgraph import connected_components
-from scipy import sparse
 import gmx as GX
 AM, M2, MH = GX.AM, GX.M2, GX.MH
 E_PER_E = GX.E_PER_E

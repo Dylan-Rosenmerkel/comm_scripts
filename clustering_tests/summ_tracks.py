@@ -1,6 +1,6 @@
-import json, glob, numpy as np, collections, sys
+import json, glob, os, numpy as np, collections
 agg=collections.defaultdict(list); real=collections.defaultdict(lambda: collections.defaultdict(list))
-for f in glob.glob('results4/*.json'):
+for f in glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results4', '*.json')):
     d=json.load(open(f))
     for r in d.get('inject',[]): agg[(d['ext'],r['method'],r['kind'])].append(r)
     for m,v in d['real'].items(): real[(d['ext'],m)]['n'].append(len(v['E'])); real[(d['ext'],m)]['split']+=v['split']

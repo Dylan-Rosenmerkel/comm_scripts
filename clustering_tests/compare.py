@@ -6,7 +6,7 @@
 """
 import json, os, sys, time
 import numpy as np
-from scipy import ndimage, stats
+from scipy import ndimage
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import agent_methods as AM

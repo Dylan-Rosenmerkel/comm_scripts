@@ -1,7 +1,7 @@
 """Wide test of A_GMX with the quality flags (2026-10-25): every image of wide_test.py; per image-CCD the Fe-55 Ka fit
 (front side, sigma_xy < 1) and the 59.5 keV fit without / with the flag cuts, plus the injection test (same objects as
 wide_test.py) -> results_wide_agmx_flags/."""
-import os, sys, json, re, time
+import os, sys, json, time
 import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
