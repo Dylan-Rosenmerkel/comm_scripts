@@ -5,7 +5,7 @@ import glob, json, os, collections
 import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 D = os.path.expanduser("~/Documents/comm_scripts_data/session_2026-10-23_clustering/clustering_2026-10-25")
-NEW = os.path.join(HERE, "results_wide_agmx_flags")
+NEW = os.environ.get("FLAGS_NEW", os.path.join(HERE, "results_wide_agmx_flags"))   # FLAGS_NEW: another run
 OLD = os.path.join(D, "results_wide_adaptive_gmx")
 recs = []
 for f in sorted(glob.glob(os.path.join(NEW, "*.json"))):

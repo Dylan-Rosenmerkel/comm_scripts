@@ -9,7 +9,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import am241_29img_recluster as RC
 import gmx as NEW
-OUT = os.path.join(HERE, "clusters_lines_flags")
+OUT = os.environ.get("LINES_OUT", os.path.join(HERE, "clusters_lines_flags"))      # LINES_OUT: another folder
 OLD_PATH = os.path.expanduser("~/Documents/comm_scripts_data/session_2026-10-23_clustering/clustering_2026-10-25/excess/gmx_before_flags.py")
 LINES = [("Np La", 13.95), ("Np Lb", 17.75), ("Np Lg", 20.78), ("gamma 26.3", 26.34), ("gamma 59.5", 59.54)]
 
