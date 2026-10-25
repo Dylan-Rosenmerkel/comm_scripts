@@ -29,9 +29,6 @@ is done (and say so in the note of that day).
   real low-background science image (few-electron rate vs the dark-current expectation) is still to do. In the A_GMX
   files `has_seed` keeps WADERs' meaning (30 sigma seed), so few-electron events have `has_seed = 0`: select them
   with `agmx_cls == 3`.
-- The A_GMX performance numbers in docs/aGMX were made before the 2026-10-25 audit fixes (mask-border seeds,
-  residual few-electron test); they change only events touching the mask and high-dark-current CCDs, and were not
-  re-run.
 - Non-skipper (high read noise) images: the read-noise estimate saturates near 0.37 e- and the background model can
   mistake Gaussian noise for dark charge; A_GMX is not meant for them (no guard yet).
 - Duplicated helpers in docs/am241_note (propagate, blend_fwhm, gfit, znp, fit_line) could move to common.py.

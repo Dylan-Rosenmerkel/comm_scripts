@@ -18,8 +18,11 @@ MAIN = ("La", "Lb", "Lg", "g26")
 znp = lambda s: np.sqrt(sum((s[g][0] / s[g][1]) ** 2 for g in MAIN if s[g][1] > 0))
 
 CDIR = os.environ.get("CDIR", "clusters_occ0.3")
-files = sorted(glob.glob(os.path.join(HERE, CDIR, "*_ext4.npz")))
+files = sorted(glob.glob(os.path.join(HERE, CDIR, os.environ.get("CGLOB", "*_ext4.npz"))))   # CDIR may be absolute
 E = np.concatenate([np.load(f)[f"{METHOD}_E"] for f in files]); S = np.concatenate([np.load(f)[f"{METHOD}_sxy"] for f in files])
+if os.environ.get("BLEND"):          # purity cut on the blend flag (GMX / A_GMX), e.g. BLEND=0.02
+    B = np.concatenate([np.load(f)[f"{METHOD}_blend"] for f in files]); keep = B < float(os.environ["BLEND"])
+    E, S = E[keep], S[keep]
 print(f"{len(files)} images, {METHOD}: {E.size} clusters")
 print("width-cut scan (MFD+G moment width sigma_xy):")
 for wc in (0.5, 0.6, 0.7, 0.8, 1.0, 9.0):
@@ -59,4 +62,4 @@ axr.bar(x, (h - mu) / np.sqrt(np.maximum(mu, 1)), width=mdl.bw * 0.85, color=DAT
 axr.axhline(0, color=INK, lw=0.8); axr.set_ylim(-4, 4); axr.set_ylabel("pull"); axr.set_xlabel("cluster energy [keV]")
 fig.suptitle(f"Am-241 10-30 keV: constrained fit (Np L lines and intensity ratios from Lepy et al. 2008, Table 3) - 29 images, gain correction per gain period, {name} clustering",
              fontsize=11, weight="bold", color=INK, x=0.01, ha="left")
-fn = os.path.join(HERE, f"final_fit_{METHOD}_cut{CUT:g}_{CDIR}.png"); fig.savefig(fn, dpi=150, bbox_inches="tight"); print(fn)
+fn = os.path.join(HERE, f"final_fit_{METHOD}_cut{CUT:g}_{os.path.basename(os.path.normpath(CDIR))}.png"); fig.savefig(fn, dpi=150, bbox_inches="tight"); print(fn)

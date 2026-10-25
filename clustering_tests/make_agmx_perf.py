@@ -20,16 +20,16 @@ def save(fig, name):
 
 
 def _tex(x):
-    return str(x).replace("\\", "\\textbackslash{}").replace("%", "\\%").replace("_", "\\_").replace("&", "\\&").replace(">=", "$\\ge$").replace("adaptive+GMX", "A\\_GMX")
+    return str(x).replace("\\", "\\textbackslash{}").replace("%", "\\%").replace("_", "\\_").replace("&", "\\&").replace(">=", "$\\ge$").replace(" < ", " $<$ ").replace("+-", "$\\pm$").replace("adaptive+GMX", "A\\_GMX")
 
 
 def md(rows, header):
     """LaTeX tabular (name kept from the Markdown version)"""
     cols = "l" + "c" * (len(header) - 1)
-    lines = ["\\begin{table}[H]\\centering\\footnotesize", "\\begin{tabular}{" + cols + "}", "\\toprule",
+    lines = ["\\begin{table}[H]\\centering\\footnotesize", "\\begin{adjustbox}{max width=\\linewidth}", "\\begin{tabular}{" + cols + "}", "\\toprule",
              " & ".join(_tex(h) for h in header) + " \\\\", "\\midrule"]
     lines += [" & ".join(_tex(c) for c in r) + " \\\\" for r in rows]
-    lines += ["\\bottomrule", "\\end{tabular}", "\\end{table}"]
+    lines += ["\\bottomrule", "\\end{tabular}", "\\end{adjustbox}", "\\end{table}"]
     return "\n".join(lines)
 
 
@@ -220,6 +220,16 @@ ax[1].set_xticks(range(len(cuts))); ax[1].set_xticklabels([str(c) if c < 10 else
 ax[1].set_ylabel("combined Np L-line significance Z"); ax[1].legend(fontsize=8)
 ax[1].set_title("the purity cut: keep clusters whose charge is not shared with neighbours", fontsize=9, loc="left")
 fig.tight_layout(); save(fig, "fig25_crowded.png")
+# the constrained fit numbers quoted in the text (summary and section 'crowded CCD')
+rows = []
+for lab, E in (("WADERs (sigma_xy < 0.7)", EW), ("A_GMX (sigma_xy < 0.7, blend < 0.02)", EA[(SA < 0.7) & (BA < 0.02)])):
+    r = Model("Ag").fit(E, 0.985); s_ = summary(r)
+    z = lambda g: s_[g][0] / s_[g][1] if s_[g][1] > 0 else float("nan")
+    rows.append([lab, E.size, f"{s_['k'][0]:.4f} +- {s_['k'][1]:.4f}", f"{r['devndf']:.2f}"]
+                + [f"{z(g):.1f}" for g in ("La", "Lb", "Lg", "g26", "Ag K")]
+                + [f"{np.sqrt(sum(z(g) ** 2 for g in MAIN if s_[g][1] > 0)):.1f}"])
+TABLES.append(("Crowded Am-241 CCD (runs_29img EXT4, 29 images): constrained 10-30 keV fit, line significances [sigma]",
+               md(rows, ["clusters", "N", "k", "dev/ndf", "Np La", "Np Lb", "Np Lg", "gamma 26.3", "Ag K", "Z (Np L + 26.3)"])))
 
 # ------------------------------------------------------------------------------------------------ run time
 fig, ax = plt.subplots(figsize=(7.5, 4.5))

@@ -19,8 +19,16 @@ def save(fig, name):
 
 from scan import load as wload
 cwd = os.getcwd(); os.chdir(AN); dW = wload(4); os.chdir(cwd)
-fs = sorted(glob.glob(os.path.join(X, "res_ped_real2", "*.npz")))
-P = {k: np.concatenate([np.load(f)[k] for f in fs]) for k in ("E", "sxy", "blend", "b_q25", "b_med")}
+# A_GMX clusters of the crowded CCD with the flags: the Am-241 line study (am241_lines_flags.py; LINES_OUT, default the
+# audited re-run in the data folder), else the 25 October investigation (res_ped_real2)
+LD = os.environ.get("LINES_OUT", os.path.join(os.path.dirname(X), "clusters_lines_flags_v3"))
+fs = sorted(glob.glob(os.path.join(LD, "*_ext4.npz")))
+if fs:
+    P = {k: np.concatenate([np.load(f)["new_" + s_] for f in fs]) for k, s_ in (("E", "E"), ("sxy", "sxy"), ("blend", "blend"), ("b_q25", "ped"))}
+else:
+    fs = sorted(glob.glob(os.path.join(X, "res_ped_real2", "*.npz")))
+    P = {k: np.concatenate([np.load(f)[k] for f in fs]) for k in ("E", "sxy", "blend", "b_q25", "b_med")}
+print("crowded-CCD clusters from", os.path.dirname(fs[0]))
 base = (P["sxy"] < 0.7) & (P["blend"] < 0.02)
 
 # fig30: the tail
