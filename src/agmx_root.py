@@ -29,6 +29,7 @@ CT = os.path.join(HERE, "..", "clustering_tests")
 for p in (HERE, CT):
     if p not in sys.path:
         sys.path.insert(0, p)
+import naming  # noqa: E402
 
 AGMX_VERSION = "2026-10-25"
 CLS_CODES = {"x-ray": 1, "x-ray diffuse": 2, "low-E": 3, "muon": 4, "worm": 5, "alpha": 6, "big deposit": 7,
@@ -199,8 +200,7 @@ def process(waders_fits, ref_root, final_json, out_path, ext, curve=None, agmx_k
     adu = cal * ref["gain"]
     if curve is not None:
         import gain_vs_charge as GVC
-        a = adu * curve["a"] / ref["gain"] if anchor == "fit" else adu
-        Q = GVC.electrons_of_adu(a, curve).reshape(cal.shape)
+        Q = GVC.electrons_with_anchor(adu, curve, ref["gain"], anchor).reshape(cal.shape)
     else:
         Q = cal
     valid = valid_mask(Q.shape, final_json, nsbin)
@@ -231,9 +231,6 @@ def tasks_for_run(run_dir, root_dir="root"):
     return out
 
 
-MODULE_RE = r"_(\d+)_\d{8}_\d{6}_\d+$"          # ACM id in an image name (as run_WADERs)
-
-
 def curve_file(curve, stem):
     """the g(n) file for an image: curve is a gain_vs_charge JSON (used for every image) or a run_WADERs
     gain_vs_charge/ folder, where 'image_<stem>' (per-image curve) is preferred if per_image, else
@@ -241,22 +238,9 @@ def curve_file(curve, stem):
     if curve is None or os.path.isfile(curve):
         return curve
     path, per_image = (curve[:-len(":per-image")], True) if curve.endswith(":per-image") else (curve, False)
-    import re
-    m = re.search(MODULE_RE, stem)
-    cands = ([f"image_{stem}"] if per_image else []) + ([f"module_{m.group(1)}"] if m else [f"module_{stem}"])
+    acm = naming.acm_id(stem)
+    cands = ([f"image_{stem}"] if per_image else []) + [f"module_{acm or stem}"]
     return next((f for f in (os.path.join(path, c + "_gain_vs_charge.json") for c in cands) if os.path.isfile(f)), None)
-
-
-def load_curve(path, ext):
-    """g(n) model of extension ext from a gain_vs_charge JSON, or None (no file / no reliable curve)"""
-    if not path:
-        return None
-    with open(path) as fh:
-        res = json.load(fh)["extensions"].get(f"EXT{ext}", {})
-    m = res.get("model") if res.get("ok") in (True, "True") else None
-    if isinstance(m, str):
-        import ast; m = ast.literal_eval(m)
-    return m
 
 
 def _job(a):
@@ -266,7 +250,8 @@ def _job(a):
     note = ""
     try:
         cpath = curve_file(curve, stem)
-        model = load_curve(cpath, ext)
+        import gain_vs_charge as GVC
+        model = GVC.load_model(cpath, ext) if cpath else None
         if curve is not None and model is None:
             # as gain_vs_charge.apply, which copies such CCDs unchanged: the panaSKImg calibration is kept
             note = " (no reliable g(n) curve for this CCD: fitted gain, as in root_gaincorr)"

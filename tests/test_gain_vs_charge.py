@@ -116,5 +116,23 @@ class CoherentPooling(unittest.TestCase):
             self.assertAlmostEqual(p["visibility"], q["visibility"], places=6)
 
 
+class ModelFiles(unittest.TestCase):
+    """load_model / electrons_with_anchor: shared by gain_vs_charge.apply and the A_GMX writer"""
+
+    def test_load_model(self):
+        m = dict(a=1.3, b=-1e-5, n_cap=2000.0)
+        ext = {"EXT1": dict(ok=True, model=m), "EXT2": dict(ok=True, model=repr(m)), "EXT3": dict(ok=False, model=m)}
+        self.assertEqual(GVC.load_model(ext, 1), m)
+        self.assertEqual(GVC.load_model(ext, "EXT2"), m)          # older files: the model as its repr
+        self.assertIsNone(GVC.load_model(ext, 3))                  # curve not reliable
+        self.assertIsNone(GVC.load_model(ext, 4))                  # no entry
+
+    def test_anchor(self):
+        m = dict(a=1.3, b=0.0, n_cap=2000.0)                        # constant gain 1.3 ADU/e-
+        adu = np.array([13.0, 130.0])
+        np.testing.assert_allclose(GVC.electrons_with_anchor(adu, m, 1.25, "comb"), adu / 1.3)
+        np.testing.assert_allclose(GVC.electrons_with_anchor(adu, m, 1.25, "fit"), adu / 1.25)
+
+
 if __name__ == "__main__":
     unittest.main()

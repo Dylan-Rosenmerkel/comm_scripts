@@ -47,10 +47,10 @@ How to read this file: Environment (finding conda) -> Inputs (image lists) -> --
 -> the help texts and the argument parser -> the --gain-correction both comparison -> the pipeline steps, one
 function each, and main(), which calls them in order.
 
-The scripts it uses (gain_dc_split.py, autoconfig_panaSKImg.py, fit_quality.py,
-gain_vs_charge.py) live in comm_scripts/src; keep the bin/ and src/ folders together. Nothing else on disk is
-needed: the reference JSON is built into autoconfig_panaSKImg.py. See docs/PIPELINE_GUIDE.md for the physics of
-each step.
+The scripts it uses (gain_dc_split.py, autoconfig_panaSKImg.py, fit_quality.py, gain_vs_charge.py, naming.py,
+agmx_root.py) live in comm_scripts/src; keep the bin/, src/ and (for --clusterer) clustering_tests/ folders together.
+The reference JSON is built into autoconfig_panaSKImg.py; --composite also needs the MakeComposite macro. User guide:
+docs/usage/comm_scripts_usage.pdf; physics of each step: docs/PIPELINE_GUIDE.md.
 """
 # Only the standard library at module level: this part has to run in any python, before
 # the environment with ROOT/pysimdamicm is found.
@@ -61,6 +61,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -73,6 +74,10 @@ SCRIPT_DIR = os.path.dirname(SCRIPT_PATH)
 SRC_DIR = os.path.join(os.path.dirname(SCRIPT_DIR), "src")
 NEEDED_MODULES = ("numpy", "astropy", "ROOT", "pysimdamicm")
 INSIDE_FLAG = "RUN_WADERS_IN_ENV"
+sys.path.insert(0, SRC_DIR)
+from naming import acm_id, image_stem  # noqa: E402  (standard library only, usable before the environment check)
+# autoconfig options that run_WADERs sets itself and must not come through --autoconfig-args
+RESERVED_AUTOCONFIG = ("--peaks", "--per-ext", "--tune", "-o", "--output")
 
 
 # =============================================================================
@@ -110,27 +115,27 @@ def find_env(conda, name):
     return None
 
 
-def ensure_environment(env_name):
-    """Return if this python is ready; otherwise re-run this script inside a conda env."""
+def ensure_environment(env_name, prog="run_WADERs", script=SCRIPT_PATH, inside_flag=INSIDE_FLAG):
+    """Return if this python is ready; otherwise re-run `script` (this one, or bin/run_AGMX) inside a conda env."""
     if env_ready():
         return
     missing = [m for m in NEEDED_MODULES if importlib.util.find_spec(m) is None]
-    if os.environ.get(INSIDE_FLAG):
-        sys.exit(f"run_WADERs: the environment is missing {', '.join(missing)}")
+    if os.environ.get(inside_flag):
+        sys.exit(f"{prog}: the environment is missing {', '.join(missing)}")
     conda = find_conda()
     if not conda:
-        sys.exit(f"run_WADERs: this python lacks {', '.join(missing)} and no conda was found. "
+        sys.exit(f"{prog}: this python lacks {', '.join(missing)} and no conda was found. "
                  "Activate the environment with pysimdamicm and run again.")
     env = find_env(conda, env_name)
     if not env:
-        sys.exit("run_WADERs: no conda environment with panaSKImg found"
+        sys.exit(f"{prog}: no conda environment with panaSKImg found"
                  + (f" (looked for '{env_name}')" if env_name else "") + "; use --env NAME")
-    print(f"run_WADERs: using environment {env}", flush=True)
+    print(f"{prog}: using environment {env}", flush=True)
     cmd = [conda, "run"]
     if not os.path.basename(conda).startswith("micromamba"):
         cmd.append("--no-capture-output")
-    cmd += ["-p", env, "python", SCRIPT_PATH] + sys.argv[1:]
-    environ = dict(os.environ, **{INSIDE_FLAG: "1", "PYTHONUNBUFFERED": "1"})
+    cmd += ["-p", env, "python", script] + sys.argv[1:]
+    environ = dict(os.environ, **{inside_flag: "1", "PYTHONUNBUFFERED": "1"})
     sys.exit(subprocess.run(cmd, env=environ).returncode)
 
 
@@ -162,7 +167,7 @@ def read_inputs(path):
         return os.path.basename(path)[:-4], images
     if not path.endswith(IMAGE_EXT):
         sys.exit(f"run_WADERs: {path} is neither an image ({', '.join(IMAGE_EXT)}) nor a .txt list")
-    return os.path.basename(path).split(".")[0], [path]
+    return image_stem(path), [path]
 
 
 # =============================================================================
@@ -238,7 +243,8 @@ what it does, per image (gain_dc_split.py --per-ext, always on):
        json/<image>/final/                      the JSONs that are run
        json/<image>/<image>_gain_dc_summary.txt all fits compared, with errors
   3. panaSKImg runs once per CCD (--ext N) with the final JSONs, in parallel;
-     flooded/unresolved CCDs are skipped (see --all-ext)
+     flooded/unresolved CCDs are skipped (see --all-ext; --autoconfig-args "--cluster-all" runs them
+     with cluster finding)
   summary.txt lists, per CCD, which gain was used and why (* = all-peaks gain held)
 
 --tune (optional, off by default; adds ~1 min per image):
@@ -289,9 +295,10 @@ what it does, per image (gain_dc_split.py --per-ext, always on):
 
 --composite (optional): after the panaSKImg runs, MakeComposite_Fe55_Clusters_Extensions.cc
   (front/back composite clusters, Fe-55 Kalpha/Kbeta fits, CTI) is run with ROOT on the
-  cluster files, once per image type and module (the gain-corrected files from
-  root_gaincorr/ if --gain-correction is on, else root/; with --gain-correction
-  both also root_gaincorr_per_image/ -> composite_per_image/):
+  cluster files, once per image type and module (the gain-corrected files if
+  --gain-correction is on: root_gaincorr/, or root_gaincorr_per_image/ with
+  --gain-correction per-image; else root/; with --gain-correction both also
+  root_gaincorr_per_image/ -> composite_per_image/):
     composite/lists/Image_<N>_<module>_list.txt          the file list given to the macro
     composite/Fe_55_Analysis_Plots/<module>/Image_<N>_<module>_list/
                                      ext1..ext4/ per-CCD plots, compare/ 2x2 comparisons
@@ -383,7 +390,8 @@ def build_parser(full=False):
     ap.add_argument("--overwrite", action="store_true",
                     help="replace an existing WADERs_analysis_<run name> folder (otherwise it stops)")
     ap.add_argument("--all-ext", action="store_true",
-                    help="also run CCDs flagged as flooded/unresolved (slow, fits not reliable)")
+                    help="also run CCDs flagged as flooded/unresolved (slow, fits not reliable); their clusters "
+                         "are only searched with --autoconfig-args \"--cluster-all\" (which also runs them)")
     ap.add_argument("--no-clusters", action="store_true",
                     help="noise, gain and dark current only: leave out ClusterFinder and BuildClusterMask "
                          "(no cluster ROOT files; much faster)")
@@ -598,6 +606,23 @@ def check_request(args):
     if os.path.exists(out) and os.listdir(out) and not args.overwrite:
         sys.exit(f"run_WADERs: {out} already exists; use --overwrite to replace it")
     modules = parse_modules(args.module)
+    if args.jobs < 1:
+        sys.exit("run_WADERs: -j/--jobs must be at least 1")
+    stems = {}
+    for p in images:
+        stems.setdefault(image_stem(p), []).append(p)
+    dup = {s: ps for s, ps in stems.items() if len(ps) > 1}
+    if dup:
+        sys.exit("run_WADERs: images with the same name would overwrite each other's results: "
+                 + "; ".join(f"{s}: {', '.join(ps)}" for s, ps in sorted(dup.items())))
+    try:
+        auto = shlex.split(args.autoconfig_args)
+    except ValueError as e:
+        sys.exit(f"run_WADERs: --autoconfig-args cannot be parsed ({e})")
+    bad = sorted({a.split("=")[0] for a in auto} & set(RESERVED_AUTOCONFIG))
+    if bad:
+        sys.exit(f"run_WADERs: {', '.join(bad)} cannot be given in --autoconfig-args (run_WADERs sets "
+                 "them; use run_WADERs' own --tune)")
     if args.clusterer != "waders" and args.no_clusters:
         sys.exit(f"run_WADERs: --clusterer {args.clusterer} needs panaSKImg's cluster files; it cannot be used with --no-clusters")
     if args.composite:
@@ -653,8 +678,9 @@ def step1_configure(run):
         stem = run.G.image_stem(img)
         jdir = os.path.join(D["json"], stem)
         r = run.G.split_image(img, jdir, per_ext=True, panaskimg=run.panaskimg,
-                              autoconfig_args=args.autoconfig_args.split(),
+                              autoconfig_args=shlex.split(args.autoconfig_args),
                               work=os.path.join(D["work"], stem), final_fit=False, jobs=1, tune=args.tune)
+        r["orig"] = img           # r["src"] may be a decompressed copy in work/ (deleted at the end)
         for lg in glob.glob(os.path.join(jdir, "autoconfig_*.log")):      # logs together
             shutil.move(lg, os.path.join(D["logs"], f"{stem}_{os.path.basename(lg)}"))
         return r
@@ -742,13 +768,15 @@ def step3_collect_root_files(run):
     return roots
 
 
-def measure_curve(run, GVC, srcs, name, title, run_exts):
-    """Measure g(n) from the images srcs (gain_vs_charge.measure), save it as gain_vs_charge/<name>_gain_vs_charge.json
-    with its plots (<name>_gain_vs_charge.png, <name>_nonlinearity.png). Returns (json path, result per CCD)."""
-    res = GVC.measure(srcs, run_exts, verbose=False, model=run.args.gain_model, combine=run.args.gain_combine)
+def measure_curve(run, GVC, rs, name, title, run_exts):
+    """Measure g(n) from the images of the configured images rs (gain_vs_charge.measure), save it as
+    gain_vs_charge/<name>_gain_vs_charge.json (with the original image paths) and its plots
+    (<name>_gain_vs_charge.png, <name>_nonlinearity.png). Returns (json path, result per CCD)."""
+    res = GVC.measure([r["src"] for r in rs], run_exts, verbose=False, model=run.args.gain_model,
+                      combine=run.args.gain_combine)
     mpath = os.path.join(run.dirs["gc"], f"{name}_gain_vs_charge.json")
     with open(mpath, "w") as fh:
-        json.dump({"images": srcs, "e_per_electron_eV": GVC.E_PER_E, "extensions": res}, fh, indent=1)
+        json.dump({"images": [r["orig"] for r in rs], "e_per_electron_eV": GVC.E_PER_E, "extensions": res}, fh, indent=1)
     GVC.plot(res, os.path.join(run.dirs["gc"], f"{name}_gain_vs_charge.png"), title)
     GVC.plot_nonlinearity(res, os.path.join(run.dirs["gc"], f"{name}_nonlinearity.png"), title)
     return mpath, res
@@ -759,7 +787,7 @@ def report_curve(gc_lines, title, res):
     for ext, rr in sorted(res.items()):
         if rr.get("ok"):
             m = rr["model"]
-            gc_lines.append(f"  {title} {ext}: g(0) = {m['a']:.4f} ADU/e- (fit gain {rr['g_1e']:.4f}), "
+            gc_lines.append(f"  {title} {ext}: g(0) = {m['a']:.4f} ADU/e- (autoconfig comb gain {rr['g_1e']:.4f}), "
                             f"{rr['drop_at_1000'] * 100:.1f}% lower at 1000 e-, measured to "
                             f"{rr['n_max_measured']:.0f} e-"
                             + (f", nonlinearity {rr['nonlinearity']['c2']:.2e} x^2 {rr['nonlinearity']['c1']:+.4f} x"
@@ -780,8 +808,12 @@ def apply_curve(run, GVC, gc_lines, mpath, rs, outdir):
         return
     files = [f for r in rs for f in glob.glob(os.path.join(run.dirs["root"], f"panaSKImg_clustersRec_{r['stem']}_ext*.root"))]
     for src_f, dst_f, n, med in GVC.apply(mpath, sorted(files), outdir, verbose=False, anchor=run.args.gain_anchor):
-        gc_lines.append(f"    {os.path.basename(dst_f)}: " + (f"median E_corrected/E_original = {med:.4f}" if n
-                        else "copied unchanged (no curve for this CCD)"))
+        m = re.search(r"_ext(\d+)\.root$", dst_f)
+        if m and GVC.load_model(mpath, m.group(1)) is None:
+            what = "copied unchanged (no reliable curve for this CCD)"
+        else:
+            what = f"median E_corrected/E_original = {med:.4f}" if n else "corrected (no cluster above 1 keV to compare)"
+        gc_lines.append(f"    {os.path.basename(dst_f)}: {what}")
 
 
 def step3b_gain_correction(run, configs, tasks):
@@ -815,8 +847,7 @@ def step3b_gain_correction(run, configs, tasks):
     # images of the same module (ACM id in the name, e.g. ..._106_20250914_024425_6) share the CCDs
     groups = {}
     for r in configs.values():
-        m = re.search(r"_(\d+)_\d{8}_\d{6}_\d+$", r["stem"])
-        groups.setdefault(m.group(1) if m else r["stem"], []).append(r)
+        groups.setdefault(acm_id(r["stem"]) or r["stem"], []).append(r)
     if not groups:
         gc_lines.append("gain vs charge: nothing to correct, no image was configured")
     curves = {}                     # (mode, image stem) -> model file
@@ -826,7 +857,7 @@ def step3b_gain_correction(run, configs, tasks):
                     f"module from all its images, from the electron comb in clean rows):")
     for key, rs in sorted(groups.items()):
         print(f"  {run.stamp()} g(n) for module {key} ({len(rs)} image(s))")
-        mpath, res = measure_curve(run, GVC, [r["src"] for r in rs], f"module_{key}", f"module {key}", run_exts)
+        mpath, res = measure_curve(run, GVC, rs, f"module_{key}", f"module {key}", run_exts)
         report_curve(gc_lines, f"module {key}", res)
         module_res[key] = res
         if "pooled" in modes:
@@ -838,14 +869,14 @@ def step3b_gain_correction(run, configs, tasks):
         for key, rs in sorted(groups.items()):
             for r in sorted(rs, key=lambda r: r["stem"]):
                 print(f"  {run.stamp()} g(n) for image {r['stem']}")
-                mpath, res = measure_curve(run, GVC, [r["src"]], f"image_{r['stem']}", r["stem"], run_exts)
+                mpath, res = measure_curve(run, GVC, [r], f"image_{r['stem']}", r["stem"], run_exts)
                 for ext, rr in res.items():       # fallback to the module curve, recorded in the file
                     rr["source"] = "image"
                     mod = module_res[key].get(ext, {})
                     if not rr.get("ok") and mod.get("ok"):
                         res[ext] = dict(mod, source="module", own_reason=rr.get("reason"))
                 with open(mpath, "w") as fh:
-                    json.dump({"images": [r["src"]], "e_per_electron_eV": GVC.E_PER_E, "extensions": res},
+                    json.dump({"images": [r["orig"]], "e_per_electron_eV": GVC.E_PER_E, "extensions": res},
                               fh, indent=1)
                 report_curve(gc_lines, r["stem"], res)
                 curves[("per-image", r["stem"])] = mpath
@@ -898,7 +929,8 @@ def step3d_agmx(run, gc_dirs):
 def step3c_composite(run, configs, gc_dirs, agmx_dirs=None):
     """Step 3c, --composite: MakeComposite_Fe55_Clusters_Extensions.cc once per image type and module.
 
-    Runs on the gain-corrected cluster files if there are any (root_gaincorr/), else on root/; with
+    Runs on the gain-corrected cluster files if there are any (root_gaincorr/, or root_gaincorr_per_image/ with
+    --gain-correction per-image), else on root/; with
     --gain-correction both also on root_gaincorr_per_image/ -> composite_per_image/. With --clusterer agmx the
     A_GMX files (root_agmx_gaincorr*/ or root_agmx/) are used instead; with --clusterer both they go to
     composite_agmx/ (composite_per_image_agmx/) in addition. The image type N (CCD geometry
@@ -929,9 +961,7 @@ def step3c_composite(run, configs, gc_dirs, agmx_dirs=None):
         for r in sorted(configs.values(), key=lambda r: r["stem"]):
             m = re.search(r"Image_(\d+)", r["stem"])
             num = args.image_number if args.image_number is not None else (int(m.group(1)) if m else None)
-            m = re.search(r"_(\d+)_\d{8}_\d{6}_\d+$", r["stem"])
-            acm = m.group(1) if m else None
-            module, why = module_name(acm, r["src"], run.modules)
+            module, why = module_name(acm_id(r["stem"]), r["orig"], run.modules)
             comp_lines.append(f"  {r['stem']}: Image {num if num is not None else '?'}, module {module} ({why})")
             if num is None:
                 comp_lines.append("    not run: no Image_<N> in the name (use --image-number N)")

@@ -27,7 +27,6 @@ import argparse
 import importlib.machinery
 import importlib.util
 import os
-import subprocess
 import sys
 
 SCRIPT_PATH = os.path.realpath(__file__)
@@ -37,29 +36,13 @@ INSIDE_FLAG = "RUN_AGMX_IN_ENV"
 
 
 def run_waders_module():
-    """bin/run_WADERs as a module (for its environment helpers)"""
+    """bin/run_WADERs as a module (its environment helpers); no .pyc is written next to it"""
+    sys.dont_write_bytecode = True
     loader = importlib.machinery.SourceFileLoader("run_WADERs_mod", os.path.join(BIN, "run_WADERs"))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     mod = importlib.util.module_from_spec(spec)
     loader.exec_module(mod)
     return mod
-
-
-def ensure_environment(env_name):
-    """as run_WADERs: return if this python has everything, else re-run this script inside the conda env"""
-    W = run_waders_module()
-    if W.env_ready():
-        return
-    if os.environ.get(INSIDE_FLAG):
-        sys.exit("run_AGMX: the environment is missing " + ", ".join(m for m in W.NEEDED_MODULES if importlib.util.find_spec(m) is None))
-    conda = W.find_conda()
-    env = W.find_env(conda, env_name) if conda else None
-    if not env:
-        sys.exit("run_AGMX: this python lacks ROOT/pysimdamicm and no conda environment with panaSKImg was found; use --env NAME")
-    print(f"run_AGMX: using environment {env}", flush=True)
-    cmd = [conda, "run"] + ([] if os.path.basename(conda).startswith("micromamba") else ["--no-capture-output"])
-    cmd += ["-p", env, "python", SCRIPT_PATH] + sys.argv[1:]
-    sys.exit(subprocess.run(cmd, env=dict(os.environ, **{INSIDE_FLAG: "1", "PYTHONUNBUFFERED": "1"})).returncode)
 
 
 def main():
@@ -76,7 +59,10 @@ def main():
     run_dir = os.path.abspath(a.run_dir)
     if not os.path.isdir(os.path.join(run_dir, "root")):
         sys.exit(f"run_AGMX: {run_dir} has no root/ folder; give a run_WADERs output folder")
-    ensure_environment(a.env)
+    if a.jobs < 1:
+        sys.exit("run_AGMX: -j/--jobs must be at least 1")
+    # as run_WADERs: re-run inside the conda environment with panaSKImg if this python lacks ROOT/pysimdamicm
+    run_waders_module().ensure_environment(a.env, prog="run_AGMX", script=SCRIPT_PATH, inside_flag=INSIDE_FLAG)
     sys.path.insert(0, SRC)
     import agmx_root as AR
     if not AR.tasks_for_run(run_dir):

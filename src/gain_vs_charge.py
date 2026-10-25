@@ -96,13 +96,8 @@ N_EDGES = np.r_[20, 35, 55, 80, 110, 150, 200, 270, 360, 480, 640, 850, 1130, 15
 # =============================================================================
 # model
 # =============================================================================
-# The linear form has closed-form expressions (g_model, adu_of_n, n_of_adu). The other
+# The linear form has closed-form expressions (adu_of_n, n_of_adu). The other
 # forms go through g_of() and a numerical table of A(n) (_table, electrons_of_adu, _adu).
-def g_model(n, a, b, n_cap):
-    """Local gain [ADU/e-] at n electrons: linear, held constant above n_cap."""
-    return a + b * np.minimum(np.asarray(n, float), n_cap)
-
-
 def adu_of_n(n, a, b, n_cap):
     """A(n) = integral_0^n g(m) dm (closed form) for the linear model [ADU].
 
@@ -194,6 +189,32 @@ def _table(model):
         A = np.concatenate([[0.0], np.cumsum(0.5 * (g[1:] + g[:-1]))])
         _TABLES[key] = (n, A, float(g[-1]))
     return _TABLES[key]
+
+
+def load_model(source, ext):
+    """The g(n) model of one extension, or None if there is no reliable curve for it.
+    source: a *_gain_vs_charge.json path or its "extensions" dict; ext: 1 / "1" / "EXT1"."""
+    if isinstance(source, str):
+        with open(source) as fh:
+            source = json.load(fh)["extensions"]
+    key = ext if str(ext).startswith("EXT") else f"EXT{ext}"
+    res = source.get(key, {})
+    if res.get("ok") not in (True, "True"):
+        return None
+    model = res.get("model")
+    if isinstance(model, str):                    # older files stored the model as its repr
+        import ast
+        model = ast.literal_eval(model)
+    return model
+
+
+def electrons_with_anchor(adu, model, gain_fit, anchor="comb"):
+    """Electrons of pixels with the given ADU (the image's ADU = keV / E_PER_E x gain_fit): anchor 'comb' uses the
+    comb's g(n) throughout; 'fit' keeps the image's fitted gain at low charge (same curve shape, g(0) = gain_fit)."""
+    adu = np.asarray(adu, float)
+    if anchor == "fit":
+        adu = adu * model["a"] / gain_fit
+    return electrons_of_adu(adu, model)
 
 
 def electrons_of_adu(adu, model):
@@ -405,10 +426,11 @@ def _measure_comb_points(vals, g0):
     windows in a row. Returns a list of point dicts (n = sqrt(lo * hi), n_lo, n_hi, g, err,
     visibility, npix, significant).
     """
-    # Several images: each image's comb is measured separately and the comb powers are
-    # added. Pooling all pixels into one comb would need every image's comb to sit at the
-    # same place, A(n) = integral of g, to << 1 e-: a 0.1% gain difference between images
-    # shifts it by ~1 e- at 850 e- and washes the pooled comb out at high charge.
+    # Several images (the incoherent combination): each image's comb is measured separately
+    # and the comb powers are added. Pooling the raw ADU of all images into one comb would need
+    # every image's comb at the same place, A(n) = integral of g, to << 1 e- (a 0.1% gain
+    # difference shifts it by ~1 e- at 850 e-); the coherent combination (_measure_coherent)
+    # first converts each image with its own curve, which lines the combs up.
     pts = []
     misses = 0
     cap = 300000 // max(len(vals), 1)
@@ -777,18 +799,19 @@ def apply(model_json, rootfiles, outdir, verbose=True, anchor="comb"):
     """
     import ROOT
     ROOT.gROOT.SetBatch(True)
-    models = json.load(open(model_json))["extensions"]
+    with open(model_json) as fh:
+        models = json.load(fh)["extensions"]
     os.makedirs(outdir, exist_ok=True)
     out = []
     for path in rootfiles:
         base = os.path.basename(path)
         import re
-        m = re.search(r"_ext(\d)\.root$", base)
+        m = re.search(r"_ext(\d+)\.root$", base)
         if not m:
             print(f"  {base}: no _ext<N> in the name, skipped (run panaSKImg per extension, --ext N)")
             continue
         ext = f"EXT{m.group(1)}"
-        mod = models.get(ext, {})
+        model = load_model(models, ext)
         fin = ROOT.TFile.Open(path)
         tin = fin.Get("clustersRec")
         info = fin.Get("info")
@@ -809,16 +832,13 @@ def apply(model_json, rootfiles, outdir, verbose=True, anchor="comb"):
         ratios = []
         for i in range(tin.GetEntries()):
             tin.GetEntry(i)
-            if mod.get("ok") and gfit:
+            if model and gfit:
                 # Energy and pixels_E hold one element per cluster of this tree entry
                 # (pixels_E: the pixel energies [keV]); they are edited in place before Fill()
                 pe, en = tin.pixels_E, tin.Energy
                 for k in range(pe.size()):
                     v = np.array(pe[k], float)
-                    adu = v * 1e3 / E_PER_E * gfit
-                    if anchor == "fit":
-                        adu = adu * mod["model"]["a"] / gfit     # same curve shape, g(0) = g_fit
-                    vn = electrons_of_adu(adu, mod["model"]) * E_PER_E * 1e-3
+                    vn = electrons_with_anchor(v * 1e3 / E_PER_E * gfit, model, gfit, anchor) * E_PER_E * 1e-3
                     for j in range(len(vn)):
                         pe[k][j] = float(vn[j])
                     old = en[k]
@@ -836,7 +856,7 @@ def apply(model_json, rootfiles, outdir, verbose=True, anchor="comb"):
         med = float(np.median(ratios)) if ratios else float("nan")
         out.append((path, outpath, len(ratios), med))
         if verbose:
-            note = "" if mod.get("ok") else "  (no g(n) model for this extension: copied unchanged)"
+            note = "" if model else "  (no g(n) model for this extension: copied unchanged)"
             print(f"  {base}: {ext}, fit gain {gfit}, median E_new/E_old (E > 1 keV) = {med:.4f}{note}")
     return out
 
@@ -880,7 +900,8 @@ def main():
 
     if args.cmd == "measure":
         os.makedirs(args.outdir, exist_ok=True)
-        name = args.name or os.path.basename(args.images[0]).split(".")[0]
+        from naming import image_stem
+        name = args.name or image_stem(args.images[0])
         print(f"g(n) from {len(args.images)} image(s):")
         res = measure(args.images, args.ext, extrap_factor=args.extrap_factor, model=args.model, combine=args.combine)
         jpath = os.path.join(args.outdir, f"{name}_gain_vs_charge.json")
