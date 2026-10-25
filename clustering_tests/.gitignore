@@ -1,0 +1,6 @@
+# outputs of the test scripts (results live in ~/Documents/comm_scripts_data/)
+results*/
+clusters*/
+*.png
+*.npz
+*.log
