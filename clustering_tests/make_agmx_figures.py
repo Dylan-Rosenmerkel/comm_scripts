@@ -1,6 +1,7 @@
 """Figures for docs/aGMX/aGMX_clustering.tex (Overleaf: docs/aGMX/aGMX_clustering_overleaf.zip): every step of adaptive+GMX run explicitly on a real low-background
 Am-241 image (AMTEst EXT1) with known objects injected in a quiet region, plus the performance comparisons.
-  python make_agmx_figures.py            -> docs/aGMX/figures/*.png"""
+  python make_agmx_figures.py            -> docs/aGMX/figures/*.png
+  AGMX_FIG_OUT=DIR (relative to docs/aGMX) writes elsewhere; MUON_PHYS=1 injects a minimum-ionising muon (inject_utils)"""
 import json, os, sys
 import numpy as np
 from scipy import ndimage, stats
@@ -13,7 +14,7 @@ import am_test as AT
 import gmx as GX
 AM, CM = GX.AM, AT.CM
 NE = 1 / AM.E_PER_E
-OUT = os.path.join(HERE, "..", "docs", "aGMX", "figures")
+OUT = os.path.join(HERE, "..", "docs", "aGMX", os.environ.get("AGMX_FIG_OUT", "figures"))
 os.makedirs(OUT, exist_ok=True)
 D = os.path.expanduser("~/Documents/comm_scripts_data/session_2026-10-23_clustering/clustering_2026-10-25")
 plt.rcParams.update({"font.size": 9, "axes.titlesize": 10})
@@ -53,7 +54,9 @@ def make_scene():
     n = rng.poisson(1580); add("sharp Fe-55 on it", *gauss_cloud(rng, n, Y, x0 + 229, 0.3), n / NE, [(Y, x0 + 229)])
     n = rng.poisson(15920); add("59.5 keV", *gauss_cloud(rng, n, Y + 45, x0 + 300, 1.0), n / NE, [(Y + 45, x0 + 300)])
     n = rng.poisson(400); add("faint 1.5 keV", *gauss_cloud(rng, n, Y + 45, x0 + 306, 0.5), n / NE, [(Y + 45, x0 + 306)])  # 6 px from the 59.5 keV
-    L, n = 40, 40 * 250; t = rng.uniform(0, 1, n); s = 0.2 + t
+    import inject_utils as IU
+    L = 40; n = IU.muon_electrons(rng, L, AM.E_PER_E) if IU.MUON_PHYS else 40 * 250
+    t = rng.uniform(0, 1, n); s = 0.2 + t
     add("muon", Y + 45 + (t - .5) * L * np.sin(.35) + rng.normal(0, 1, n) * s, x0 + 380 + (t - .5) * L * np.cos(.35) + rng.normal(0, 1, n) * s, n / NE, [(Y + 45, x0 + 380)])
     ns = 18; a = 0.3; p = np.array([Y + 40.0, x0 + 470.0]); pts = []
     for i in range(ns):
@@ -98,14 +101,20 @@ show(ax[0], Q, "the test scene: a real low-background CCD image (Am-241 EXT1, 0.
 for o in OBJ:
     y, x = o["c"][0]; ax[0].annotate(o["name"], (x, y), (x - 10, y - 18 if not any(t in o["name"] for t in ("pair b", "on it", "faint")) else y + 26), fontsize=7, color="tab:blue",
                                     arrowprops=dict(arrowstyle="-", color="tab:blue", lw=0.6))
+def labels(a, items, col):
+    """cluster markers + labels; a cluster close to an already labelled one is labelled below its marker"""
+    placed = []
+    for x, y, t in sorted(items):
+        # a cluster within 12 px of an already labelled one gets its label below its marker
+        dy = 14 if any(abs(x - px) < 12 and abs(y - py) < 12 for px, py in placed) else -5
+        placed.append((x, y))
+        a.plot(x, y, "o", mfc="none", mec=col, ms=12); a.text(x + 4, y + dy, t, fontsize=6.5, color=col)
+
+
 show(ax[1], Q, f"WADERs (10 / 30 sigma): {sum(1 for c in WA if Y0 <= c['y'] < Y0 + 130 and X0 <= c['x'] < X0 + 560)} clusters in the window")
-for c in WA:
-    if Y0 <= c["y"] < Y0 + 130 and X0 <= c["x"] < X0 + 560:
-        ax[1].plot(c["x"], c["y"], "o", mfc="none", mec="tab:orange", ms=12); ax[1].text(c["x"] + 4, c["y"] - 5, f"{c['E']:.2f}", fontsize=6.5, color="tab:orange")
+labels(ax[1], [(c["x"], c["y"], f"{c['E']:.2f}") for c in WA if Y0 <= c["y"] < Y0 + 130 and X0 <= c["x"] < X0 + 560], "tab:orange")
 show(ax[2], Q, f"A_GMX: {sum(1 for c in cl if Y0 <= c['y'] < Y0 + 130 and X0 <= c['x'] < X0 + 560)} clusters in the window (energy keV, class)")
-for c in cl:
-    if Y0 <= c["y"] < Y0 + 130 and X0 <= c["x"] < X0 + 560:
-        ax[2].plot(c["x"], c["y"], "o", mfc="none", mec="tab:red", ms=12); ax[2].text(c["x"] + 4, c["y"] - 5, f"{c['E']:.2f} {c.get('cls', '')}", fontsize=6.5, color="tab:red")
+labels(ax[2], [(c["x"], c["y"], f"{c['E']:.2f} {c.get('cls', '')}") for c in cl if Y0 <= c["y"] < Y0 + 130 and X0 <= c["x"] < X0 + 560], "tab:red")
 fig.tight_layout(); save(fig, "fig01_overview.png")
 truth = [(o["name"], o["E"], o["c"][0]) for o in OBJ]
 json.dump(dict(truth=[(n, float(e), [float(v) for v in c]) for n, e, c in truth],
@@ -175,13 +184,14 @@ zoom = (slice(Y0 + 25, Y0 + 60), slice(X0 + 130, X0 + 245)); zext = (X0 + 129.5,
 fig, ax = plt.subplots(4, 1, figsize=(12, 10))
 for a, (n, mx) in zip(ax, snaps.items()):
     a.imshow(np.sqrt(np.clip(R[zoom], 0, None)), cmap="Greys", extent=zext, interpolation="nearest")
-    for k in range(len(mx)):
+    vis = [k for k in range(len(mx)) if zoom[0].start <= mx.mu[k, 0] < zoom[0].stop and zoom[1].start <= mx.mu[k, 1] < zoom[1].stop]
+    vis = sorted(vis, key=lambda k: mx.mu[k, 1])            # left to right: labels alternate above / below
+    for j, k in enumerate(vis):
         y, x = mx.mu[k]
-        if not (zoom[0].start <= y < zoom[0].stop and zoom[1].start <= x < zoom[1].stop): continue
         aa, cc, bb = mx.S[k, 0] + GX.PIX, mx.S[k, 1] + GX.PIX, mx.S[k, 2]
         ev, evec = np.linalg.eigh(np.array([[aa, bb], [bb, cc]]))
         a.add_patch(Ellipse((x, y), 4 * np.sqrt(ev[1]), 4 * np.sqrt(ev[0]), angle=np.degrees(np.arctan2(evec[0, 1], evec[1, 1])), fill=False, ec="tab:red", lw=1.2))
-        a.text(x - 4, y - 4.5 if (k % 2 == 0) else y + 6.5, f"A={mx.A[k]:.0f} e-", color="tab:red", fontsize=7)
+        a.text(x - 4, y - 4.5 if (j % 2 == 0) else y + 6.5, f"A={mx.A[k]:.0f} e-", color="tab:red", fontsize=7)
     a.set_title(f"after {n} EM iteration(s): red = 2-sigma ellipse of each cloud, A = its charge (truth: pair 1580 + 1580 e-, diffuse 4746 + sharp 1580 e-)", loc="left", fontsize=8.5)
     a.set_xticks([]); a.set_yticks([])
 fig.tight_layout(); save(fig, "fig05_em_evolution.png")
@@ -291,7 +301,10 @@ for (i, j), v in np.ndenumerate(sub): ax[0].text(j, i, f"{v:.2f}", ha="center", 
 ax[0].set_title("a 5-electron event: pixel values Q - o [e-]", loc="left", fontsize=9)
 ax[1].imshow(np.round(sub).clip(0), cmap="Greys")
 for (i, j), v in np.ndenumerate(np.round(sub).clip(0)): ax[1].text(j, i, f"{v:.0f}", ha="center", va="center", fontsize=8, color="tab:red")
-ax[1].set_title(f"rounded to whole electrons: sum = {np.round(sub).clip(0).sum():.0f} e-", loc="left", fontsize=9)
+_nn = np.round(sub).clip(0); _lab, _ = ndimage.label(_nn >= 1, structure=np.ones((3, 3), bool))
+_g = _lab[np.unravel_index(np.argmax(_nn), _nn.shape)]
+ax[1].set_title(f"rounded to whole electrons:\nthe event (8-connected group) holds {_nn[_lab == _g].sum():.0f} e-"
+                + (f",\n{_nn[(_lab > 0) & (_lab != _g)].sum():.0f} e- apart = dark charge / noise" if ((_lab > 0) & (_lab != _g)).any() else ""), loc="left", fontsize=9)
 rng = np.random.default_rng(3); n_pix = 13
 analog = [rng.normal(0, 0.15, n_pix).sum() for _ in range(20000)]
 ax[2].hist(np.array(analog) + 5, 80, histtype="step", color="tab:blue", label="sum of 13 analog pixels (noise 0.15 e- each)")
@@ -308,14 +321,14 @@ fig, a = plt.subplots(figsize=(13, 5.2)); a.axis("off")
 B = RF._box; AR = RF._arr
 B(a, 0.08, 0.5, "calibrated image\nQ [e-]", "#eee", fs=8.5)
 B(a, 0.25, 0.5, "0  background model\no, lambda, s per pixel\nR = Q - (o + lambda)", "#eee", fs=8)
-B(a, 0.43, 0.5, "A  adaptive switch:\ns >= 3 sigma_read\nand s >= 0.5 e- ?", "#ffe", fs=8)
-B(a, 0.43, 0.13, "'unmodelled':\nhysteresis on Q\n(10/30 sigma_read,\n>= Poisson tail)", "#ddd", fs=7.5)
+B(a, 0.43, 0.5, "A  adaptive switch:\ns >= 3 sigma_read and\ns >= 0.5 e-, or\nsigma_read >= 1 e- ?", "#ffe", fs=8)
+B(a, 0.43, 0.13, "'unmodelled':\nhysteresis on Q\n(10/30 sigma of the\nzero peak, >= 4.5 e-)", "#ddd", fs=7.5)
 B(a, 0.62, 0.86, "1  seeds: matched filter\nw = 0.5/1/1.5/2.5 px,\nfinest first, Poisson check", "#fde", fs=7.5)
-B(a, 0.62, 0.5, "2  EM: all Gaussian clouds\nat once, charge SHARED\n(responsibilities)", "#ffe", fs=7.5)
+B(a, 0.62, 0.5, "2  EM: all Gaussian clouds\nat once (exact pixel\nintegrals), charge SHARED", "#ffe", fs=7.5)
 B(a, 0.62, 0.14, "3  residual pass\n+ prune S/N < 4", "#fde", fs=7.5)
-B(a, 0.82, 0.86, "4  merge clouds:\nridge > 0.5 and\ncompatible shapes", "#eed", fs=7.5)
+B(a, 0.82, 0.86, "4  merge clouds:\nridge > 0.5 and\ncompatible shapes;\nfragments attach once", "#eed", fs=7.5)
 B(a, 0.82, 0.5, "5  island BIC test:\nK round X-rays vs\none free-shape deposit", "#dfd", fs=7.5)
-B(a, 0.82, 0.14, "6-8  energy by sharing,\nwidth, blend, counting,\nfew-e finder, class", "#eef", fs=7.5)
+B(a, 0.82, 0.14, "6-8  energy by sharing,\nwidth, flags, counting,\nfew-e finder, class\n(9: few-e catalogue)", "#eef", fs=7.5)
 AR(a, 0.13, 0.5, 0.17, 0.5); AR(a, 0.33, 0.5, 0.36, 0.5); AR(a, 0.43, 0.4, 0.43, 0.24, "yes"); AR(a, 0.5, 0.56, 0.55, 0.8, "no")
 AR(a, 0.62, 0.78, 0.62, 0.6); AR(a, 0.62, 0.4, 0.62, 0.22); AR(a, 0.69, 0.18, 0.75, 0.8); AR(a, 0.82, 0.78, 0.82, 0.6); AR(a, 0.82, 0.4, 0.82, 0.24)
 a.text(0.5, 0.98, "A_GMX = adaptive switch + GMX (Gaussian-mixture EM deblending)", ha="center", fontsize=12, weight="bold", transform=a.transAxes)
