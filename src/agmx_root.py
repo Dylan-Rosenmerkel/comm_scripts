@@ -10,6 +10,9 @@ pixel lists, ...) is computed by panaSKImg's own code, and written with pysimdam
     agmx_cls, agmx_blend, agmx_ped, agmx_peakfrac, agmx_chi2, agmx_sig, agmx_regime   (vector per cluster;
   -999 = not computed, e.g. agmx_chi2 of clusters the mixture did not fit)
 and the file gets a TNamed `agmx_config` (JSON: version, parameters, class and regime codes).
+For electron-counting images (read noise < 0.35 e-) the few-electron candidate catalogue (clustering_tests/
+fe_candidates.py: every 2-20 e- group, masks, background expectation per class) is written to
+OUTDIR/fe_candidates/<stem>_ext<n>_fe_candidates.csv / .json (run_AGMX --no-fe-candidates to skip).
 
 Conventions (checked against panaSKImg files): pixels_x / pixels_y are 1-based indices of the calibrated image;
 pixels_E [keV] = the charge [e-] the cluster takes from the pixel x e2eV (shared pixels are split between clusters,
@@ -188,7 +191,7 @@ def write_root(out_path, cls, ref, ref_root, params):
     return len(cls)
 
 
-def process(waders_fits, ref_root, final_json, out_path, ext, curve=None, agmx_kw=None, anchor="comb"):
+def process(waders_fits, ref_root, final_json, out_path, ext, curve=None, agmx_kw=None, anchor="comb", fe_candidates=None):
     """one CCD of one image -> one panaSKImg-format cluster file; returns the number of clusters.
     curve: g(n) model of this CCD (gain_vs_charge) -> the image is converted ADU -> electrons with it before
     clustering; anchor as gain_vs_charge.apply ('comb': the comb's g(n) throughout, 'fit': g(n) scaled to the
@@ -208,8 +211,21 @@ def process(waders_fits, ref_root, final_json, out_path, ext, curve=None, agmx_k
     valid = valid_mask(Q.shape, final_json, nsbin)
     Q = np.where(valid, Q, 0.0)
     kw = dict(agmx_kw or {})
-    clusters = AD.adaptive_cluster(Q, valid, engine="gmx", return_pixels=True, **kw)
+    try:
+        bg = AD.AM.background_map(Q, valid)
+    except Exception:
+        bg = None
+    clusters, info = AD.adaptive_cluster(Q, valid, bg, engine="gmx", return_pixels=True, return_info=True, **kw)
     clusters = [c for c in clusters if np.isfinite(c.get("E", np.nan)) and "_pix" in c]
+    if fe_candidates is None:
+        fe_candidates = os.environ.get("AGMX_FE_CANDIDATES", "1") != "0"
+    if fe_candidates and bg is not None and info.get("regime") != "unmodelled" and info.get("noise", 9) < 0.35:
+        # electron-counting image: the few-electron candidate catalogue (fe_candidates.py) next to the cluster files
+        import fe_candidates as FE
+        cands, summ = FE.candidates(Q, valid, bg, clusters)
+        summ.update(source_image=os.path.basename(waders_fits), ext=int(ext), gain_corrected=curve is not None)
+        stem = os.path.basename(out_path)[len("panaSKImg_clustersRec_"):-len(".root")]
+        FE.write(cands, summ, os.path.join(os.path.dirname(out_path), "fe_candidates", stem))
     cls = build_clusters(clusters, ref, adu, ref["gain"], *Q.shape)
     params = dict(method="A_GMX (clustering_tests/adaptive.py engine='gmx')", version=AGMX_VERSION,
                   gain_corrected=curve is not None, gain_anchor=anchor if curve is not None else None, parameters=kw, cls_codes=CLS_CODES, regime_codes=REGIME_CODES, not_computed=NOT_COMPUTED,

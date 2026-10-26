@@ -53,11 +53,12 @@ simple_bg = AM.simple_bg
 PHYS_FIX = os.environ.get("AGMX_PHYS_FIXES", "1") != "0"
 
 
-def detection_bg(Qc, valid, bg, half=30, lam_grid=np.geomspace(1e-6, 0.9, 400)):
-    """background for the few-electron tests: lam_det = max(fitted lam, lam_q), lam_q = the dark charge that gives the
+def detection_bg(Qc, valid, bg, half=30, lam_grid=np.geomspace(1e-6, 0.9, 400), mode="conservative"):
+    """background for the few-electron tests: lam_det = lam_q (+ the excess of hot columns), lam_q = the dark charge that gives the
     MEASURED rate of single-electron pixels (rounded count 1) among the quiet pixels (outside the cluster mask) of the
     rows r-half..r+half, with the row's read noise (rounding miscounts included, as pix_null_logp). This is the
-    occupancy that produces fake groups; the fitted lam map can drop far below it where the dark charge is tiny."""
+    occupancy that produces fake groups; the fitted lam map fluctuates far below and above it where the dark charge
+    is tiny (a few dark electrons per fit cell)."""
     H = Qc.shape[0]
     nn = np.where(valid, np.round(Qc - bg.o), -1)
     quiet = valid & ~bg.mask
@@ -80,7 +81,18 @@ def detection_bg(Qc, valid, bg, half=30, lam_grid=np.geomspace(1e-6, 0.9, 400)):
         p1 = np.exp(pix_null_logp(np.ones(lam_grid.size), lam_grid, np.full(lam_grid.size, sv)))
         rows = sk == sv
         lam_q[rows] = np.interp(r1[rows], p1, lam_grid, left=0.0, right=lam_grid[-1])
-    lam = np.maximum(bg.lam, lam_q[:, None])
+    # the fitted lam map is noisy where the dark charge is tiny (upward spikes as well as holes): the measured
+    # occupancy lam_q is the detection dark charge; only columns whose fitted lam stands out (hot columns, added as
+    # dark charge) keep their excess
+    col_ex = np.median(bg.lam - np.median(bg.lam, axis=1, keepdims=True), axis=0)
+    hot = col_ex > np.maximum(3.0 * np.median(lam_q), 1e-4)
+    lam = lam_q[:, None] + np.where(hot, np.maximum(col_ex, 0.0), 0.0)[None, :]
+    if mode == "conservative":
+        # A_GMX's per-event decisions: never below the fitted map either (its upward fluctuations make the finder
+        # conservative: 0.07-0.37 fake groups per 1.7 Mpix at 1e-4..1e-2 e-/pix; the accurate occupancy map gave
+        # 0.4-0.7). The candidate catalogue (fe_candidates.py) uses mode="occupancy", whose blank prediction is calibrated
+        lam = np.maximum(lam, bg.lam)
+    lam = np.where(valid, np.maximum(lam, 1e-6), bg.lam)
     return AM.Background(bg.o, lam, bg.s2, bg.mask, bg.rows)
 
 
