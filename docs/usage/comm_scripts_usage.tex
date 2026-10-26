@@ -236,6 +236,7 @@ Each step is one function in \cc{bin/run_WADERs}; \cc{main()} calls them in this
 \cc{--gain-correction [MODE]} & \cc{pooled} (default: one curve per module), \cc{per-image}, \cc{both} \\
 \cc{--gain-model} & \cc{interpolated} (default), \cc{broken}, \cc{linear} \\
 \cc{--gain-combine} & \cc{incoherent} (default), \cc{coherent} \\
+\cc{--gain-memory} & \cc{off} (default), \cc{auto} \\
 \cc{--gain-anchor} & \cc{comb} (default), \cc{fit} \\
 \multicolumn{2}{@{}l}{\textit{clustering} (Section~\ref{sec:agmx})} \\
 \cc{--clusterer} & \cc{waders} (default: panaSKImg's ClusterFinder only), \cc{agmx} (also A\_GMX files, used
@@ -302,6 +303,10 @@ electrons with that curve.
   are added, the comb search starting at the mean low-charge gain of the images) or \emph{coherent} (each image
   converted with its own curve, then the pixels pooled into one comb; reaches higher charge, but on the Am-241
   lines of AMtest EXT4 it split the two gain periods by 0.6\,\%, so it is not the default) \\
+\cc{--gain-memory} & \emph{off} (default) or \emph{auto}: before the comb is measured, remove the horizontal
+  readout memory (a pixel keeps $\sim3\times10^{-4}$ of the pixel read just before it; $k_L=1.6$--$3.8\times10^{-4}$ on
+  the AMtest and DM24--26 CCDs), which inside clusters adds $\sim0.3$\,e$^-$ per 1000\,e$^-$ and blurs the comb at high
+  charge; the coefficients are fitted per CCD and stored in the JSON (\cc{memory}) \\
 \cc{--gain-anchor} & \emph{comb} (default; the comb's $g(n)$ throughout, which removes the image-to-image
   scatter of the fitted gains) or \emph{fit} (each image's fitted gain kept at low charge) \\
 \bottomrule
@@ -314,7 +319,7 @@ to $<400$\,e$^-$, or rising) are copied unchanged.
 \subsection{On its own}
 \begin{lstlisting}
 python src/gain_vs_charge.py measure img1.fz img2.fz ... -o OUTDIR [--name NAME] [--ext 1 3 4]
-        [--model interpolated|broken|linear] [--combine incoherent|coherent] [--extrap-factor 3]
+        [--model interpolated|broken|linear] [--combine incoherent|coherent] [--memory auto|K] [--extrap-factor 3]
 python src/gain_vs_charge.py apply OUTDIR/NAME_gain_vs_charge.json root/panaSKImg_clustersRec_*_ext*.root
         -o root_gaincorr [--anchor comb|fit]
 \end{lstlisting}
