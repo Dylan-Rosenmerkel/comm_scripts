@@ -528,17 +528,18 @@ def merge_graph(mix, r_merge=0.5, w_ratio=1.6, elong=1.4, cos_min=0.8, nt=17, f_
     m = (ridge > r_merge) & ((wr < w_ratio) | track | ~narrow_is_mode)
     if PIX_EXACT and m.any():
         # phase 2: a faint cloud (< f_bridge of the amplitude of its brightest merge partner, e.g. a 5-e- tail
-        # fragment fitted as a thin 'track') joins only that partner's cluster: it cannot bridge an X-ray to the big
-        # deposit next to it
+        # fragment fitted as a thin 'track') joins exactly one cluster, that partner's (following chains of faint
+        # clouds): it cannot bridge an X-ray to the big deposit next to it, and fragment chains are not orphaned
         ii, jj = i[m], j[m]
         best = np.full(n, -1); bA = np.zeros(n)
         for u, v in ((ii, jj), (jj, ii)):
             o = np.argsort(mix.A[v], kind="stable")
-            u_, v_ = u[o], v[o]
-            best[u_] = v_; bA[u_] = mix.A[v_]                 # last write = brightest partner
+            best[u[o]] = v[o]; bA[u[o]] = mix.A[v[o]]          # last write = brightest partner
         faint = mix.A < f_bridge * bA
-        keep = (~faint[ii] | (best[ii] == jj)) & (~faint[jj] | (best[jj] == ii))
-        mi = np.nonzero(m)[0]; m = m.copy(); m[mi[~keep]] = False
+        strong = ~faint[ii] & ~faint[jj]
+        fi = np.nonzero(faint)[0]
+        G = sparse.coo_matrix((np.ones(strong.sum() + fi.size), (np.r_[ii[strong], fi], np.r_[jj[strong], best[fi]])), shape=(n, n))
+        return connected_components(G, directed=False)[1]
     G = sparse.coo_matrix((np.ones(m.sum()), (i[m], j[m])), shape=(n, n))
     return connected_components(G, directed=False)[1]
 
