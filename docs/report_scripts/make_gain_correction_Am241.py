@@ -5,15 +5,16 @@ gain_vs_charge.py apply, for EXT1, EXT3 and EXT4 of the AMTEst run (board 106).
 
 Inputs (defaults in brackets, see -h):
     --orig-dir   cluster files from run_WADERs           [.../AMTEst/WADERs_analysis_fz_files/root]
-    --corr-dir   the same clusters after the correction  [root_gaincorr/ next to this script]
-    --model      gain-vs-charge curves (AMT_gain_vs_charge.json)
-                                                         [model/AMT_gain_vs_charge.json next to this script]
+    --corr-dir   the same clusters after the correction  [REQUIRED; gain_vs_charge.py apply output]
+    --model      gain-vs-charge curves (AMT_gain_vs_charge.json, gain_vs_charge.py measure output)  [REQUIRED]
+    (the inputs the committed PDF was made from were temporary and are gone; re-create them with
+     gain_vs_charge.py measure / apply on the AMTEst images)
 Outputs:
-    --out        3-page PDF                              [comm_scripts/gain_correction_Am241.pdf]
+    --out        3-page PDF                              [comm_scripts/docs/gain_correction_Am241.pdf]
     --pages-dir  every page also as page_NN.png (70 dpi), for checking  [pages/ next to this script]
     and a printed summary of the 59.5 keV widths and measured/true ratios per line.
 
-Run:  python make_gain_correction_Am241.py      (needs PyROOT, scipy, matplotlib)
+Run:  python make_gain_correction_Am241.py --corr-dir DIR --model JSON      (needs PyROOT, scipy, matplotlib)
 
 How to read this file
     energies        cluster energies of one extension from a folder of cluster files
@@ -36,7 +37,7 @@ ROOT.gROOT.SetBatch(True)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ORIG_D = "/Users/dylanrosenmerkel/Documents/JH1_Testing/AMTEst/WADERs_analysis_fz_files/root"
-OUT = "/Users/dylanrosenmerkel/Documents/Software/comm_scripts/gain_correction_Am241.pdf"
+OUT = os.path.join(os.path.dirname(HERE), "gain_correction_Am241.pdf")                  # docs/
 ORIG, CORR = "#8c8c8c", "#1f5fbf"
 # Am-241 / Np-237 lines [keV]; L-beta is a blend dominated by L-beta1
 LINES = [("Np L$\\alpha$", 13.93), ("Np L$\\beta$", 17.75), ("Np L$\\gamma$", 20.80), ("$\\gamma$ 26.3", 26.34),
@@ -219,10 +220,8 @@ def main():
     """
     ap = argparse.ArgumentParser(description="Short PDF: effect of the gain-vs-charge correction on the Am-241 lines.")
     ap.add_argument("--orig-dir", default=ORIG_D, help=f"uncorrected cluster files (default: {ORIG_D})")
-    ap.add_argument("--corr-dir", default=os.path.join(HERE, "root_gaincorr"),
-                    help="corrected cluster files (default: root_gaincorr/ next to this script)")
-    ap.add_argument("--model", default=os.path.join(HERE, "model", "AMT_gain_vs_charge.json"),
-                    help="gain-vs-charge curves (default: model/AMT_gain_vs_charge.json next to this script)")
+    ap.add_argument("--corr-dir", required=True, help="corrected cluster files (gain_vs_charge.py apply output)")
+    ap.add_argument("--model", required=True, help="gain-vs-charge curves (gain_vs_charge.py measure output JSON)")
     ap.add_argument("--out", default=OUT, help=f"output PDF (default: {OUT})")
     ap.add_argument("--pages-dir", default=os.path.join(HERE, "pages"),
                     help="folder for the page_NN.png copies of the pages (default: pages/ next to this script)")
@@ -244,8 +243,6 @@ def main():
         page_595(pdf, data, fits)
         page_l_lines(pdf, data, fits, args.pages_dir)
     print("->", out)
-    for (e, name, k), r in sorted(fits.items(), key=lambda t: (t[0][0], t[0][1], t[0][2])):   # does nothing (left-over)
-        pass
     for e in (1, 3, 4):
         print(f"EXT{e} widths 59.5: " + str([fits[(e, LINES[-1][0], k)][2] if fits[(e, LINES[-1][0], k)] else None for k in (0, 1)]))
         print(f"EXT{e}: " + "  ".join(f"{n.replace('$', '').replace(chr(92), '')}: "

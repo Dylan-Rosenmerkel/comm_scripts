@@ -8,16 +8,16 @@ binned images, every dataset at a glance, and the limitations.
 Inputs (defaults in brackets, see -h):
     --universal  folder of the "universal" test: universal_results.json (per-CCD K-alpha fits
                  and curve summaries) and WADERs_analysis_<tag>/{root,root_gaincorr,gain_vs_charge}/
-                 [a Claude scratch folder of an earlier session; it may no longer exist]
+                 [REQUIRED: it was a temporary folder of an earlier session and may no longer exist]
     --dm2426     WADERs analysis of the DM24/DM25/DM26 Image 5 set (pages 6-8)
                  [.../2025-09-13-DM24_DM25_DM26_Low_Temp/WADERs_analysis_Image_5_files]
 Outputs:
-    --out        the PDF                                     [comm_scripts/gain_correction_report.pdf]
+    --out        the PDF                                     [comm_scripts/docs/gain_correction_report.pdf]
     --pages-dir  every page also as page_NN.png (70 dpi)     [pages/ next to this script]
 
 Dataset tags look like I5_DM07-28_0919: image type (Image 5), module folder, date (MMDD).
 
-Run:  python make_gain_correction_report.py     (needs PyROOT, matplotlib)
+Run:  python make_gain_correction_report.py --universal FOLDER     (needs PyROOT, matplotlib)
 
 How to read this file
     module_of, pretty     tag/board -> module name; tag -> readable label
@@ -41,7 +41,7 @@ ROOT.gROOT.SetBatch(True)
 U = "/private/tmp/claude-501/-Users-dylanrosenmerkel/a98994a6-5dc6-442a-abe8-a65a49102c77/scratchpad/universal"
 DM2426 = ("/Users/dylanrosenmerkel/Documents/LSM_Module_Testing_Analysis/Production_Modules_Data/"
           "2025-09-13-DM24_DM25_DM26_Low_Temp/WADERs_analysis_Image_5_files")
-OUT = "/Users/dylanrosenmerkel/Documents/Software/comm_scripts/gain_correction_report.pdf"
+OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "gain_correction_report.pdf")  # docs/
 KA, KB = 5.899, 6.490                     # Mn K-alpha / K-beta (Fe-55) [keV]
 ORIG, CORR = "#8c8c8c", "#1f5fbf"         # colours: without / with the correction
 NAMES = {"110": 0, "109": 1, "106": 2}    # board -> position of its module in a FOLDERS entry
@@ -374,8 +374,8 @@ def page_limits(pdf, res):
 def main():
     """Options, load universal_results.json, write the 11 pages."""
     ap = argparse.ArgumentParser(description="Multi-page PDF on the gain-vs-charge correction and Fe-55 / cluster energies.")
-    ap.add_argument("--universal", default=U,
-                    help=f"folder with universal_results.json and WADERs_analysis_<tag>/ (default: {U})")
+    ap.add_argument("--universal", required=True,
+                    help=f"folder with universal_results.json and WADERs_analysis_<tag>/ (the report was made from {U})")
     ap.add_argument("--dm2426", default=DM2426, help=f"WADERs analysis of the DM24-26 Image 5 set (default: {DM2426})")
     ap.add_argument("--out", default=OUT, help=f"output PDF (default: {OUT})")
     ap.add_argument("--pages-dir", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "pages"),

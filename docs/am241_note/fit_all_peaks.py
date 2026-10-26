@@ -22,7 +22,6 @@ import sys
 import numpy as np
 from scipy import optimize
 import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
-from matplotlib.colors import LogNorm
 from amfit import Model, summary, fit_595
 from common import add_path_args, load_clusters, paths
 
@@ -230,7 +229,7 @@ def main():
         G = [g for g in grid if g["var"] == var]
         los = sorted({g["lower"] for g in G}); his = sorted({g["upper"] for g in G})
         Z = np.array([[next(g["Z_np"] for g in G if g["lower"] == lo and g["upper"] == hi) for hi in his] for lo in los])
-        im = ax.imshow(Z, origin="lower", cmap="Blues", aspect="auto")
+        ax.imshow(Z, origin="lower", cmap="Blues", aspect="auto")
         for a in range(len(los)):
             for b in range(len(his)):
                 ax.text(b, a, f"{Z[a, b]:.1f}", ha="center", va="center", fontsize=8, color="white" if Z[a, b] > Z.max() * 0.7 else INK)

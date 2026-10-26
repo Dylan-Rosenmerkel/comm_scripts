@@ -113,6 +113,47 @@ class CommandLine(unittest.TestCase):
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("cannot be used with --no-clusters", r.stderr)
 
+    def run_checked(self, files, *extra, lst=None):
+        """run_WADERs on dummy inputs; returns the CompletedProcess (stops in check_request, before any work)"""
+        with tempfile.TemporaryDirectory() as d:
+            for f in files:
+                os.makedirs(os.path.dirname(os.path.join(d, f)), exist_ok=True)
+                open(os.path.join(d, f), "w").close()
+            inp = os.path.join(d, files[0])
+            if lst is not None:
+                inp = os.path.join(d, "l.txt")
+                with open(inp, "w") as fh:
+                    fh.write("\n".join(lst) + "\n")
+            return subprocess.run([sys.executable, SCRIPT, inp, "-o", os.path.join(d, "out"), *extra],
+                                  capture_output=True, text=True)
+
+    def test_jobs_must_be_positive(self):
+        r = self.run_checked(["x.fz"], "-j", "0")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("at least 1", r.stderr)
+
+    def test_duplicate_image_names_stop(self):
+        r = self.run_checked(["a.fz", "sub/a.fits.bz2"], lst=["a.fz", "sub/a.fits.bz2"])
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("same name", r.stderr)
+
+    def test_reserved_autoconfig_args_stop(self):
+        r = self.run_checked(["x.fz"], "--autoconfig-args", "--peaks 2")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("--peaks", r.stderr)
+
+
+class Naming(unittest.TestCase):
+    """src/naming.py: the image name and ACM id used everywhere"""
+
+    def test_stem_and_acm(self):
+        sys.path.insert(0, os.path.join(REPO, "src"))
+        import naming
+        self.assertEqual(naming.image_stem("/x/avg_Image_8_Low_Temp_106_20260330_123052_21.fits.bz2"),
+                         "avg_Image_8_Low_Temp_106_20260330_123052_21")
+        self.assertEqual(naming.acm_id("avg_Image_8_Low_Temp_106_20260330_123052_21"), "106")
+        self.assertIsNone(naming.acm_id("some_image"))
+
 
 class RunContext(unittest.TestCase):
     def test_stamp_format(self):

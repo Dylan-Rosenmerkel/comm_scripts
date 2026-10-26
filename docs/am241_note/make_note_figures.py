@@ -70,7 +70,7 @@ def main():
     DOC = PATHS.note; FIG = os.path.join(DOC, "figures"); TAB = os.path.join(DOC, "tables")
     os.makedirs(FIG, exist_ok=True); os.makedirs(TAB, exist_ok=True)
     W = PATHS.corr
-    d4, d3 = load_clusters(PATHS.work, 4), load_clusters(PATHS.work, 3)
+    d4 = load_clusters(PATHS.work, 4)
     n_img = len(np.unique(d4["img"]))
     num["n_images"] = int(n_img)
 
@@ -423,7 +423,6 @@ def main():
     with open(os.path.join(TAB, "other_peaks.tex"), "w") as fh:
         for sname in others:
             o = others[sname]; g, b = o["g595"], o["bs"]; pmn, emn = o["mn"]; ed = o["edge"]
-            sn = "all" if sname == "all clusters" else "cut"
             fh.write(r"\multicolumn{7}{l}{\emph{" + sname + r"}} \\" + "\n")
             fh.write(tex_row(["$\\gamma$ 59.54", "59.54", f"{g['mu']:.3f} $\\pm$ {g['dmu']:.3f}", f"{g['mu'] / 59.54:.4f}",
                               f"{g['s']:.3f} $\\pm$ {g['ds']:.3f}", f"{FW * g['s']:.3f} $\\pm$ {FW * g['ds']:.3f}", f"{g['z']:.0f}"]))

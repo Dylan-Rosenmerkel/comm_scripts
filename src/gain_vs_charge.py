@@ -54,7 +54,8 @@ Images of the same CCDs (same module / ACM) can be given together (--combine):
       curve; the remaining tooth offset of each image (a few tenths of an electron) is removed, and
       all pixels are pooled into one comb. This reaches higher charge than one image (the noise
       level falls with the total number of pixels) and does not depend on the order of the images.
-  incoherent: the comb powers of the images are added (measured with the first image's g0).
+  incoherent: the comb powers of the images are added (comb search started at the mean low-charge
+      gain of the images; also independent of the image order).
 Needs numpy, scipy, astropy (measure) and PyROOT (apply); uses autoconfig_panaSKImg.py
 from the same folder for the geometry and the low-charge gain.
 
@@ -96,13 +97,8 @@ N_EDGES = np.r_[20, 35, 55, 80, 110, 150, 200, 270, 360, 480, 640, 850, 1130, 15
 # =============================================================================
 # model
 # =============================================================================
-# The linear form has closed-form expressions (g_model, adu_of_n, n_of_adu). The other
+# The linear form has closed-form expressions (adu_of_n, n_of_adu). The other
 # forms go through g_of() and a numerical table of A(n) (_table, electrons_of_adu, _adu).
-def g_model(n, a, b, n_cap):
-    """Local gain [ADU/e-] at n electrons: linear, held constant above n_cap."""
-    return a + b * np.minimum(np.asarray(n, float), n_cap)
-
-
 def adu_of_n(n, a, b, n_cap):
     """A(n) = integral_0^n g(m) dm (closed form) for the linear model [ADU].
 
@@ -194,6 +190,32 @@ def _table(model):
         A = np.concatenate([[0.0], np.cumsum(0.5 * (g[1:] + g[:-1]))])
         _TABLES[key] = (n, A, float(g[-1]))
     return _TABLES[key]
+
+
+def load_model(source, ext):
+    """The g(n) model of one extension, or None if there is no reliable curve for it.
+    source: a *_gain_vs_charge.json path or its "extensions" dict; ext: 1 / "1" / "EXT1"."""
+    if isinstance(source, str):
+        with open(source) as fh:
+            source = json.load(fh)["extensions"]
+    key = ext if str(ext).startswith("EXT") else f"EXT{ext}"
+    res = source.get(key, {})
+    if res.get("ok") not in (True, "True"):
+        return None
+    model = res.get("model")
+    if isinstance(model, str):                    # older files stored the model as its repr
+        import ast
+        model = ast.literal_eval(model)
+    return model
+
+
+def electrons_with_anchor(adu, model, gain_fit, anchor="comb"):
+    """Electrons of pixels with the given ADU (the image's ADU = keV / E_PER_E x gain_fit): anchor 'comb' uses the
+    comb's g(n) throughout; 'fit' keeps the image's fitted gain at low charge (same curve shape, g(0) = gain_fit)."""
+    adu = np.asarray(adu, float)
+    if anchor == "fit":
+        adu = adu * model["a"] / gain_fit
+    return electrons_of_adu(adu, model)
 
 
 def electrons_of_adu(adu, model):
@@ -351,25 +373,28 @@ def clean_rows(x, g0, frac=0.6):
     return mask, vis
 
 
-def _measure_setup(images, exts):
+def _measure_setup(images, exts, autoconfig_args=()):
     """Geometry, extensions and gain priors from autoconfig_panaSKImg, for measure().
 
-    Uses the reference JSON and the first image (its header and extensions). Returns
-    (autoconfig module, astropy fits module, opened first image, extensions, geometry cfg,
-    autoconfig arguments, {EXTn: gain prior}).
+    Uses the reference JSON (autoconfig's built-in one, or --reference from autoconfig_args) and the
+    first image (its header and extensions); autoconfig_args are the same settings as for the panaSKImg
+    JSONs (run_WADERs --autoconfig-args, e.g. --ccd-cols, --gain, --gain-min/--gain-max, --lam-max), so
+    the comb is measured with the geometry and gain range the run used. Returns (autoconfig module,
+    astropy fits module, opened first image, extensions, geometry cfg, autoconfig arguments,
+    {EXTn: gain prior}).
     """
-    import argparse as _ap
     from astropy.io import fits
     import autoconfig_panaSKImg as A
 
-    ref = json.loads(A.REFERENCE_JSON)
+    aargs = A.parse_args([images[0], "-o", "unused.json", *autoconfig_args])
+    if aargs.reference:
+        with open(aargs.reference) as fh:
+            ref = json.load(fh)
+    else:
+        ref = json.loads(A.REFERENCE_JSON)
     hdul0 = fits.open(images[0])
     exts = exts or [e for e in ref["input"]["image"].get("extensions", [1, 2, 3, 4]) if e < len(hdul0)]
-    _, cfg, _, _ = A.geometry(hdul0[0].header, hdul0, ref["input"]["image"], _ap.Namespace(ccd_cols=None))
-    sys_argv = sys.argv
-    sys.argv = ["x", images[0], "-o", "unused.json"]
-    aargs = A.parse_args()
-    sys.argv = sys_argv
+    _, cfg, _, _ = A.geometry(hdul0[0].header, hdul0, ref["input"]["image"], aargs)
     gp = A.gain_priors(ref, [f"EXT{e}" for e in exts], aargs)
     return A, fits, hdul0, exts, cfg, aargs, gp
 
@@ -405,10 +430,11 @@ def _measure_comb_points(vals, g0):
     windows in a row. Returns a list of point dicts (n = sqrt(lo * hi), n_lo, n_hi, g, err,
     visibility, npix, significant).
     """
-    # Several images: each image's comb is measured separately and the comb powers are
-    # added. Pooling all pixels into one comb would need every image's comb to sit at the
-    # same place, A(n) = integral of g, to << 1 e-: a 0.1% gain difference between images
-    # shifts it by ~1 e- at 850 e- and washes the pooled comb out at high charge.
+    # Several images (the incoherent combination): each image's comb is measured separately
+    # and the comb powers are added. Pooling the raw ADU of all images into one comb would need
+    # every image's comb at the same place, A(n) = integral of g, to << 1 e- (a 0.1% gain
+    # difference shifts it by ~1 e- at 850 e-); the coherent combination (_measure_coherent)
+    # first converts each image with its own curve, which lines the combs up.
     pts = []
     misses = 0
     cap = 300000 // max(len(vals), 1)
@@ -559,7 +585,7 @@ def _coherent_points(us, models):
     return pts
 
 
-def _measure_coherent(images, exts, verbose, extrap_factor, model):
+def _measure_coherent(images, exts, verbose, extrap_factor, model, autoconfig_args=()):
     """measure() for several images, combined coherently (see _coherent_points).
 
     1. Every image is measured on its own (its own g0, row alignment, clean rows and curve), so
@@ -572,8 +598,9 @@ def _measure_coherent(images, exts, verbose, extrap_factor, model):
     Extra result keys: combine, images_used, per_image_n_max; points carry spacing_vs_curves (p).
     """
     images = sorted(images)                     # same result whatever the order of the input
-    per = [measure([f], exts, verbose=False, extrap_factor=extrap_factor, model=model) for f in images]
-    A, fits, hdul0, exts, cfg, aargs, gp = _measure_setup(images, exts)
+    per = [measure([f], exts, verbose=False, extrap_factor=extrap_factor, model=model, autoconfig_args=autoconfig_args)
+           for f in images]
+    A, fits, hdul0, exts, cfg, aargs, gp = _measure_setup(images, exts, autoconfig_args)
     results, fallback = {}, None
     for e in exts:
         name = f"EXT{e}"
@@ -581,7 +608,7 @@ def _measure_coherent(images, exts, verbose, extrap_factor, model):
         if len(usable) < 2:
             if fallback is None:
                 fallback = measure(images, exts, verbose=False, extrap_factor=extrap_factor, model=model,
-                                   combine="incoherent")
+                                   combine="incoherent", autoconfig_args=autoconfig_args)
             res = dict(fallback[name], combine="incoherent",
                        combine_note=f"only {len(usable)} image(s) with a usable curve of their own")
         else:
@@ -605,42 +632,57 @@ def _measure_coherent(images, exts, verbose, extrap_factor, model):
     return results
 
 
-def measure(images, exts=None, verbose=True, extrap_factor=3.0, model="interpolated", combine="coherent"):
+def measure(images, exts=None, verbose=True, extrap_factor=3.0, model="interpolated", combine="coherent",
+            autoconfig_args=()):
     """{ext: result} from a list of images of the same CCDs; model: interpolated, broken or linear.
 
     combine (several images only): "coherent" (default; each image converted with its own curve,
     then all pixels pooled into one comb, see _measure_coherent) or "incoherent" (comb powers of
-    the images added, measured with the first image's g0).
+    the images added). Both are independent of the order of the images.
 
     images: paths of .fz/.fits images of the same CCDs; exts: extension numbers (default:
-    those of the reference JSON present in the first image); extrap_factor: n_cap / n_max.
-    Per extension: the low-charge gain g0 from autoconfig's analysis of the first image (the
-    starting point of the comb search), the clean pixels of every image, the comb spacing in
-    each charge window and the g(n) fit. Result keys ("EXTn"): ok, g_1e, clean_rows, rows,
-    points and, with a fit, model, linear, rms, n_max_measured, drop_at_1000 (fractional
-    drop of g from 0 to 1000 e-), nonlinearity; reason when not ok. Extensions without
-    resolved electron peaks give dict(ok=False, reason=...).
+    those of the reference JSON present in the first image); extrap_factor: n_cap / n_max;
+    autoconfig_args: autoconfig_panaSKImg settings (as run_WADERs --autoconfig-args: geometry,
+    gain prior and search range, ...), used for the geometry and the low-charge gain.
+    Per extension: the low-charge gain g0 (the starting point of the comb search) = mean of
+    autoconfig's gain over the images whose electron peaks are resolved, the clean pixels of
+    every image, the comb spacing in each charge window and the g(n) fit. Result keys ("EXTn"):
+    ok, g_1e (= g0), g_1e_images (images in that mean), clean_rows, rows, points and, with a fit,
+    model, linear, rms, n_max_measured, drop_at_1000 (fractional drop of g from 0 to 1000 e-),
+    nonlinearity; reason when not ok. Extensions without resolved electron peaks in any image
+    give dict(ok=False, reason=...).
     """
+    images = sorted(images)                     # same result whatever the order of the input
     if len(images) > 1 and combine == "coherent":
-        return _measure_coherent(images, exts, verbose, extrap_factor, model)
-    A, fits, hdul0, exts, cfg, aargs, gp = _measure_setup(images, exts)
+        return _measure_coherent(images, exts, verbose, extrap_factor, model, autoconfig_args)
+    A, fits, hdul0, exts, cfg, aargs, gp = _measure_setup(images, exts, autoconfig_args)
+    hduls = [hdul0] + [fits.open(f) for f in images[1:]]
 
     results = {}
     for e in exts:
         name = f"EXT{e}"
-        r = A.analyse_extension(hdul0[e].data, name, cfg, aargs, gp.get(name, 1.0))
-        if r.get("dead") or not r.get("resolved"):
+        # low-charge gain from every image, not only the first: the incoherent result must not depend on
+        # which image comes first (a single image gives exactly its own g0, as before)
+        g0s = []
+        for h in hduls:
+            r = A.analyse_extension(h[e].data, name, cfg, aargs, gp.get(name, 1.0))
+            if not r.get("dead") and r.get("resolved"):
+                g0s.append(float(r["gain"]))
+        if not g0s:
             results[name] = dict(ok=False, reason="no resolved electron peaks (dead, flooded or too noisy)")
             if verbose:
                 print(f"  {name}: skipped ({results[name]['reason']})")
             continue
-        g0 = float(r["gain"])
+        g0 = float(np.mean(g0s))
         vals, nrows_clean, nrows = _measure_clean_values(fits, images, e, cfg, g0)
         pts = _measure_comb_points(vals, g0)
         res = _measure_fit(pts, g0, nrows_clean, nrows, model, extrap_factor)
+        res["g_1e_images"] = len(g0s)
         results[name] = res
         if verbose:
             _measure_print(name, res, g0, nrows_clean, nrows)
+    for h in hduls:
+        h.close()
     return results
 
 
@@ -777,18 +819,19 @@ def apply(model_json, rootfiles, outdir, verbose=True, anchor="comb"):
     """
     import ROOT
     ROOT.gROOT.SetBatch(True)
-    models = json.load(open(model_json))["extensions"]
+    with open(model_json) as fh:
+        models = json.load(fh)["extensions"]
     os.makedirs(outdir, exist_ok=True)
     out = []
     for path in rootfiles:
         base = os.path.basename(path)
         import re
-        m = re.search(r"_ext(\d)\.root$", base)
+        m = re.search(r"_ext(\d+)\.root$", base)
         if not m:
             print(f"  {base}: no _ext<N> in the name, skipped (run panaSKImg per extension, --ext N)")
             continue
         ext = f"EXT{m.group(1)}"
-        mod = models.get(ext, {})
+        model = load_model(models, ext)
         fin = ROOT.TFile.Open(path)
         tin = fin.Get("clustersRec")
         info = fin.Get("info")
@@ -809,16 +852,13 @@ def apply(model_json, rootfiles, outdir, verbose=True, anchor="comb"):
         ratios = []
         for i in range(tin.GetEntries()):
             tin.GetEntry(i)
-            if mod.get("ok") and gfit:
+            if model and gfit:
                 # Energy and pixels_E hold one element per cluster of this tree entry
                 # (pixels_E: the pixel energies [keV]); they are edited in place before Fill()
                 pe, en = tin.pixels_E, tin.Energy
                 for k in range(pe.size()):
                     v = np.array(pe[k], float)
-                    adu = v * 1e3 / E_PER_E * gfit
-                    if anchor == "fit":
-                        adu = adu * mod["model"]["a"] / gfit     # same curve shape, g(0) = g_fit
-                    vn = electrons_of_adu(adu, mod["model"]) * E_PER_E * 1e-3
+                    vn = electrons_with_anchor(v * 1e3 / E_PER_E * gfit, model, gfit, anchor) * E_PER_E * 1e-3
                     for j in range(len(vn)):
                         pe[k][j] = float(vn[j])
                     old = en[k]
@@ -836,7 +876,7 @@ def apply(model_json, rootfiles, outdir, verbose=True, anchor="comb"):
         med = float(np.median(ratios)) if ratios else float("nan")
         out.append((path, outpath, len(ratios), med))
         if verbose:
-            note = "" if mod.get("ok") else "  (no g(n) model for this extension: copied unchanged)"
+            note = "" if model else "  (no g(n) model for this extension: copied unchanged)"
             print(f"  {base}: {ext}, fit gain {gfit}, median E_new/E_old (E > 1 keV) = {med:.4f}{note}")
     return out
 
@@ -866,6 +906,9 @@ def main():
     m.add_argument("--combine", choices=COMBINE, default="coherent",
                    help="several images: coherent (default; each image converted with its own curve, then all "
                         "pixels pooled) or incoherent (comb powers added)")
+    m.add_argument("--autoconfig-args", default="", metavar='"ARGS"',
+                   help="autoconfig_panaSKImg settings for the geometry and the gain prior/range, in one quoted string "
+                        "(as run_WADERs --autoconfig-args, e.g. \"--ccd-cols 3352 --gain-min 1.0\")")
     m.add_argument("--model", choices=MODELS, default="interpolated",
                    help="form of g(n): interpolated (default; monotone interpolation through the measured "
                         "points), broken (two straight lines, fitted knot) or linear (straight line)")
@@ -880,9 +923,12 @@ def main():
 
     if args.cmd == "measure":
         os.makedirs(args.outdir, exist_ok=True)
-        name = args.name or os.path.basename(args.images[0]).split(".")[0]
+        from naming import image_stem
+        name = args.name or image_stem(args.images[0])
         print(f"g(n) from {len(args.images)} image(s):")
-        res = measure(args.images, args.ext, extrap_factor=args.extrap_factor, model=args.model, combine=args.combine)
+        import shlex
+        res = measure(args.images, args.ext, extrap_factor=args.extrap_factor, model=args.model, combine=args.combine,
+                      autoconfig_args=shlex.split(args.autoconfig_args))
         jpath = os.path.join(args.outdir, f"{name}_gain_vs_charge.json")
         with open(jpath, "w") as fh:
             json.dump({"images": [os.path.abspath(i) for i in args.images], "e_per_electron_eV": E_PER_E,

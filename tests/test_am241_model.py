@@ -48,8 +48,9 @@ class FitRecovery(unittest.TestCase):
         counts = rng.poisson(m(x, p_true))
         # Model.fit takes energies, so turn the bin counts back into energies at the bin centres
         E = np.repeat(x, counts)
-        r = m.fit(E, 0.985)
+        r = m.fit(E, 0.97)                         # start away from the truth: the fit has to move k
         k, dk = r["p"][0], r["err"][0]
+        self.assertLess(dk, 0.003)                  # a real constraint (a fit that does nothing has no small error)
         self.assertLess(abs(k - 0.985), 4 * dk + 1e-4)
         self.assertLess(r["devndf"], 1.6)
 

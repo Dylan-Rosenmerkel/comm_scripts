@@ -2,33 +2,36 @@
 
 Scripts to analyse skipper-CCD images with panaSKImg (WADERs) without writing JSONs by hand.
 
+**User guide (every part of the repository and how to run it):** `docs/usage/comm_scripts_usage.pdf`
+(LaTeX source `docs/usage/comm_scripts_usage.tex`, Overleaf upload `docs/usage/comm_scripts_usage_overleaf.zip`).
+
 ## Layout
 
 ```
 comm_scripts/
   README.md
-  bin/     commands to run          run_WADERs (and the alias runWADERs)
+  bin/     commands to run          run_WADERs (and the alias runWADERs), run_AGMX (A_GMX clusters for a finished run)
   src/     the pipeline modules     autoconfig_panaSKImg.py, gain_dc_split.py,
-                                    gain_vs_charge.py, fit_quality.py
+                                    gain_vs_charge.py, fit_quality.py, agmx_root.py (A_GMX -> panaSKImg cluster files)
   utils/   standalone helpers       compare_dcfit_vs_skips.py, split_clustersRec_by_ext.py,
                                     skip_noise_L1.py, compare_runs.py
+  clustering_tests/  research code   alternative clustering methods (A_GMX, GMX, MHC, MFD+G, ...) and the
+                                    scripts that tested them; A_GMX is used by run_WADERs --clusterer / run_AGMX
   tests/   unit tests               python -m unittest discover -s tests -v
-  docs/    guide, notes, reports    PIPELINE_GUIDE.md (start here: the physics and code of each step),
-                                    gain_correction_method/ (g(n) method note, LaTeX + figure scripts),
-                                    am241_note/ (Am-241 10-30 keV analysis: scripts + LaTeX source),
-                                    AMtest_Am241_10-30keV_note_overleaf.zip,
-                                    gain_correction_report.pdf, gain_correction_Am241.pdf,
-                                    report_scripts/ (the scripts that made those two PDFs),
-                                    CONTEXT_2026-10-16.md (hand-over notes: what was done, open items),
-                                    patches/ (local pysimdamicm change), data/
+  docs/    guide, notes, reports    README.md (index: what to read for what), usage/ (the user guide, LaTeX + PDF),
+                                    PIPELINE_GUIDE.md (the physics and code of each step), aGMX/ (A_GMX clustering),
+                                    clustering_methods_report.pdf, gain_correction_method/, am241_note/,
+                                    report_scripts/ (+ the two gain-correction PDFs they make),
+                                    notes/ (hand-over notes, OPEN_ITEMS.md), patches/, data/
 ```
 
-Keep `bin/` and `src/` together: `run_WADERs` loads the modules from `../src`, and the `src/`
-scripts import each other from their own folder. `utils/` scripts are independent, except
+Keep `bin/`, `src/` and `clustering_tests/` together: `run_WADERs` and `run_AGMX` load the modules from `../src`, the
+`src/` scripts import each other from their own folder, and `src/agmx_root.py` imports A_GMX from `../clustering_tests`. `utils/` scripts are independent, except
 `skip_noise_L1.py`, which uses the gain finder in `src/`.
 
-New to the code? Read [docs/PIPELINE_GUIDE.md](docs/PIPELINE_GUIDE.md) first: the data flow,
-the physics behind each step, and which function does what.
+New to the code? Start with the user guide (`docs/usage/comm_scripts_usage.pdf`: what everything does and how to run
+it), then [docs/PIPELINE_GUIDE.md](docs/PIPELINE_GUIDE.md): the data flow, the physics behind each step, and which
+function does what. Everything still open: `docs/notes/OPEN_ITEMS.md`.
 
 ## Quick start
 
@@ -58,7 +61,7 @@ with panaSKImg, by smallest total fit error; ~1 min more per image),
 `--autoconfig-args "--cluster-threshold-e auto"` (optional, not the default: cluster thresholds in
 electrons chosen per CCD from its dark charge - the smallest k with P(Poisson(lambda) >= k) <= 10 %,
 pixel > k - 0.5 e-, seed > 9.5 e-; on Fe-55 back-side (diffuse) clusters it removed most of the 4-9 %
-low bias of the default thresholds, see docs/HANDOFF_2026-10-23_clustering.md),
+low bias of the default thresholds, see docs/notes/HANDOFF_2026-10-23_clustering.md),
 `--autoconfig-args "--cluster-threshold-e 2 5"` (cluster thresholds in electrons; faster on
 images with high dark current), `--all-ext` (also run flooded/unresolved CCDs),
 `--gain-correction` (measure gain vs charge per pixel and write gain-corrected cluster files;
@@ -118,14 +121,17 @@ Then panaSKImg runs once per CCD (`--ext N`), in parallel, and the results are c
 | script | purpose |
 |---|---|
 | `bin/run_WADERs` | everything above, in one command |
+| `bin/run_AGMX` | A_GMX cluster files (WADERs format) for a finished `run_WADERs` folder (see "A_GMX clustering") |
 | `src/autoconfig_panaSKImg.py` | one image -> panaSKImg JSON (or one per CCD with `--per-ext`); the reference JSON is built in (`--reference` to use your own) |
 | `src/gain_dc_split.py` | gain from a many-peak fit, dark current from the 0e-/1e- fit |
-| `src/fit_quality.py` | chi2/ndf, scaled errors and dark-current bias of the fits in a panaSKImg output folder |
+| `src/fit_quality.py` | chi2/ndf, scaled errors and dark-current bias of the fits in a panaSKImg or `run_WADERs` output folder |
 | `src/gain_vs_charge.py` | gain vs electrons per pixel g(n) from the electron comb (`measure`: images -> curve, fit, plot; `--model interpolated`/`broken`/`linear`) and the cluster-energy correction (`apply`: cluster ROOT files -> corrected copies) |
+| `src/agmx_root.py` | A_GMX clusters -> panaSKImg cluster files (used by `run_AGMX` and `run_WADERs --clusterer`) |
+| `src/naming.py` | image name and ACM id of an image (shared by the scripts) |
 | `utils/split_clustersRec_by_ext.py` | split a cluster file with all CCDs (`_ext1234.root`) into one file per CCD |
-| `utils/compare_runs.py` | compare two `run_WADERs` output folders (summary, fits, JSONs, every cluster energy, composite tables); use it to check that a code change leaves the results unchanged |
+| `utils/compare_runs.py` | compare two `run_WADERs` output folders (summary, fits, JSONs, every cluster energy, composite tables; files present in only one run count as differences); use it to check that a code change leaves the results unchanged |
 | `utils/compare_dcfit_vs_skips.py` | tile the DC-fit PDFs of several runs (e.g. different skip numbers) into one PDF per CCD |
-| `utils/skip_noise_L1.py` | decode a level-1 image (every skip kept, `*.RJ45ADCDATA<ch>`) and plot noise vs number of skips, the noise spectrum over skips and the start-of-pixel transient; writes `<name>_noise_vs_skips.png/.csv` and `<name>_avg.fits` to `-o` (default: current folder); `--composites N` also writes N images, each the average of a consecutive 1/N of the skips, to `<name>_composites_N<N>/`. Needs `src/` next to `utils/` (gain finder) |
+| `utils/skip_noise_L1.py` | decode a level-1 image (every skip kept, `*.RJ45ADCDATA<ch>`) and plot noise vs number of skips, the noise spectrum over skips and the start-of-pixel transient; writes `<name>_noise_vs_skips.png/.csv` and `<name>_avg.fits` to `-o` (`<name>` = file name + `_ch<k>`) (default: current folder); `--composites N` also writes N images, each the average of a consecutive 1/N of the skips, to `<name>_composites_N<N>/`. Needs `src/` next to `utils/` (gain finder) |
 
 Each script prints its options with `-h`. The `src/` modules can also be run on their own,
 e.g. `python src/autoconfig_panaSKImg.py image.fz -o auto.json`.
@@ -136,13 +142,48 @@ e.g. `python src/autoconfig_panaSKImg.py image.fz -o auto.json`.
 Note: the wider DC-fit plot (fit 2 peaks, show 5) uses an `x_max_plot` option that is only in
 patched pysimdamicm versions; without it the scripts simply leave it out.
 
+## A_GMX clustering (optional, `--clusterer` / `run_AGMX`)
+
+`run_WADERs` clusters with panaSKImg's ClusterFinder (WADERs: pixel > 10 sigma, seed > 30 sigma), or with thresholds in
+electrons (`--autoconfig-args "--cluster-threshold-e auto"`). The clustering study of 2026-10-23..25 produced A_GMX
+(adaptive switch + Gaussian-mixture deblending, `clustering_tests/`), which runs on the calibrated images panaSKImg
+writes (`*_EXT<n>_waders.fits.bz2`) and writes **cluster files in the WADERs format** (`src/agmx_root.py`: the same
+trees and branches, computed by pysimdamicm's own `Cluster` class, plus `agmx_*` branches):
+
+```bash
+run_WADERs images.txt --gain-correction --clusterer agmx --composite   # A_GMX files -> root_agmx*/, composite on them
+run_WADERs images.txt --gain-correction --clusterer both --composite   # also composite_agmx/ next to composite/
+run_AGMX WADERs_analysis_<run>                                        # for a run that is already finished
+```
+
+| folder | clusters of |
+|---|---|
+| `root_agmx/` | the images as calibrated by panaSKImg |
+| `root_agmx_gaincorr/` (`_per_image/`) | the images converted with the g(n) curves of `gain_vs_charge/` (same `--gain-anchor`) |
+
+Extra branches: `agmx_cls` (1 x-ray, 2 x-ray diffuse, 3 low-E, 4 muon, 5 worm, 6 alpha, 7 big deposit, 8/9 row/column
+artefact, 10 extended), `agmx_blend`, `agmx_ped`, `agmx_peakfrac`, `agmx_chi2`, `agmx_sig`, `agmx_regime`; the file also
+has a `TNamed agmx_config`. Recommended selection for X-ray lines: `agmx_blend < 0.02 && agmx_ped < 10` plus the usual
+sigma_xy cut; `-999` in a flag branch means "not computed" (e.g. `agmx_chi2` of clusters that were not fitted by the
+mixture). The default (`--clusterer waders`) leaves the pipeline unchanged (checked with `utils/compare_runs.py`).
+Format check against real panaSKImg files: `clustering_tests/agmx_root_check.py` (identical except numerically
+degenerate cases: fits of 1-3 bin profiles, PCA eigenvector signs, same-row/column closest-cluster ties).
+
+Against WADERs (878 image-CCDs): unbiased Fe-55 energies at every cluster width, 2.7x better energy resolution, close
+X-ray pairs resolved, few-electron events found without fakes; on a crowded CCD more significant lines with the right
+energy scale. Method, equations, figures and all results: `docs/aGMX/aGMX_clustering.tex` (Overleaf:
+`docs/aGMX/aGMX_clustering_overleaf.zip`) and `docs/clustering_methods_report.pdf`; code map: `clustering_tests/README.md`.
+From Python: `adaptive.adaptive_cluster(Q_electrons, valid_mask, engine="gmx")` (a list of dicts: `E` [keV], `y`, `x`,
+`sxy`, `cls`, `blend`, `ped`, `peakfrac`, `chi2`, `sig`, `edge`).
+
 ## Tests
 
 ```bash
 python -m unittest discover -s tests -v      # from the comm_scripts folder, with the panaSKImg python
 ```
 
-Unit tests cover the input handling of `run_WADERs`, the g(n) models of `gain_vs_charge.py` and the Am-241 fit model;
+Unit tests cover the input handling of `run_WADERs`, the g(n) models of `gain_vs_charge.py`, the Am-241 fit model, the
+automatic cluster thresholds, the clustering methods of `clustering_tests/` and the A_GMX file writer (simulated images);
 they need no data and run in seconds. For changes to the pipeline itself, compare the outputs of `run_WADERs` on the
 same images before and after with `utils/compare_runs.py OLD NEW` (the pipeline is deterministic; see
 docs/PIPELINE_GUIDE.md, section 6).

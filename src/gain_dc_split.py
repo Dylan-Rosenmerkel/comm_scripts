@@ -70,9 +70,7 @@ AUTOCONFIG = os.path.join(SCRIPT_DIR, "autoconfig_panaSKImg.py")
 # =============================================================================
 # helpers: autoconfig and panaSKImg runs
 # =============================================================================
-def image_stem(path):
-    """Image name without folder and extensions ("a/b/img_6.fz" -> "img_6"); prefixes every output."""
-    return os.path.basename(path).split(".")[0]
+from naming import image_stem  # noqa: E402,F401  (image name -> output prefix; used here and by run_WADERs)
 
 
 def autoconfig(infile, out, extra, log):

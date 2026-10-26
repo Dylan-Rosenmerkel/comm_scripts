@@ -20,7 +20,7 @@ import csv
 import os
 import numpy as np
 from scipy import optimize
-from amfit import Model, NP, EXTRA
+from amfit import Model
 from common import add_path_args, load_clusters, paths
 
 FW = 2 * np.sqrt(2 * np.log(2))          # FWHM / sigma for a Gaussian

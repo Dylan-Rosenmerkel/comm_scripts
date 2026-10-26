@@ -138,17 +138,21 @@ def main():
     (one row per image and extension, the columns of quality())."""
     ap = argparse.ArgumentParser(description="Report chi2/ndf, scaled errors and dark-current bias "
                                              "of panaSKImg dark-current fits.")
-    ap.add_argument("folder", help="panaSKImg output folder (with *_FitDarkCurrentProcess_sideEXTn.root)")
+    ap.add_argument("folder", help="panaSKImg output folder (with *_FitDarkCurrentProcess_sideEXTn.root), or a "
+                                   "run_WADERs output folder (fits in root/dc_fits/)")
     ap.add_argument("--ref", nargs="*", default=None,
                     help="folder(s) with autoconfig *_measured.json (for the bias); default: the "
-                         "output folder and its json/ subfolder")
+                         "output folder, its json/ subfolder and (run_WADERs) json/<image>/")
     ap.add_argument("--csv", default=None, help="CSV file to write (default: <folder>/fit_quality.csv)")
     args = ap.parse_args()
 
-    refdirs = args.ref if args.ref is not None else [args.folder, os.path.join(args.folder, "json")]
+    refdirs = args.ref if args.ref is not None else (
+        [args.folder, os.path.join(args.folder, "json")] + sorted(glob.glob(os.path.join(args.folder, "json", "*", ""))))
     refs = load_refs(refdirs)
     rows = []
-    for path in sorted(glob.glob(os.path.join(args.folder, "*_FitDarkCurrentProcess_side*.root"))):
+    fitdir = os.path.join(args.folder, "root", "dc_fits")          # run_WADERs layout
+    fitdir = fitdir if os.path.isdir(fitdir) else args.folder
+    for path in sorted(glob.glob(os.path.join(fitdir, "*_FitDarkCurrentProcess_side*.root"))):
         m = SIDE_RE.match(os.path.basename(path))
         if not m:
             continue

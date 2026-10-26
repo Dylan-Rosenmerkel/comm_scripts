@@ -1,0 +1,705 @@
+\documentclass[10.5pt,a4paper]{article}
+% comm_scripts user guide: what every part of the repository does and how to run it.
+% Build: tectonic comm_scripts_usage.tex   (or pdflatex twice).  Overleaf: upload comm_scripts_usage_overleaf.zip
+\usepackage[margin=2.2cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{tcolorbox}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+% url before hyperref: keep spaces in code tokens and allow line breaks at spaces, / - _ .
+\usepackage[obeyspaces,spaces]{url}
+\usepackage[hidelinks]{hyperref}
+\makeatletter\g@addto@macro{\UrlBreaks}{\do\_\do\.\do\=}\makeatother
+\urlstyle{tt}
+
+\definecolor{accent}{HTML}{1F4E79}
+\definecolor{codebg}{HTML}{F4F6F8}
+\definecolor{notebg}{HTML}{EAF2FB}
+\definecolor{warnbg}{HTML}{FDF1E3}
+\hypersetup{colorlinks=true, linkcolor=accent, urlcolor=accent, citecolor=accent}
+\titleformat{\section}{\Large\bfseries\color{accent}}{\thesection}{0.8em}{}
+\titleformat{\subsection}{\large\bfseries\color{accent}}{\thesubsection}{0.8em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries}{\thesubsubsection}{0.8em}{}
+\setlength{\parindent}{0pt}
+\setlength{\emergencystretch}{2.5em}
+\setlength{\parskip}{0.55em}
+\setlist{itemsep=0.15em, topsep=0.3em}
+\renewcommand{\arraystretch}{1.18}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{accent} comm\_scripts user guide}
+\fancyhead[R]{\small\nouppercase{\leftmark}}
+\fancyfoot[C]{\small\thepage}
+
+\lstset{basicstyle=\ttfamily\small, backgroundcolor=\color{codebg}, frame=single, rulecolor=\color{codebg},
+        breaklines=true, columns=fullflexible, keepspaces=true, xleftmargin=4pt, xrightmargin=4pt,
+        aboveskip=0.6em, belowskip=0.6em, showstringspaces=false}
+\lstdefinestyle{py}{language=Python, keywordstyle=\color{accent}\bfseries, commentstyle=\color{gray}}
+
+% code tokens: \cc{...} is \path from the url package (_ -- ~ $ verbatim, spaces kept); not in moving arguments
+\newcommand{\cc}{\path}
+\newtcolorbox{note}[1][Note]{colback=notebg, colframe=accent, boxrule=0.5pt, arc=2pt, left=6pt, right=6pt,
+                              top=4pt, bottom=4pt, fonttitle=\bfseries\small, title=#1}
+\newtcolorbox{warn}[1][Caution]{colback=warnbg, colframe=orange!70!black, boxrule=0.5pt, arc=2pt, left=6pt,
+                              right=6pt, top=4pt, bottom=4pt, fonttitle=\bfseries\small, title=#1}
+\setlength{\LTcapwidth}{\textwidth}
+\newcolumntype{L}{>{\raggedright\arraybackslash}X}
+\newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+\title{\color{accent}\textbf{comm\_scripts: user guide}\\[0.4em]
+       \large What the code does and how to run each part}
+\author{skipper-CCD module testing}
+\date{version of 2026-10-25 (branch \texttt{clustering-methods-2026-10-25})}
+
+\begin{document}
+\maketitle
+\thispagestyle{empty}
+
+\begin{abstract}
+\noindent \texttt{comm\_scripts} takes raw skipper-CCD images to calibrated results with panaSKImg (WADERs). It
+writes the panaSKImg configuration itself and measures gain, noise and dark current per CCD with errors. It can
+correct the gain's dependence on pixel charge, run the Fe-55 composite analysis, and cluster with A\_GMX, a
+clusterer that writes files in the WADERs format. The repository also contains standalone utilities, the research
+code of the clustering study, and the scripts behind the analysis notes. This guide lists every part, shows how to
+run it, and says which inputs it needs and which outputs it writes. Section~\ref{sec:recipes} covers the common
+tasks in a few lines each. The physics behind the pipeline steps is in \cc{docs/PIPELINE_GUIDE.md}, and the A\_GMX
+algorithm is described in \cc{docs/aGMX/aGMX_clustering.tex}.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+%==================================================================================================================
+\section{Overview}
+%==================================================================================================================
+\subsection{What is in the repository}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}P{3.3cm}P{3.6cm}L@{}}
+\toprule
+\textbf{folder} & \textbf{kind} & \textbf{contents} \\
+\midrule
+\cc{bin/} & commands & \cc{run_WADERs} (alias \cc{runWADERs}): the full pipeline; \cc{run_AGMX}: A\_GMX
+  clusters for a finished run \\
+\cc{src/} & pipeline modules & \cc{autoconfig_panaSKImg.py}, \cc{gain_dc_split.py}, \cc{fit_quality.py},
+  \cc{gain_vs_charge.py}, \cc{agmx_root.py} (all also runnable on their own) \\
+\cc{utils/} & standalone helpers & \cc{compare_runs.py}, \cc{split_clustersRec_by_ext.py},
+  \cc{compare_dcfit_vs_skips.py}, \cc{skip_noise_L1.py} \\
+\cc{clustering_tests/} & research code & the clustering methods (A\_GMX, GMX, MHC, MFD+G, hybrid, \dots) and
+  the scripts that tested them \\
+\cc{tests/} & unit tests & simulated inputs, no data needed; run in under a minute \\
+\cc{docs/} & guides, notes, reports & \cc{README.md} (index), this guide, \cc{PIPELINE_GUIDE.md}, the A\_GMX
+  document, the Am-241 note, the gain-correction note and reports, \cc{notes/} (hand-over notes, open items) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Keep \cc{bin/} and \cc{src/} next to each other: \cc{run_WADERs} and \cc{run_AGMX} load their modules from
+\cc{../src}. \cc{src/agmx_root.py} also imports the clustering code from \cc{../clustering_tests}.
+
+\subsection{Requirements and set-up}
+\begin{itemize}
+  \item \textbf{Python environment}: numpy, scipy, astropy, matplotlib, PyROOT and pysimdamicm (panaSKImg). On
+        this machine that is the conda environment \cc{damic}.
+  \item \textbf{Automatic environment}: \cc{run_WADERs} and \cc{run_AGMX} can be started from any python. If
+        that python lacks ROOT or pysimdamicm, they look for a conda/mamba environment that has panaSKImg and
+        re-run themselves there with \cc{conda run}. Nothing is left activated afterwards.
+  \item \textbf{Choosing the environment}: \cc{--env NAME} or \cc{$WADERS_ENV}. To choose the panaSKImg script,
+        use \cc{--panaskimg PATH} or \cc{$PANASKIMG}.
+  \item \textbf{Optional}: ROOT's \cc{root} executable, for \cc{--composite} (it runs the
+        \cc{MakeComposite_Fe55_Clusters_Extensions.cc} macro). \cc{tectonic} or pdflatex, to build the
+        LaTeX documents.
+  \item \textbf{Calling by name}: to run the commands from anywhere, add
+        \cc{export PATH="/path/to/comm_scripts/bin:$PATH"} to \cc{~/.zshrc}.
+\end{itemize}
+
+\begin{note}[Environment variables]
+\begin{tabular}{@{}ll@{}}
+\cc{WADERS_ENV} & conda environment to use (\cc{run_WADERs}, \cc{run_AGMX}) \\
+\cc{PANASKIMG} & panaSKImg script \\
+\cc{MAKECOMPOSITE_MACRO} & \cc{MakeComposite_Fe55_Clusters_Extensions.cc} used by \cc{--composite} \\
+\cc{AM241_RUN_DIR} & data folder of the Am-241 note scripts (Section~\ref{sec:notes}) \\
+\end{tabular}
+\end{note}
+
+\subsection{Conventions used throughout}
+\begin{itemize}
+  \item \textbf{Inputs}: a \emph{raw image} is a skip-averaged FITS image (\cc{.fz}, \cc{.fits}, \cc{.fits.bz2}),
+        with one HDU per amplifier, i.e.\ per CCD (\cc{EXT1}--\cc{EXT4}). A \emph{list} is a \cc{.txt} file with
+        one image path per line. Relative paths are relative to the \cc{.txt}; empty lines and \texttt{\#} lines are
+        ignored.
+  \item \textbf{Output folder}: every run writes \cc{WADERs_analysis_<run name>/}. The run name is the image name,
+        or the \cc{.txt} name for a list.
+  \item \textbf{Cluster files}: \cc{panaSKImg_clustersRec_<image>_ext<N>.root}, one per CCD, with trees
+        \cc{clustersRec} (one entry per image, one vector element per cluster), \cc{info} and
+        \cc{process_config}. Energies are in keV with 3.74\,eV per electron.
+  \item \textbf{Modules}: the ACM board id appears in the image name
+        (\cc{..._106_20260330_123052_21}: ACM 106). Images with the same ACM share the CCDs and are grouped,
+        e.g.\ for one gain curve per module.
+  \item \textbf{Fe-55}: results are quoted for front-side clusters ($\sigma_{xy}<1$\,px) unless stated otherwise.
+\end{itemize}
+
+%==================================================================================================================
+\section{Common tasks in a few lines}\label{sec:recipes}
+%==================================================================================================================
+\begin{longtable}{@{}P{5.4cm}P{10.6cm}@{}}
+\toprule
+\textbf{I want to \dots} & \textbf{run} \\
+\midrule
+\endhead
+analyse one image & \cc{run_WADERs image.fz} \\
+analyse a list, 8 at a time, elsewhere & \cc{run_WADERs images.txt -o ~/analysis -j 8} \\
+only gain, noise, dark current (fast) & \cc{run_WADERs images.txt --no-clusters} \\
+gain-corrected cluster energies & \cc{run_WADERs images.txt --gain-correction} \\
+compare per-image and per-module $g(n)$ & \cc{run_WADERs images.txt --gain-correction both} \\
+Fe-55 composite plots per module & \cc{run_WADERs images.txt --gain-correction --composite --module 109=DM02} \\
+cluster with A\_GMX in the pipeline & \cc{run_WADERs images.txt --gain-correction --clusterer agmx --composite} \\
+WADERs and A\_GMX side by side & \cc{run_WADERs images.txt --gain-correction --clusterer both --composite} \\
+A\_GMX for a run already done & \cc{run_AGMX WADERs_analysis_<run>} \\
+cluster thresholds in electrons & \cc{run_WADERs images.txt --autoconfig-args "--cluster-threshold-e auto"} \\
+check a code change changes nothing & run old and new code with \cc{-o old} / \cc{-o new}, then
+  \cc{python utils/compare_runs.py old new} \\
+one JSON for panaSKImg, by hand & \cc{python src/autoconfig_panaSKImg.py image.fz -o image.json} \\
+split an \cc{_ext1234.root} file per CCD & \cc{python utils/split_clustersRec_by_ext.py f_ext1234.root -o per_ext/} \\
+noise vs number of skips (level-1 data) & \cc{python utils/skip_noise_L1.py img_..._L1_....RJ45ADCDATA0 -o out/} \\
+run the unit tests & \cc{python -m unittest discover -s tests -v} (repository root, \cc{damic} python) \\
+\bottomrule
+\end{longtable}
+
+%==================================================================================================================
+\section{The pipeline: \texttt{run\_WADERs}}\label{sec:runwaders}
+%==================================================================================================================
+\begin{lstlisting}
+run_WADERs <image.fz | image.fits | image.fits.bz2 | list.txt> [-o PARENT] [-j N] [options]
+run_WADERs -h          # the options
+run_WADERs -h -v       # the full guide: output folders, what each step does, all autoconfig settings
+\end{lstlisting}
+
+\subsection{What it does, step by step}
+Each step is one function in \cc{bin/run_WADERs}; \cc{main()} calls them in this order.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}P{4.3cm}L@{}}
+\toprule
+\textbf{step} & \textbf{what happens} \\
+\midrule
+\cc{check_request} & inputs exist, the output folder is free (else \cc{--overwrite}), the options are
+  compatible \\
+\cc{ensure_environment} & re-runs inside the conda environment with panaSKImg if needed \\
+\cc{step1_configure} & per CCD, \cc{gain_dc_split.py --per-ext} writes two configurations, both measured from the
+  raw pixels: a \emph{dark-current} JSON, which fits only the Poisson-like 0\,e$^-$/1\,e$^-$ peaks, and a
+  \emph{gain} JSON, which fits all peaks. Both are fitted with panaSKImg. The final JSON holds the all-peaks gain
+  if that is more precise (errors scaled by $\sqrt{\chi^2/\mathrm{ndf}}$) and agrees within $3\sigma$. Flooded
+  or unresolved CCDs are flagged. \\
+\cc{step2_run_panaskimg} & panaSKImg once per CCD (\cc{--ext N}), in parallel (\cc{-j}) \\
+\cc{step3_collect_root_files} & cluster files go to \cc{root/}, dark-current fits to \cc{root/dc_fits/}, and the
+  file list to \cc{root/root_files.txt} \\
+\cc{step3b_gain_correction} & with \cc{--gain-correction}: measure $g(n)$ and write corrected cluster files
+  (Section~\ref{sec:gain}) \\
+\cc{step3d_agmx} & with \cc{--clusterer agmx|both}: A\_GMX cluster files in the same format
+  (Section~\ref{sec:agmx}) \\
+\cc{step3c_composite} & with \cc{--composite}: the MakeComposite macro per image type and module
+  (Section~\ref{sec:composite}) \\
+\cc{step4_summary} & \cc{fit_quality.csv} and \cc{summary.txt}: gain, noise and dark current per CCD with errors,
+  which gain was used and why, and the results of the optional steps \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Options}
+\begin{longtable}{@{}P{5.2cm}P{10.8cm}@{}}
+\toprule
+\textbf{option} & \textbf{meaning} \\
+\midrule
+\endhead
+\multicolumn{2}{@{}l}{\textit{general}} \\
+\cc{-o DIR}, \cc{--parent DIR} & folder in which \cc{WADERs_analysis_<run>} is created (default: current folder) \\
+\cc{-j N}, \cc{--jobs N} & panaSKImg runs at the same time (default 4, or fewer CPUs) \\
+\cc{--overwrite} & replace an existing output folder \\
+\cc{--all-ext} & also run CCDs flagged as flooded/unresolved (slow; fits not reliable) \\
+\cc{--no-clusters} & noise, gain, dark current only: no ClusterFinder (much faster) \\
+\cc{--tune} & per CCD, choose the pedestal method and fit window with panaSKImg by the smallest total fit error
+  ($\sim$1 min more per image) \\
+\cc{--keep-work} & keep the intermediate fit runs in \cc{work/} \\
+\cc{--autoconfig-args "..."} & settings for the JSON generation, in one quoted string (Table~\ref{tab:autoconfig}) \\
+\cc{--env NAME}, \cc{--panaskimg PATH} & environment and panaSKImg script \\
+\multicolumn{2}{@{}l}{\textit{gain versus charge} (Section~\ref{sec:gain})} \\
+\cc{--gain-correction [MODE]} & \cc{pooled} (default: one curve per module), \cc{per-image}, \cc{both} \\
+\cc{--gain-model} & \cc{interpolated} (default), \cc{broken}, \cc{linear} \\
+\cc{--gain-combine} & \cc{coherent} (default), \cc{incoherent} \\
+\cc{--gain-anchor} & \cc{comb} (default), \cc{fit} \\
+\multicolumn{2}{@{}l}{\textit{clustering} (Section~\ref{sec:agmx})} \\
+\cc{--clusterer} & \cc{waders} (default: panaSKImg's ClusterFinder only), \cc{agmx} (also A\_GMX files, used
+  by \cc{--composite}), \cc{both} (\cc{--composite} on both) \\
+\multicolumn{2}{@{}l}{\textit{composite} (Section~\ref{sec:composite})} \\
+\cc{--composite} & run MakeComposite on the cluster files \\
+\cc{--composite-macro PATH} & the macro (default \cc{$MAKECOMPOSITE_MACRO}, else the one in
+  \cc{~/Documents/LSM_Module_Testing_Analysis/src/}) \\
+\cc{--module ACM=NAME} & module name of an ACM, e.g.\ \cc{--module 109=DM02} (repeatable) \\
+\cc{--image-number N} & image type for the macro (default: \cc{Image_<N>} in the name) \\
+\bottomrule
+\end{longtable}
+
+\subsection{Output folder}
+\begin{longtable}{@{}P{5.4cm}P{10.6cm}@{}}
+\toprule
+\textbf{path (in the run folder)} & \textbf{contents} \\
+\midrule
+\endhead
+\cc{*.pdf}, \cc{*_EXT<n>_waders.fits.bz2} & panaSKImg plots; the calibrated image of each CCD (electrons) \\
+\cc{summary.txt}, \cc{fit_quality.csv} & gain, noise, dark current per CCD with scaled errors and the
+  dark-current bias \\
+\cc{root/} & panaSKImg cluster files, one per CCD, and \cc{root_files.txt} \\
+\cc{root/dc_fits/} & dark-current fits (histogram + function) as ROOT \\
+\cc{json/<image>/final/} & the JSONs that were run (one per CCD) \\
+\cc{json/<image>/gain/}, \cc{dc/} & intermediate JSONs; \cc{<image>_gain_dc_summary.txt} compares the fits \\
+\cc{logs/} & panaSKImg, autoconfig and MakeComposite logs \\
+\cc{gain_vs_charge/} & $g(n)$ curves (JSON) and their plots \\
+\cc{root_gaincorr/}, \cc{root_gaincorr_per_image/} & gain-corrected cluster files \\
+\cc{root_agmx/}, \cc{root_agmx_gaincorr*/} & A\_GMX cluster files \\
+\cc{composite*/} & MakeComposite plots and the file lists given to it \\
+\bottomrule
+\end{longtable}
+
+\begin{note}[Reading \cc{summary.txt}]
+For each CCD the summary gives the $\chi^2/$ndf of the dark-current fit, and the gain, noise and dark current with
+errors scaled by $\sqrt{\chi^2/\mathrm{ndf}}$. \texttt{*} marks a gain held at the all-peaks fit. The \emph{DC
+bias} is the fitted dark current minus the one from the 0\,e$^-$/1\,e$^-$ pixel counts; it should be close to 0.
+Below the table come the reason for each gain choice, the skipped CCDs, and the results of the optional steps.
+\end{note}
+
+%==================================================================================================================
+\section{Gain versus charge: \texttt{-{}-gain-correction} and \texttt{gain\_vs\_charge.py}}\label{sec:gain}
+%==================================================================================================================
+The gain falls slowly with the charge in a pixel ($\sim$3\,\% at 1000\,e$^-$). Converting every pixel with the
+low-charge gain therefore puts keV clusters low. \cc{gain_vs_charge.py} measures $g(n)$ from the spacing of the
+electron comb at high charge, in the images themselves, using clean rows. It then converts each pixel's ADU to
+electrons with that curve.
+
+\subsection{Inside \texttt{run\_WADERs}}
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}P{4.6cm}L@{}}
+\toprule
+\textbf{option} & \textbf{effect} \\
+\midrule
+\cc{--gain-correction} / \cc{pooled} & one curve per module from all its images $\to$ \cc{root_gaincorr/} \\
+\cc{--gain-correction per-image} & each image's own curve; a CCD whose comb is unusable gets the module curve
+  (noted in the summary) $\to$ \cc{root_gaincorr_per_image/} \\
+\cc{--gain-correction both} & both, plus \cc{gain_vs_charge/per_image_vs_pooled.csv} (curves, energies,
+  front-side K$\alpha$) \\
+\cc{--gain-model} & form of $g(n)$: monotone interpolation through the measured points (default), two lines with
+  a fitted knot, or one line \\
+\cc{--gain-combine} & several images of a module: \emph{coherent} (default; each image converted with its own
+  curve, then the pixels pooled, so the result is independent of the image order) or \emph{incoherent} (comb
+  powers added) \\
+\cc{--gain-anchor} & \emph{comb} (default; the comb's $g(n)$ throughout, which removes the image-to-image
+  scatter of the fitted gains) or \emph{fit} (each image's fitted gain kept at low charge) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+The plots in \cc{gain_vs_charge/} are \cc{<name>_gain_vs_charge.png} (local gain against charge) and
+\cc{<name>_nonlinearity.png} ($A(n)/g(0)-n$ with its quadratic fit). CCDs with an untrustworthy curve (measured
+to $<400$\,e$^-$, or rising) are copied unchanged.
+
+\subsection{On its own}
+\begin{lstlisting}
+python src/gain_vs_charge.py measure img1.fz img2.fz ... -o OUTDIR [--name NAME] [--ext 1 3 4]
+        [--model interpolated|broken|linear] [--combine coherent|incoherent] [--extrap-factor 3]
+python src/gain_vs_charge.py apply OUTDIR/NAME_gain_vs_charge.json root/panaSKImg_clustersRec_*_ext*.root
+        -o root_gaincorr [--anchor comb|fit]
+\end{lstlisting}
+\cc{measure} writes \cc{<name>_gain_vs_charge.json} (one model per extension) and the plots. \cc{apply}
+rewrites \cc{pixels_E} and \cc{Energy} of each cluster file and copies \cc{info} and \cc{process_config}.
+Method note: \cc{docs/gain_correction_method/gain_correction_method.tex}. Effect on the data:
+\cc{docs/gain_correction_report.pdf} and \cc{docs/gain_correction_Am241.pdf}.
+
+%==================================================================================================================
+\section{Fe-55 composite analysis: \texttt{-{}-composite}}\label{sec:composite}
+%==================================================================================================================
+After the cluster files are written, \cc{MakeComposite_Fe55_Clusters_Extensions.cc} runs with ROOT, once per
+image type and module. It produces the front/back composite clusters, the Fe-55 K$\alpha$/K$\beta$ fits and the
+CTI maps.
+\begin{itemize}
+  \item \textbf{Input files}: \cc{root_gaincorr/} if \cc{--gain-correction} is on, else \cc{root/}. With
+        \cc{--gain-correction both}, \cc{root_gaincorr_per_image/} is also used, giving
+        \cc{composite_per_image/}. With \cc{--clusterer agmx}, the A\_GMX files are used instead; with
+        \cc{both}, they are used in addition and the results go to \cc{composite_agmx/}.
+  \item \textbf{Image type} $N$ (the CCD geometry in the macro: 4, 5, 6, 7, 8, 11): from \cc{Image_<N>} in the
+        name, or \cc{--image-number}.
+  \item \textbf{Module name}: from \cc{--module ACM=NAME}, else from a data folder named
+        \cc{..._DMa_DMb_DMc_...} (ACM 110 $\to$ DMa, 109 $\to$ DMb, 106 $\to$ DMc), else \cc{ACM<id>}.
+  \item \textbf{Output}: \cc{composite/Fe_55_Analysis_Plots/<module>/Image_<N>_<module>_list/} (\cc{ext1..4/}
+        per CCD, \cc{compare/} 2$\times$2 overviews), \cc{composite/lists/}, and
+        \cc{logs/composite_Image_<N>_<module>.log}.
+\end{itemize}
+
+%==================================================================================================================
+\section{A\_GMX clustering}\label{sec:agmx}
+%==================================================================================================================
+A\_GMX (an adaptive regime switch plus Gaussian-mixture deblending) is the recommended alternative to panaSKImg's
+ClusterFinder; its algorithm is described in \cc{docs/aGMX/aGMX_clustering.tex}. On 878 image-CCDs it gave:
+\begin{itemize}
+  \item unbiased Fe-55 energies at every cluster width;
+  \item about 2.7$\times$ better energy resolution;
+  \item resolved close X-ray pairs;
+  \item few-electron events without fakes;
+  \item a correct energy scale on crowded CCDs.
+\end{itemize}
+It runs on the calibrated images that panaSKImg writes (\cc{*_EXT<n>_waders.fits.bz2}) and produces cluster files
+\textbf{in the WADERs format}, so every tool that reads WADERs cluster files reads them as well.
+
+\subsection{Three ways to run it}
+\begin{lstlisting}
+# 1. in the pipeline (after panaSKImg and the gain correction)
+run_WADERs images.txt --gain-correction --clusterer agmx --composite     # composite on A_GMX
+run_WADERs images.txt --gain-correction --clusterer both --composite     # composite/ and composite_agmx/
+
+# 2. on a finished run_WADERs folder
+run_AGMX WADERs_analysis_<run> [-j 4] [--no-gaincorr] [--per-image] [--anchor comb|fit] [-o DIR]
+
+# 3. the module directly
+python src/agmx_root.py WADERs_analysis_<run> [-o OUTDIR] [--curve gain_vs_charge/ | curve.json] [-j N]
+\end{lstlisting}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}P{4.6cm}L@{}}
+\toprule
+\textbf{output folder} & \textbf{clusters of} \\
+\midrule
+\cc{root_agmx/} & the images as calibrated by panaSKImg (fitted gain) \\
+\cc{root_agmx_gaincorr/} & the images converted with the module's $g(n)$ curve from \cc{gain_vs_charge/} (same
+  \cc{--gain-anchor} as \cc{root_gaincorr/}); written when the run has \cc{gain_vs_charge/} \\
+\cc{root_agmx_gaincorr_per_image/} & the same with each image's own curve (\cc{run_AGMX --per-image}, or
+  \cc{--gain-correction per-image/both}) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+Each folder has \cc{root_files.txt}. Speed: about 30--60\,s per CCD (a crowded CCD takes longer). panaSKImg's
+ClusterFinder still runs, because its file for each CCD supplies the \cc{info} and \cc{process_config} trees and
+the seed settings. \cc{root/} is never changed.
+
+\subsection{File format}
+The A\_GMX clusters are turned into pysimdamicm \cc{Cluster} objects, the class the ClusterFinder itself uses.
+Every branch is therefore computed by panaSKImg's own code, and the file is written with pysimdamicm's
+\cc{OutputDataManager}:
+\begin{itemize}
+  \item \textbf{Same as WADERs}: trees \cc{clustersRec}, \cc{info} and \cc{process_config} (the last two copied
+        from the CCD's panaSKImg file), and all WADERs branches: \cc{Energy}, \cc{PosX/Y}, \cc{wSTD_*}, \cc{fSTD_*},
+        \cc{pixels_x/y/E}, \cc{Npix}, \cc{Qmax}, \cc{has_seed}, the PCA and track variables, \cc{closest_cls_*},
+        \cc{Energy_PS/AVG}, \cc{RUNID}, \cc{ccd}, \cc{nfile} and \cc{readout_*}.
+  \item \textbf{Same conventions}: \cc{pixels_x/y} are 1-based; \cc{pixels_E} is in keV with $e_{2\mathrm{eV}}$
+        from \cc{process_config}, and \cc{Energy} $=\sum$\cc{pixels_E}. A pixel shared by two clusters is split
+        between them, so the sum is the A\_GMX energy.
+  \item \textbf{Extra branches} (one value per cluster):
+\end{itemize}
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}P{3.2cm}L@{}}
+\toprule
+\cc{agmx_cls} & class: 1 x-ray, 2 x-ray diffuse, 3 low-E, 4 muon, 5 worm, 6 alpha, 7 big deposit, 8/9 row/column
+  artefact, 10 extended \\
+\cc{agmx_blend} & fraction of the energy shared with neighbours (deblending) \\
+\cc{agmx_ped} & local pedestal: 25th percentile of the charge 5--8\,px around the cluster [e$^-$/pix] \\
+\cc{agmx_peakfrac} & largest Gaussian component / cluster \\
+\cc{agmx_chi2} & $\chi^2$ per pixel of the cluster's own model \\
+\cc{agmx_sig} & significance of the cluster \\
+\cc{agmx_regime} & 0 sparse, 1 crowded, 2 unmodelled (hysteresis) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+A flag value of $-999$ means ``not computed'': \cc{agmx_chi2} of clusters the mixture did not fit (few-electron
+finder, hysteresis), or \cc{agmx_ped} with fewer than 15 active pixels in the ring (next to the mask). The file also
+contains a \cc{TNamed agmx_config} with the version, the parameters and the codes, as JSON.
+
+\begin{note}[Recommended selection for X-ray lines]
+\cc{agmx_blend < 0.02} and \cc{agmx_ped < 10}, plus the analysis' usual $\sigma_{xy}$ cut (e.g.\ $<0.7$ for the
+Am-241 lines, $<1$ for front-side Fe-55). The \cc{ped} cut removes clusters on a charge sheet. This is what made
+the high-side tail of the 59.5\,keV line on the crowded CCD (docs/aGMX, section ``Contamination'').
+\end{note}
+
+\begin{note}[Checked against WADERs]
+\cc{clustering_tests/agmx_root_check.py PANASKIMG_ROOT WADERS_FITS EXT} feeds the clusters of a real panaSKImg
+file through the writer and compares every branch. On EXT1, EXT3 and EXT4 of an Am-241 image (1652, 7686 and
+5452 clusters), every branch is identical except in numerically degenerate cases, where panaSKImg's own result
+depends on the last bits of its inputs:
+\begin{itemize}
+  \item \cc{fSTD} of profiles 1--3 bins wide;
+  \item the sign of PCA eigenvectors ($\theta$ versus $\theta\pm\pi$);
+  \item 1--2 pixel PCA;
+  \item \cc{closest_cls_*} when the nearest cluster lies in the same row or column. panaSKImg's ``exclude
+        itself'' test is \cc{PosX != ... and PosY != ...}, and the writer uses the same rule.
+\end{itemize}
+\end{note}
+
+\subsection{From Python}
+\begin{lstlisting}[style=py]
+import sys; sys.path.insert(0, "comm_scripts/clustering_tests")
+import adaptive as AD
+clusters = AD.adaptive_cluster(Q, valid, engine="gmx")     # Q: image in electrons, valid: bool mask
+good = [c for c in clusters if c["blend"] < 0.02 and c.get("ped", 0) < 10 and not c.get("edge")]
+# each cluster: E [keV], y, x, sxy [px], cls, blend, ped, peakfrac, chi2, sig, edge, regime
+# return_pixels=True also gives c["_pix"] = (rows, cols, electrons), summing exactly to E
+\end{lstlisting}
+\cc{src/agmx_root.py} exposes the steps separately: \cc{run(run_dir, outdir, curve, anchor, jobs)},
+\cc{process(...)} for one CCD, \cc{build_clusters(...)}, \cc{write_root(...)} and \cc{read_reference(...)}.
+
+%==================================================================================================================
+\section{The pipeline modules on their own}\label{sec:modules}
+%==================================================================================================================
+\subsection{\texttt{autoconfig\_panaSKImg.py}: a panaSKImg JSON from a raw image}
+\begin{lstlisting}
+python src/autoconfig_panaSKImg.py image.fz -o image.json [options]
+python src/autoconfig_panaSKImg.py image.fz -o OUTDIR --per-ext      # one JSON per CCD + run_<image>.sh
+\end{lstlisting}
+It measures geometry, gain, noise, dark current, dead channels, bad columns and the pedestal method from the raw
+pixels. It changes only these settings in the reference JSON, which is built in (\cc{-r my.json} uses your own).
+The same options can be passed through \cc{run_WADERs --autoconfig-args "..."}.
+
+\begin{longtable}{@{}P{5.2cm}P{10.8cm}@{}}
+\caption{autoconfig options (also usable inside \texttt{-{}-autoconfig-args}).}\label{tab:autoconfig}\\
+\toprule
+\textbf{option} & \textbf{meaning (default)} \\
+\midrule
+\endhead
+\cc{--gain G} & gain prior [ADU/e$^-$] if peaks are not resolved; also per CCD \cc{EXT1=1.32,EXT2=1.30} \\
+\cc{--gain-min}, \cc{--gain-max} & gain search range (0.6, 3.0) \\
+\cc{--prior-tol} & allowed relative difference measured gain vs prior (0.25) \\
+\cc{--max-sig-over-gain} & noise/gain above which the peaks count as unresolved (0.3) \\
+\cc{--lam-max L} & rows with more dark current than $L$ e$^-$/pix are left out of the fit (1.0) \\
+\cc{--min-rows N} & minimum number of rows in the fit (25) \\
+\cc{--peaks auto|all|N} & peaks to fit: \cc{auto} = those that follow one Poisson distribution (default) \\
+\cc{--poisson-tol}, \cc{--max-peaks} & tolerance (0.25) and upper limit (10) of \cc{--peaks auto} \\
+\cc{--no-fallback} & no held-gain 0\,e$^-$/1\,e$^-$ fit for unresolved CCDs \\
+\cc{--ccd-cols N} & prescan+active columns (default from the header) \\
+\cc{--dead-frac F}, \cc{--keep-dead} & detection of channels without a CCD ($2\times10^{-4}$), or keep them \\
+\cc{--cluster-threshold-e P S | auto} & ClusterFinder thresholds in electrons (pixel $>P$, seed $>S$), or
+  \cc{auto} per CCD from its dark charge (smallest $k$ with $P(\mathrm{Poisson}(\lambda)\ge k)\le10\,\%$, pixel
+  $>k-0.5$, seed $>9.5$\,e$^-$). Default: the reference's 10$\sigma$ / 30$\sigma$ \\
+\cc{--cluster-all} & also cluster flooded/outlier CCDs \\
+\cc{--plot-peaks N} & DC-fit plot shown up to $N$ e$^-$ (5; needs patched pysimdamicm, see
+  \cc{docs/patches/}) \\
+\cc{--tune}, \cc{--tune-dir} & choose the pedestal method/window with panaSKImg; keep those runs \\
+\cc{--per-ext} & \cc{-o} is a folder: one JSON per CCD and a run script \\
+\cc{--panaskimg PATH} & panaSKImg used by \cc{--tune} and the run script \\
+\bottomrule
+\end{longtable}
+In \cc{--autoconfig-args}, do not pass \cc{--peaks}, \cc{--per-ext} or \cc{--tune}; \cc{run_WADERs} sets these
+itself.
+
+\subsection{\texttt{gain\_dc\_split.py}: gain from all peaks, dark current from two}
+\begin{lstlisting}
+python src/gain_dc_split.py image.fz -o OUTDIR [--per-ext] [--run-full OUT] [-j 4] [--tune]
+        [--autoconfig-args "..."] [--panaskimg PATH]
+\end{lstlisting}
+This is step 1 of \cc{run_WADERs}. It writes \cc{gain/}, \cc{dc/} and \cc{final/} JSONs and a summary comparing
+the fits; \cc{--run-full OUT} also runs the full panaSKImg sequence.
+
+\subsection{\texttt{fit\_quality.py}: how good are the dark-current fits}
+\begin{lstlisting}
+python src/fit_quality.py FOLDER [--ref FOLDER ...] [--csv out.csv]
+\end{lstlisting}
+FOLDER is a panaSKImg output folder or a \cc{run_WADERs} output folder (fits in \cc{root/dc_fits/}, references in
+\cc{json/<image>/}). It reports $\chi^2/$ndf, the scaled errors, and the dark-current bias against the
+0\,e$^-$/1\,e$^-$ counts of the autoconfig \cc{*_measured.json}.
+
+\subsection{\texttt{gain\_vs\_charge.py} and \texttt{agmx\_root.py}}
+See Sections~\ref{sec:gain} and~\ref{sec:agmx}.
+
+%==================================================================================================================
+\section{Utilities}\label{sec:utils}
+%==================================================================================================================
+\begin{longtable}{@{}P{4.6cm}P{11.4cm}@{}}
+\toprule
+\textbf{script} & \textbf{what it does and how to run it} \\
+\midrule
+\endhead
+\cc{compare_runs.py} & Are two \cc{run_WADERs} outputs identical? It compares \cc{summary.txt}, \cc{fit_quality.csv},
+  the final JSONs, the $g(n)$ curves, every cluster energy in \cc{root*/} and the composite tables; a file present
+  in only one run is a difference. PDFs and logs are not compared. Exit code 0 if identical. \newline \cc{python utils/compare_runs.py OLD NEW [-q]} \\
+\cc{split_clustersRec_by_ext.py} & Splits files made with \cc{--acm} (all CCDs stacked, \cc{_ext1234.root}) into
+  one file per CCD. \newline \cc{python utils/split_clustersRec_by_ext.py files... -o OUTDIR [--nrows 500] [--list L]} \\
+\cc{compare_dcfit_vs_skips.py} & Tiles the per-CCD plots of runs with different skip numbers
+  (\cc{analysis/<skips>/}) into one PDF per CCD. \newline
+  \cc{python utils/compare_dcfit_vs_skips.py analysis/ -o OUT [--ncols 4] [--plot FitDarkCurrentProcess_DCfit]} \\
+\cc{skip_noise_L1.py} & Decodes a level-1 image (every skip kept, \cc{*.RJ45ADCDATA<ch>}) and plots noise against
+  the number of skips, the noise spectrum and the start-of-pixel transient. \cc{--composites N} also writes $N$
+  partial averages. Outputs are named after the file plus \cc{_ch<k>}. It needs \cc{src/}. \newline
+  \cc{python utils/skip_noise_L1.py FILE -o OUT [--geometry RxCxS] [--skip-first 20] [--gain G] [--max-rows N]} \\
+\bottomrule
+\end{longtable}
+
+%==================================================================================================================
+\section{Research code: \texttt{clustering\_tests/}}\label{sec:clustering}
+%==================================================================================================================
+This folder holds every clustering method compared with WADERs in the study of 2026-10-23 to 2026-10-25, together
+with the scripts that tested them. Apart from A\_GMX, which the writer uses, none of it is part of the pipeline.
+\begin{itemize}
+  \item \textbf{Paths}: the scripts read data from absolute paths under \cc{~/Documents/}.
+  \item \textbf{Outputs}: written next to the scripts (git-ignored).
+  \item \textbf{Saved results}:
+        \cc{~/Documents/comm_scripts_data/session_2026-10-23_clustering/clustering_2026-10-25/}.
+  \item \textbf{Python}: the \cc{damic} environment.
+\end{itemize}
+
+\subsection{Methods}
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}P{3.3cm}P{2.4cm}L@{}}
+\toprule
+\textbf{module} & \textbf{method} & \textbf{entry point and idea} \\
+\midrule
+\cc{adaptive.py} & \textbf{A\_GMX} & \cc{adaptive_cluster(Q, valid, engine="gmx")}: regions the model cannot
+  describe go to hysteresis; everything else goes to GMX \\
+\cc{gmx.py} & GMX & \cc{general_cluster(Q, valid, bg)}: Gaussian-mixture EM deblending, ridge/shape merging,
+  island BIC, quality flags \\
+\cc{mhc.py} & MHC & specialised finders (X-ray, track, streak, low-E, \dots) with $\chi^2$/BIC arbitration and
+  classes \\
+\cc{methods2.py} & hybrid v1/v2 & MFD+G pieces merged by B-region and saddle tests (\cc{mfdg_hybrid}),
+  track-first \\
+\cc{agent_methods.py} & MFD+G & background map, Poisson tails, matched-filter detection + disk + growth \\
+\cc{cluster_methods.py} & WADERs-like, B & hysteresis (\cc{wader}), topological clustering in electrons
+  (\cc{topo}), injection (\cc{inject}) \\
+\cc{pws.py} & PWS & persistence-simplified watershed (a control; not recommended) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Test and validation scripts}
+\begin{longtable}{@{}P{6.3cm}P{9.7cm}@{}}
+\toprule
+\textbf{script(s)} & \textbf{test} \\
+\midrule
+\endhead
+\cc{wide_test.py}, \cc{wide_run.py adaptive|GMX|adaptive+GMX} (+ \cc{summ_wide.py}) &
+  every method on all 878 calibrated image-CCDs: injection, real K$\alpha$, 59.5\,keV \\
+\cc{wide_agmx_flags.py} (+ \cc{summ_wide_flags.py}) & Fe-55 K$\alpha$ with the quality-flag cuts; injection \\
+\cc{am241_lines_flags.py} (\cc{... fit}) & every Am-241 line, old vs new A\_GMX, with/without the flag cuts \\
+\cc{adaptive_validate.py} (+ \cc{run_*.sh}) & tracks, few-electron, Fe-55 and crowded-CCD validation \\
+\cc{compare.py}, \cc{mhc_fe55.py} (+ \cc{summ_fe55.py}) & Fe-55 injection at 4 widths, pairs, real K$\alpha$ \\
+\cc{am_test.py} & Am-241 lines, injected 17.75 / 59.5\,keV, splitting of big events \\
+\cc{tracks_test.py}, \cc{extscan.py}, \cc{mhc_tracks.py} & injected muons, worms, blobs, alphas, hot columns,
+  pairs \\
+\cc{lowE_test.py}, \cc{mhc_lowE.py} & few-electron events: efficiency, exact charge, fakes \\
+\cc{am241_29img_recluster.py}, \cc{am241_29img_fit.py}, \cc{adaptive_*_am241.py}, \cc{make_crowded_table.py} &
+  crowded Am-241 CCD: the constrained Lepy fit for each clustering; occupancy and threshold scans \\
+\cc{agmx_root_check.py} & the WADERs-format check of \cc{src/agmx_root.py} (Section~\ref{sec:agmx}) \\
+\bottomrule
+\end{longtable}
+
+\subsection{Documentation builders}
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}P{6.3cm}L@{}}
+\toprule
+\cc{make_agmx_figures.py} & \cc{docs/aGMX/figures/fig00-13}: every A\_GMX step on a real image \\
+\cc{make_agmx_perf.py} & \cc{fig20-26} and \cc{docs/aGMX/perf_tables.tex} \\
+\cc{make_agmx_contamination_figs.py} & \cc{fig30-34}: the 59.5\,keV tail and the quality flags \\
+\cc{make_overleaf_zip.py} & \cc{docs/aGMX/aGMX_clustering_overleaf.zip} \\
+\cc{make_clustering_report.py} (+ \cc{report_*.py}) & \cc{docs/clustering_methods_report.pdf} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+%==================================================================================================================
+\section{Analysis notes and reports}\label{sec:notes}
+%==================================================================================================================
+\subsection{Am-241 lines, 10--30 keV (\texttt{docs/am241\_note/})}
+This note covers the gain correction per gain period, the cluster-width cut $\sigma_{xy}<0.7$, the constrained fit
+of the Np L lines (Lepy et al.\ ratios, one energy scale $k$), and the two extra lines at 22.1 and 24.9\,keV. Its
+input is two \cc{run_WADERs} outputs of the same images (\cc{no_gaincorr/} and \cc{gaincorr/}). Defaults are
+\cc{--run-dir ~/Documents/JH1_Testing/AMTEst/runs_29img} (or \cc{$AM241_RUN_DIR}) and \cc{--run-name AMtest_29}.
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}cp{5.6cm}L@{}}
+\toprule
+\textbf{step} & \textbf{run} & \textbf{does} \\
+\midrule
+0 & \cc{run_WADERs list.txt -o no_gaincorr --composite} \newline \cc{run_WADERs list.txt -o gaincorr --composite --gain-correction} &
+  the pipeline ($\sim$35 min each for 29 images) \\
+1 & \cc{correct_gain_per_period.py --list list.txt --periods 21-40 41-50} & $g(n)$ per gain period \\
+2 & \cc{extract_clusters.py} & cluster files $\to$ one table per CCD \\
+3 & \cc{fit_all_peaks.py [--no-grid]} & all fits; the band-cut grid ($\sim$40 min) \\
+4 & \cc{peak_table.py} & mean, $\sigma$, FWHM and counts of every peak \\
+5 & \cc{identification_tests.py} & tests of the extra-line hypotheses \\
+6 & \cc{make_note_figures.py} & every figure and table of the note \\
+-- & \cc{gold_check.py}, \cc{make_report.py} & gold L lines; the companion report \\
+\bottomrule
+\end{tabularx}
+\end{center}
+The LaTeX source is \cc{note/main.tex}; the Overleaf upload is \cc{docs/AMtest_Am241_10-30keV_note_overleaf.zip}.
+
+\subsection{Gain correction}
+\begin{itemize}
+  \item \cc{docs/gain_correction_method/gain_correction_method.tex}: the method note. Its figures are made by
+        \cc{make_figures.py}, and \cc{am241_forms.py} compares the three model forms on Am-241.
+  \item \cc{docs/report_scripts/make_gain_correction_report.py} $\to$ \cc{docs/gain_correction_report.pdf}
+        (Fe-55 across the production data). \cc{make_gain_correction_Am241.py} $\to$
+        \cc{docs/gain_correction_Am241.pdf}.
+\end{itemize}
+
+\subsection{Clustering}
+\begin{itemize}
+  \item \cc{docs/aGMX/aGMX_clustering.tex} (Overleaf zip next to it): A\_GMX step by step, with equations,
+        figures, performance against WADERs, and the contamination study with its quality flags.
+  \item \cc{docs/clustering_methods_report.pdf}: all methods and all tests.
+\end{itemize}
+
+\subsection{Hand-over notes}
+\cc{docs/README.md} is the index of the documentation; \cc{docs/PIPELINE_GUIDE.md} gives the physics and the code
+map. \cc{docs/notes/} holds the dated hand-over notes (each starts with a status line: current, or what supersedes
+it); \cc{CONTEXT_2026-10-24.md} is the current one, and \cc{OPEN_ITEMS.md} lists everything still open in one place.
+
+%==================================================================================================================
+\section{Tests and changing the code safely}\label{sec:tests}
+%==================================================================================================================
+\begin{lstlisting}
+cd comm_scripts
+python -m unittest discover -s tests -v          # with the damic / panaSKImg python
+\end{lstlisting}
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}P{5.3cm}L@{}}
+\toprule
+\cc{test_run_wader.py} & input handling of \cc{run_WADERs} (lists, names, options) \\
+\cc{test_gain_vs_charge.py} & the $g(n)$ models and their inversion \\
+\cc{test_am241_model.py} & the constrained Am-241 fit on synthetic spectra \\
+\cc{test_cluster_thresholds.py} & the automatic cluster thresholds in electrons \\
+\cc{test_clustering_methods.py} & MFD+G, hybrid, MHC and the GMX quality flags on a simulated image \\
+\cc{test_agmx_root.py} & the A\_GMX writer: file structure, panaSKImg conventions, flags, a reference without
+  clusters, binned columns (simulated CCD) \\
+\cc{test_utils.py} & \cc{compare_runs.py} on fake runs (relative paths, extra files, changed JSON) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+For a change to the pipeline itself, run \cc{run_WADERs} on the same images with the old and the new code, into
+different \cc{-o} folders, and compare them with \cc{utils/compare_runs.py OLD NEW}. The pipeline is
+deterministic, so any difference comes from the change. A git worktree of the old commit is a convenient way to
+run the old code.
+
+%==================================================================================================================
+\section{Troubleshooting}
+%==================================================================================================================
+\begin{longtable}{@{}P{5.6cm}P{10.4cm}@{}}
+\toprule
+\textbf{symptom} & \textbf{cause / fix} \\
+\midrule
+\endhead
+``already exists; use \cc{--overwrite}'' & the output folder is not empty: \cc{--overwrite}, or another \cc{-o} \\
+``no conda environment with panaSKImg'' & \cc{--env NAME} / \cc{$WADERS_ENV}, or activate the environment \\
+a CCD is ``not run (flooded/unresolved)'' & the peaks could not be resolved; \cc{--all-ext} forces it (fits not
+  reliable) \\
+very slow clustering & high dark current: \cc{--autoconfig-args "--cluster-threshold-e 2 5"} (or \cc{auto}) \\
+MakeComposite: ``not run: no Image\_<N>'' & give \cc{--image-number N} \\
+composite module called ACM<id> & give \cc{--module <id>=<name>} \\
+``no reliable g(n) curve'' (A\_GMX log) & that CCD is clustered with its fitted gain, as \cc{root_gaincorr/} keeps it unchanged \\
+\cc{x_max_plot} not supported & unpatched pysimdamicm: the wider DC-fit plot is left out
+  (\cc{docs/patches/pysimdamicm_x_max_plot.patch}) \\
+\cc{_ext} in the output path (warning) & MakeComposite reads the extension from \cc{_ext<N>}; avoid it in folder names \\
+\bottomrule
+\end{longtable}
+
+\end{document}

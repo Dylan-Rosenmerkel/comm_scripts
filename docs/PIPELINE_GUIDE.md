@@ -1,8 +1,9 @@
 # comm_scripts pipeline guide
 
 For a physics student or collaborator new to this code: what the pipeline does, the physics behind each step,
-which file and function does it, and where to start reading. For running it, `run_WADERs -h` (options) and
-`run_WADERs -h -v` (full guide) are the reference; the [README](../README.md) has the quick start.
+which file and function does it, and where to start reading. For running it, the user guide
+(`docs/usage/comm_scripts_usage.pdf`), `run_WADERs -h` (options) and `run_WADERs -h -v` (full guide) are the reference;
+the [README](../README.md) has the quick start.
 
 ## 1. What it does
 
@@ -32,6 +33,12 @@ from the pixels themselves.
      v
  root_gaincorr/  (and root_gaincorr_per_image/)
      |
+     |  step 3d  src/agmx_root.py  (--clusterer agmx|both)
+     |           A_GMX clusters on the calibrated images *_EXTn_waders.fits.bz2 (g(n)-converted with the gain
+     |           correction), written as panaSKImg cluster files
+     v
+ root_agmx/  (and root_agmx_gaincorr*/)
+     |
      |  step 3c  MakeComposite_Fe55_Clusters_Extensions.cc  (--composite, ROOT macro)
      v
  composite/Fe_55_Analysis_Plots/<module>/...          composite clusters, Fe-55 / Am-241 spectra, CTI
@@ -42,8 +49,8 @@ from the pixels themselves.
 ```
 
 Each step is one function in [`bin/run_WADERs`](../bin/run_WADERs) (`step1_configure`, `step2_run_panaskimg`,
-`step3_collect_root_files`, `step3b_gain_correction`, `step3c_composite`, `step4_summary`); `main()` calls them in
-order and is the best place to start reading.
+`step3_collect_root_files`, `step3b_gain_correction`, `step3d_agmx`, `step3c_composite`, `step4_summary`); `main()`
+calls them in order (3d before 3c, so the composite can use the A_GMX files) and is the best place to start reading.
 
 ## 3. The physics, step by step
 
@@ -82,14 +89,24 @@ its row and column projections) tells how far the charge diffused, i.e. how deep
 `MakeComposite` uses it to split "front" and "back" events and measure charge-transfer inefficiency (CTI) from
 composite clusters.
 
+**A_GMX** (`--clusterer agmx|both`, or `bin/run_AGMX` on a finished run) is an alternative clusterer from the
+2026-10-23..25 study (`clustering_tests/adaptive.py` + `gmx.py`; algorithm in `docs/aGMX/`). Instead of thresholds it
+models the image (dark charge removed) as a sum of 2-D Gaussian charge clouds fitted by EM and shares each pixel's
+charge between overlapping clouds, so it keeps faint cluster edges (unbiased energies at every width), separates close
+X-rays and finds few-electron events; in a background it cannot model it falls back to hysteresis like WADERs.
+`src/agmx_root.py` turns its clusters into pysimdamicm `Cluster` objects, so the files have exactly the WADERs format
+plus `agmx_*` quality branches (blend, local pedestal, ...). Recommended X-ray selection: `agmx_blend < 0.02` and
+`agmx_ped < 10`, plus the usual sigma_xy cut.
+
 ### Gain versus charge, g(n) (`--gain-correction`)
 The gain falls slowly with the charge in a pixel (about 3 % lower at 1000 e-), so keV clusters converted with the
 0e-/1e- gain come out a few percent low. The pixel-value comb continues to high charge wherever X rays deposit charge;
 its **local spacing at n electrons is the local gain g(n)**. `gain_vs_charge.py measure` finds it with a periodogram
 (the comb spacing that maximises |mean of exp(2 pi i x / g)|) in windows of charge, using only "clean" rows where the
 readout was not just disturbed by a large charge. `apply` converts every pixel back with the inverse of
-ADU(n) = integral of g from 0 to n. Images of one module are combined (pooled); `per-image` gives each image its own
-curve. If the gain changed during a run, use one curve per gain period (see
+ADU(n) = integral of g from 0 to n. Images of one module are combined (pooled); by default coherently (each image is
+converted with its own curve first, so the combs line up and all pixels can be pooled; independent of the image
+order), or incoherently (comb powers added); `per-image` gives each image its own curve. If the gain changed during a run, use one curve per gain period (see
 [am241_note](am241_note/README.md), `correct_gain_per_period.py`).
 
 ### Fe-55 and Am-241 lines (what the composite step and the notes look at)
@@ -101,10 +118,14 @@ Fe-55 gives Mn K-alpha 5.899 keV and K-beta 6.490 keV. Am-241 gives Np L x rays 
 | file | what it is |
 |---|---|
 | `bin/run_WADERs` | the whole pipeline; one function per step, `main()` at the bottom |
+| `bin/run_AGMX` | step 3d alone, on a finished run |
 | `src/autoconfig_panaSKImg.py` | raw image -> panaSKImg JSON: everything measured from the pixels (largest file; its module docstring lists what is measured) |
 | `src/gain_dc_split.py` | gain from the many-peak fit, dark current from the 0e-/1e- fit, the final JSON per CCD |
 | `src/fit_quality.py` | reads panaSKImg's dark-current fits: chi2/ndf, scaled errors, dark-current bias |
 | `src/gain_vs_charge.py` | g(n): `measure` (images -> curve) and `apply` (cluster files -> corrected copies) |
+| `src/agmx_root.py` | A_GMX clusters -> panaSKImg cluster files (step 3d) |
+| `src/naming.py` | image name / ACM id of an image (standard library only) |
+| `clustering_tests/` | the clustering methods (A_GMX is used by step 3d) and the scripts that tested them (README there) |
 | `utils/` | standalone helpers (split cluster files per CCD, tile DC-fit PDFs, noise vs skips from level-1 data) |
 | `docs/` | notes and reports with the scripts that made them (`report_scripts/`, `gain_correction_method/`, `am241_note/`) |
 | `tests/` | unit tests (`python -m unittest discover -s tests -v`) |
@@ -127,10 +148,12 @@ change how normal images are fitted without saying so; new behaviour goes behind
 
 ## 7. Related documents
 
+- `docs/usage/comm_scripts_usage.pdf`: the user guide (every part of the repository and how to run it).
+- `docs/aGMX/`: the A_GMX clustering algorithm, its performance against WADERs, the quality flags.
 - `docs/gain_correction_method/`: the method note for g(n) (LaTeX + figures + Overleaf zip).
 - `docs/am241_note/` and `docs/AMtest_Am241_10-30keV_note_overleaf.zip`: the Am-241 10-30 keV analysis
   (gain correction per period, cluster-width cut, constrained fit with the Lepy et al. 2008 line list).
 - `docs/gain_correction_report.pdf`, `docs/gain_correction_Am241.pdf`: earlier reports.
-- `docs/CONTEXT_2026-10-16.md`: hand-over notes (environment, decisions, open items).
+- `docs/README.md`: index of the documentation; `docs/notes/`: hand-over notes and `OPEN_ITEMS.md`.
 
 Data are kept outside the repository; the level-1 noise study data are in `~/Documents/comm_scripts_data/L1_noise/`.

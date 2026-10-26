@@ -471,6 +471,7 @@ DEFAULT_PANASKIMG = find_panaskimg()
 # chi2/ndf, scaled errors and dark-current bias of panaSKImg fits (same folder)
 sys.path.insert(0, SCRIPT_DIR)
 import fit_quality as FQ  # noqa: E402
+from naming import image_stem  # noqa: E402
 
 # Number of rows at the start of the image used to measure gain and noise. These
 # rows are read first, so they carry the least dark current.
@@ -1452,7 +1453,7 @@ def set_plot_range(j, results, n_show):
     dc["x_max_plot"] = round(max(dc["x_max"], x0 + (n_show + 0.5) * g), 2)
 
 
-def write_measured(path, infile, results, outliers=()):
+def write_measured(path, infile, results, outliers=(), cluster_all=False):
     """<json>_measured.json: what this script measured, per extension.
 
     fit_quality.py uses lam01 (dark current from the 0e-/1e- pixel counts, independent
@@ -1460,7 +1461,7 @@ def write_measured(path, infile, results, outliers=()):
     Per extension: resolved, gain (ADU/e-), noise_e (e-), lam01 (e-/pix, None if not
     resolved), k_poisson, k_fit, skip (unresolved outlier, e.g. flooded CCD).
     path: file to write; infile: image path (its name without extensions is stored);
-    outliers: from set_dark_current_fit.
+    outliers: from set_dark_current_fit; cluster_all: --cluster-all (outliers are then run, not skipped).
     """
     ext = {}
     for r in results:
@@ -1469,9 +1470,9 @@ def write_measured(path, infile, results, outliers=()):
                              lam01=(round(float(r["lam01"]), 5) if r["resolved"] and r.get("lam01") is not None else None),
                              k_poisson=r.get("k_poisson"), k_fit=r.get("k_fit"),
                              # flooded/unresolved CCD among good ones: not worth running
-                             skip=bool(r["ext"] in outliers and not r["resolved"]))
+                             skip=bool(r["ext"] in outliers and not r["resolved"] and not cluster_all))
     with open(path, "w") as fh:
-        json.dump({"image": os.path.basename(infile).split(".")[0], "extensions": ext}, fh, indent=2)
+        json.dump({"image": image_stem(infile), "extensions": ext}, fh, indent=2)
 
 
 def write_per_ext(base, results, outliers, args):
@@ -1489,7 +1490,7 @@ def write_per_ext(base, results, outliers, args):
     Returns [(ext, json path, resolved, skip)].
     """
     os.makedirs(args.output, exist_ok=True)
-    stem = os.path.basename(args.infile).split(".")[0]
+    stem = image_stem(args.infile)
     configs = []
     for r in results:
         j = copy.deepcopy(base)
@@ -1998,7 +1999,7 @@ def refine_peaks(j, src, work, results, args):
 # =============================================================================
 # Main
 # =============================================================================
-def parse_args():
+def parse_args(argv=None):
     """Command-line options (see -h); validates --peaks, --cluster-threshold-e, panaSKImg.
 
     Options are grouped as in the help: gain (prior and search range, when peaks
@@ -2006,10 +2007,10 @@ def parse_args():
     channels, clusters, tuning (--tune) and one JSON per extension (--per-ext).
     Exits with a usage error for an invalid --peaks, PIXEL_E/SEED_E not satisfying
     0 < PIXEL_E <= SEED_E, or --tune/--per-ext without a panaSKImg script.
-    Returns the argparse namespace.
+    argv: argument list (default: the command line). Returns the argparse namespace.
     """
     ap = argparse.ArgumentParser(description="Generate a panaSKImg JSON tuned to a raw skipper image.")
-    ap.add_argument("infile", help="raw (skip-averaged) FITS image (.fits or .fits.bz2)")
+    ap.add_argument("infile", help="raw (skip-averaged) FITS image (.fz, .fits or .fits.bz2)")
     ap.add_argument("-o", "--output", required=True, help="output JSON file")
     ap.add_argument("-r", "--reference", "-t", "--template", dest="reference", default=None,
                     help="reference JSON the generated config starts from; only the measured settings "
@@ -2065,7 +2066,7 @@ def parse_args():
                    help="ClusterFinder thresholds in electrons: a pixel joins a cluster if it has more "
                         "than PIXEL_E e-, and a cluster needs at least one pixel above SEED_E e- "
                         "(e.g. 2.5 9.5), or 'auto': per CCD from its dark charge (smallest k with "
-                        "P(Poisson(lambda) >= k) <= 10%, pixel > k - 0.5 e-, seed > 9.5 e-). Default: keep "
+                        "P(Poisson(lambda) >= k) <= 10%%, pixel > k - 0.5 e-, seed > 9.5 e-). Default: keep "
                         "the reference JSON's spr_threshold, which is in units of the per-row pedestal noise")
     k.add_argument("--cluster-all", action="store_true",
                    help="also search clusters in CCDs flagged as unresolved outliers (e.g. a flooded "
@@ -2079,7 +2080,7 @@ def parse_args():
     t = ap.add_argument_group("tuning")
     t.add_argument("--tune", action="store_true",
                    help="run panaSKImg (pedestal + DC fit only) with candidate pedestal settings "
-                        "and keep the one giving the narrowest, unpinned fit (about 1-2 minutes)")
+                        "and keep the one with the smallest total fit error (about 1-2 minutes)")
     t.add_argument("--panaskimg", default=DEFAULT_PANASKIMG,
                    help="panaSKImg script used by --tune and the --per-ext run script (default: found "
                         "automatically: $PANASKIMG, PATH, the python environment)")
@@ -2093,7 +2094,7 @@ def parse_args():
                         "runs panaSKImg once per CCD in parallel (--acm --ext N) and gives one "
                         "cluster file per CCD (..._extN.root)")
 
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     if args.peaks not in ("auto", "all") and not (args.peaks.isdigit() and int(args.peaks) >= 1):
         ap.error("--peaks must be 'auto', 'all' or an integer >= 1")
     if args.cluster_threshold_e is not None:
@@ -2259,7 +2260,7 @@ def write_single_json(j, results, outliers, args):
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
     with open(args.output, "w") as fh:
         json.dump(j, fh, indent=4)
-    write_measured(re.sub(r"\.json$", "", args.output) + "_measured.json", args.infile, results, outliers)
+    write_measured(re.sub(r"\.json$", "", args.output) + "_measured.json", args.infile, results, outliers, args.cluster_all)
 
     print_report(results, outliers, j["process"]["FitDarkCurrentProcess"], args.output)
     if args.cluster_threshold_e == "auto":
@@ -2307,7 +2308,7 @@ def main():
     base = copy.deepcopy(j)
 
     # ---- how many peaks to fit, then the per-extension fit settings
-    k_fit = choose_peaks(results, args)
+    choose_peaks(results, args)                 # sets r['k_fit'] of every extension
     for r in results:
         r["fit"] = fit_settings(r)
 
@@ -2326,8 +2327,8 @@ def main():
         print_report(results, outliers, None, args.output)
         print(f"one JSON per CCD in {args.output}:")
         write_per_ext(base, results, outliers, args)
-        stem = os.path.basename(args.infile).split(".")[0]
-        write_measured(os.path.join(args.output, f"{stem}_measured.json"), args.infile, results, outliers)
+        stem = image_stem(args.infile)
+        write_measured(os.path.join(args.output, f"{stem}_measured.json"), args.infile, results, outliers, args.cluster_all)
         return
     write_single_json(j, results, outliers, args)
 
