@@ -235,7 +235,7 @@ Each step is one function in \cc{bin/run_WADERs}; \cc{main()} calls them in this
 \multicolumn{2}{@{}l}{\textit{gain versus charge} (Section~\ref{sec:gain})} \\
 \cc{--gain-correction [MODE]} & \cc{pooled} (default: one curve per module), \cc{per-image}, \cc{both} \\
 \cc{--gain-model} & \cc{interpolated} (default), \cc{broken}, \cc{linear} \\
-\cc{--gain-combine} & \cc{coherent} (default), \cc{incoherent} \\
+\cc{--gain-combine} & \cc{incoherent} (default), \cc{coherent} \\
 \cc{--gain-anchor} & \cc{comb} (default), \cc{fit} \\
 \multicolumn{2}{@{}l}{\textit{clustering} (Section~\ref{sec:agmx})} \\
 \cc{--clusterer} & \cc{waders} (default: panaSKImg's ClusterFinder only), \cc{agmx} (also A\_GMX files, used
@@ -298,9 +298,10 @@ electrons with that curve.
   front-side K$\alpha$) \\
 \cc{--gain-model} & form of $g(n)$: monotone interpolation through the measured points (default), two lines with
   a fitted knot, or one line \\
-\cc{--gain-combine} & several images of a module: \emph{coherent} (default; each image converted with its own
-  curve, then the pixels pooled, so the result is independent of the image order) or \emph{incoherent} (comb
-  powers added) \\
+\cc{--gain-combine} & several images of a module: \emph{incoherent} (default; the comb powers of the images
+  are added, the comb search starting at the mean low-charge gain of the images) or \emph{coherent} (each image
+  converted with its own curve, then the pixels pooled into one comb; reaches higher charge, but on the Am-241
+  lines of AMtest EXT4 it split the two gain periods by 0.6\,\%, so it is not the default) \\
 \cc{--gain-anchor} & \emph{comb} (default; the comb's $g(n)$ throughout, which removes the image-to-image
   scatter of the fitted gains) or \emph{fit} (each image's fitted gain kept at low charge) \\
 \bottomrule
@@ -313,7 +314,7 @@ to $<400$\,e$^-$, or rising) are copied unchanged.
 \subsection{On its own}
 \begin{lstlisting}
 python src/gain_vs_charge.py measure img1.fz img2.fz ... -o OUTDIR [--name NAME] [--ext 1 3 4]
-        [--model interpolated|broken|linear] [--combine coherent|incoherent] [--extrap-factor 3]
+        [--model interpolated|broken|linear] [--combine incoherent|coherent] [--extrap-factor 3]
 python src/gain_vs_charge.py apply OUTDIR/NAME_gain_vs_charge.json root/panaSKImg_clustersRec_*_ext*.root
         -o root_gaincorr [--anchor comb|fit]
 \end{lstlisting}
@@ -365,6 +366,7 @@ run_WADERs images.txt --gain-correction --clusterer both --composite     # compo
 
 # 2. on a finished run_WADERs folder
 run_AGMX WADERs_analysis_<run> [-j 4] [--no-gaincorr] [--per-image] [--anchor comb|fit] [-o DIR]
+         [--no-fe-candidates]
 
 # 3. the module directly
 python src/agmx_root.py WADERs_analysis_<run> [-o OUTDIR] [--curve gain_vs_charge/ | curve.json] [-j N]
@@ -383,7 +385,8 @@ python src/agmx_root.py WADERs_analysis_<run> [-o OUTDIR] [--curve gain_vs_charg
 \bottomrule
 \end{tabularx}
 \end{center}
-Each folder has \cc{root_files.txt}. Speed: about 30--60\,s per CCD (a crowded CCD takes longer). panaSKImg's
+Each folder has \cc{root_files.txt}, and for photon-counting CCDs (read noise $<0.35$\,e$^-$) a
+\cc{fe_candidates/} folder with the few-electron candidate catalogue (below). Speed: about 30--60\,s per CCD (a crowded CCD takes longer). panaSKImg's
 ClusterFinder still runs, because its file for each CCD supplies the \cc{info} and \cc{process_config} trees and
 the seed settings. \cc{root/} is never changed.
 
@@ -424,6 +427,36 @@ contains a \cc{TNamed agmx_config} with the version, the parameters and the code
 Am-241 lines, $<1$ for front-side Fe-55). The \cc{ped} cut removes clusters on a charge sheet. This is what made
 the high-side tail of the 59.5\,keV line on the crowded CCD (docs/aGMX, section ``Contamination'').
 \end{note}
+
+\subsection{Few-electron candidate catalogue}
+After A\_GMX, every group of touching pixels with 2--20 counted electrons (at most 9 pixels) of a photon-counting
+CCD is listed in \cc{fe_candidates/<stem>_ext<N>_fe_candidates.csv}, one row per candidate: position, charge,
+pixels, local dark charge and read noise, the null statistic $T$, the expected number of dark-charge groups per
+image at least as unlikely (\cc{n_exp}, from simulated blanks of the image's own background) and
+\cc{p_image}$\,=1-e^{-n_\mathrm{exp}}$, and mask flags (\cc{halo} around large deposits, \cc{trail} along their
+row and column, \cc{hotcol}, \cc{edge}, \cc{cluster}); \cc{clean} = no flag. The \cc{.json} next to it holds the
+per-image summary: unmasked area, single-electron rate, and the observed and expected clean counts per class
+(charge, pixels). Nothing is removed: this is the input for a rare-event (dark-matter style) analysis. It is off
+with \cc{run_AGMX --no-fe-candidates} or \cc{AGMX_FE_CANDIDATES=0} (\cc{clustering_tests/fe_candidates.py}).
+
+\subsection{Switches (environment)}
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}P{4.6cm}L@{}}
+\toprule
+\textbf{variable} & \textbf{effect} \\
+\midrule
+\cc{AGMX_PHYS_FIXES=0} & the behaviour before the physics audit of 25--26 October 2026 (docs/aGMX, ``Physics
+  audit''): comb-resolve test, read-noise estimate, rounding correction of the dark charge, $\lambda$ floor
+  $10^{-3}$, hot columns, counting below 0.5\,e$^-$, EM width, muon energy rule, saturation flag \\
+\cc{AGMX_PIX_EXACT=0} & the Gaussian-at-pixel-centre model ($\Sigma+1/12$) instead of the exact pixel
+  integrals (docs/aGMX, ``Exact pixel integrals'') \\
+\cc{AGMX_NUMBA=0} & the numpy EM instead of the compiled one (identical results) \\
+\cc{AGMX_FE_CANDIDATES=0} & no few-electron candidate catalogue \\
+\bottomrule
+\end{tabularx}
+\end{center}
+Images whose read noise is $\ge1$\,e$^-$ are clustered as the ``unmodelled'' regime: WADERs-like hysteresis with the
+thresholds 10$\sigma$ (pixels) and 30$\sigma$ (seeds) of the zero-peak noise, pixels at least 4.5\,e$^-$.
 
 \begin{note}[Checked against WADERs]
 \cc{clustering_tests/agmx_root_check.py PANASKIMG_ROOT WADERS_FITS EXT} feeds the clusters of a real panaSKImg
