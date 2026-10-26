@@ -546,6 +546,24 @@ def _measure_comb_points(vals, g0):
     return pts
 
 
+LOW_RISE = 0.005    # low-charge anchor: g_1e this fraction (or more) below the first comb point -> add (1 e-, g_1e)
+
+
+def low_charge_anchor(mdl, g0, rise=LOW_RISE):
+    """The interpolated model holds g constant below its first comb point (~26 e-, the windows start at 20 e-). On
+    most CCDs the gain is flat there, but on some it rises steeply at low charge (DM09 EXT2: 1.22 ADU/e- at 1 e-,
+    1.29 at 26 e-), and then pixels below ~26 e- get too few electrons (diffuse back-side Fe-55 -1.4 %). When the
+    single-electron gain g_1e is more than `rise` below the first point, (n = 1, g_1e) is added as a model point
+    (DM09 EXT2 back - front -1.40 -> +0.02 %, DM04-06 ACM109 EXT2 -1.03 -> -0.72 %, ACM110 EXT1 -1.18 -> -0.87 %);
+    otherwise the model is unchanged (adding it everywhere made flat-gain CCDs slightly worse). Returns (model,
+    applied)."""
+    if model_form(mdl) != "interpolated" or mdl["n_pts"][0] <= 1.0 or not np.isfinite(g0):
+        return mdl, False
+    if g0 >= (1.0 - rise) * mdl["g_pts"][0]:
+        return mdl, False
+    return dict(mdl, n_pts=[1.0] + list(mdl["n_pts"]), g_pts=[float(g0)] + list(mdl["g_pts"]), a=float(g0)), True
+
+
 def _measure_fit(pts, g0, nrows_clean, nrows, model, extrap_factor):
     """Result dict of one extension: the points and, with >= 4 significant points, the model.
 
@@ -556,6 +574,9 @@ def _measure_fit(pts, g0, nrows_clean, nrows, model, extrap_factor):
     res = dict(ok=False, g_1e=g0, clean_rows=nrows_clean, rows=nrows, points=pts)
     if len(good) >= 4:
         mdl, lin, nmax, rms = fit_model(good, model, extrap_factor)
+        mdl, anchored = low_charge_anchor(mdl, g0)
+        if anchored:
+            res["low_charge_anchor"] = dict(g_1e=float(g0), g_first=float(mdl["g_pts"][1]), n_first=float(mdl["n_pts"][1]))
         b = lin["b"]
         res.update(ok=True, model=mdl, linear=lin, rms=rms, n_max_measured=nmax,
                    drop_at_1000=float(1 - g_of(1000.0, mdl) / g_of(0.0, mdl)),
