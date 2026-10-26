@@ -9,6 +9,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import am_test as AT
 import methods2 as M2
+import inject_utils as IU
 AM, CM = AT.AM, AT.CM
 NE = 1 / AM.E_PER_E
 
@@ -34,7 +35,7 @@ def sim(rng, kind, y0, x0):
     """electron positions (y, x) and sub-event id per electron; info dict with true energies / centres"""
     if kind == "muon":
         L = rng.uniform(15, 60); th = rng.uniform(0, np.pi)
-        n = rng.poisson(L * 250); t = rng.uniform(0, 1, n); s = 0.2 + 1.0 * t
+        n = IU.muon_electrons(rng, L, AM.E_PER_E); t = rng.uniform(0, 1, n); s = 0.2 + 1.0 * t
         y = y0 + (t - 0.5) * L * np.sin(th) + rng.normal(0, 1, n) * s
         x = x0 + (t - 0.5) * L * np.cos(th) + rng.normal(0, 1, n) * s
         return y, x, np.zeros(n, int), dict(E=[n / NE], c=[(y0, x0)], L=L)
