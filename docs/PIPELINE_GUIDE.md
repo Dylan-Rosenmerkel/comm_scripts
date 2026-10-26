@@ -104,9 +104,9 @@ The gain falls slowly with the charge in a pixel (about 3 % lower at 1000 e-), s
 its **local spacing at n electrons is the local gain g(n)**. `gain_vs_charge.py measure` finds it with a periodogram
 (the comb spacing that maximises |mean of exp(2 pi i x / g)|) in windows of charge, using only "clean" rows where the
 readout was not just disturbed by a large charge. `apply` converts every pixel back with the inverse of
-ADU(n) = integral of g from 0 to n. Images of one module are combined (pooled); by default coherently (each image is
-converted with its own curve first, so the combs line up and all pixels can be pooled; independent of the image
-order), or incoherently (comb powers added); `per-image` gives each image its own curve. If the gain changed during a run, use one curve per gain period (see
+ADU(n) = integral of g from 0 to n. Images of one module are combined (pooled); by default incoherently (comb powers added;
+independent of the image order), or coherently (`--gain-combine coherent`: each image converted with its own curve
+first, so the combs line up and all pixels can be pooled; reaches higher charge); `per-image` gives each image its own curve. If the gain changed during a run, use one curve per gain period (see
 [am241_note](am241_note/README.md), `correct_gain_per_period.py`).
 
 ### Fe-55 and Am-241 lines (what the composite step and the notes look at)

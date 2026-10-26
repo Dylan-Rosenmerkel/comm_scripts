@@ -50,12 +50,14 @@ Usage:
 (`measure` is the default: gain_vs_charge.py IMAGES... -o OUTDIR also works.)
 
 Images of the same CCDs (same module / ACM) can be given together (--combine):
-  coherent (default): each image is measured on its own and converted to electrons with its own
+  incoherent (default): the comb powers of the images are added (comb search started at the mean
+      low-charge gain of the images; independent of the image order).
+  coherent: each image is measured on its own and converted to electrons with its own
       curve; the remaining tooth offset of each image (a few tenths of an electron) is removed, and
       all pixels are pooled into one comb. This reaches higher charge than one image (the noise
       level falls with the total number of pixels) and does not depend on the order of the images.
-  incoherent: the comb powers of the images are added (comb search started at the mean low-charge
-      gain of the images; also independent of the image order).
+      Not the default: on the Am-241 lines (AMtest EXT4, 2026-10-26) it split the two gain periods
+      by 0.6 %; on Fe-55 it was as good or slightly better.
 Needs numpy, scipy, astropy (measure) and PyROOT (apply); uses autoconfig_panaSKImg.py
 from the same folder for the geometry and the low-charge gain.
 
@@ -632,13 +634,13 @@ def _measure_coherent(images, exts, verbose, extrap_factor, model, autoconfig_ar
     return results
 
 
-def measure(images, exts=None, verbose=True, extrap_factor=3.0, model="interpolated", combine="coherent",
+def measure(images, exts=None, verbose=True, extrap_factor=3.0, model="interpolated", combine="incoherent",
             autoconfig_args=()):
     """{ext: result} from a list of images of the same CCDs; model: interpolated, broken or linear.
 
-    combine (several images only): "coherent" (default; each image converted with its own curve,
-    then all pixels pooled into one comb, see _measure_coherent) or "incoherent" (comb powers of
-    the images added). Both are independent of the order of the images.
+    combine (several images only): "incoherent" (default; comb powers of the images added) or
+    "coherent" (each image converted with its own curve, then all pixels pooled into one comb, see
+    _measure_coherent). Both are independent of the order of the images.
 
     images: paths of .fz/.fits images of the same CCDs; exts: extension numbers (default:
     those of the reference JSON present in the first image); extrap_factor: n_cap / n_max;
@@ -903,9 +905,9 @@ def main():
     m.add_argument("--ext", type=int, nargs="+", default=None, help="extensions (default: all in the reference)")
     m.add_argument("--extrap-factor", type=float, default=3.0,
                    help="continue g(n) linearly up to this x the highest measured charge, constant above (default 3)")
-    m.add_argument("--combine", choices=COMBINE, default="coherent",
-                   help="several images: coherent (default; each image converted with its own curve, then all "
-                        "pixels pooled) or incoherent (comb powers added)")
+    m.add_argument("--combine", choices=COMBINE, default="incoherent",
+                   help="several images: incoherent (default; comb powers added) or coherent (each image converted "
+                        "with its own curve, then all pixels pooled; reaches higher charge)")
     m.add_argument("--autoconfig-args", default="", metavar='"ARGS"',
                    help="autoconfig_panaSKImg settings for the geometry and the gain prior/range, in one quoted string "
                         "(as run_WADERs --autoconfig-args, e.g. \"--ccd-cols 3352 --gain-min 1.0\")")
