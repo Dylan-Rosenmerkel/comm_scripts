@@ -74,7 +74,7 @@ def hysteresis(Q, region, sigma, k_pix, n_pix=10.0, n_seed=30.0, seed_e=9.5):
 
 
 def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.3, box=31, margin=8, excess_ratio=3.0,
-                     return_info=False, engine="mhc", return_pixels=False, **kw):
+                     return_info=False, engine="mhc", return_pixels=False, noise_max=1.0, **kw):
     """engine='mhc' : unmodelled -> hysteresis; else per region crowded -> hysteresis, sparse -> MHC.
     engine='gmx' : unmodelled -> hysteresis; else GMX on the whole image (GMX shares charge by model responsibility,
                    so it needs no crowded / sparse split; occupancy is still reported per cluster). A_GMX.
@@ -92,8 +92,7 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
     if return_pixels and engine != "gmx":
         raise ValueError("adaptive_cluster: return_pixels needs engine='gmx' (MHC clusters have no pixel lists)")
     if sigma is None:
-        act = Q[valid]; z = act[np.abs(act) < 0.5]
-        sigma = float(1.4826 * np.median(np.abs(z - np.median(z)))) if z.size > 100 else 1.0
+        sigma = AM.read_noise(Q, valid)
     if bg is None:
         try:
             bg = AM.background_map(Q, valid)
@@ -102,10 +101,23 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
     noise = float(np.median(bg.s[valid])); lam = float(np.median(bg.lam[valid]))
     k = max(int(AM.poisson_tail_k(lam, 0.10)[0]), 2)
     info = dict(sigma=sigma, noise=noise, lam=lam, sigma_crowd=sigma_crowd)
-    if noise >= 0.5 and noise >= excess_ratio * sigma:
+    # 'unmodelled': the background is not dark current + read noise (bg spread >= excess_ratio x read noise), or the
+    # image is not electron-counting skipper data (read noise >= noise_max e-, physics audit 2026-10-25): with a few
+    # e- of noise per pixel the GMX energy (sum over the whole footprint) collects sqrt(Npix) x noise and the lines
+    # broaden (59.5 keV width +40 % on PD06/DM12), so such images are clustered on Q with WADERs-like thresholds
+    if (noise >= 0.5 and noise >= excess_ratio * sigma) or (AM.PHYS_FIX and sigma >= noise_max):
         # the background model is not trusted here (its fitted offset can be off by several e-), so cluster the
         # image itself, as WADERs does
-        out = [dict(c, regime="unmodelled", occ=np.nan) for c in hysteresis(np.where(valid, Q, 0.0), valid, sigma, k)]
+        # thresholds as before the audit: 10 / 30 x the width of the zero-electron peak (|Q| < 0.5), which saturates at
+        # 0.37 e- (pixel > ~3.7 e-, seed > ~11 e-, i.e. ~1 / 3 x the true noise on PD06/DM12); 10 / 30 x the true noise
+        # would cut the cluster tails (choosing thresholds for noisy images is an open item)
+        act = Q[valid]; z = act[np.abs(act) < 0.5]
+        s_thr = float(1.4826 * np.median(np.abs(z - np.median(z)))) if z.size > 100 else sigma
+        # the dark-charge term of the pixel threshold uses lam from the background model, which is not trusted here:
+        # fixed at k = 5 (pixel > 4.5 e-), what the earlier code used on the PD06/DM12 images (lam ~ 1.8 there);
+        # 3.7 e- (k = 2) and 5.5 e- (k = 6) were both worse (Fe-55 injections 0.81 / 0.88 vs 0.93). Open item.
+        k_unm = 5 if AM.PHYS_FIX else k
+        out = [dict(c, regime="unmodelled", occ=np.nan) for c in hysteresis(np.where(valid, Q, 0.0), valid, s_thr, k_unm)]
         if engine == "gmx":
             import gmx as GX
             GX.fill_flags(out, np.where(valid, Q, 0.0), valid)   # no trusted background here: ped from the image

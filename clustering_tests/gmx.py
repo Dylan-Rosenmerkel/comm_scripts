@@ -47,6 +47,64 @@ PIX = 1.0 / 12.0
 simple_bg = AM.simple_bg
 
 
+
+
+# physics fixes of the 2026-10-25 audit (docs/aGMX, section 'Physics audit'); AGMX_PHYS_FIXES=0 restores the earlier behaviour
+PHYS_FIX = os.environ.get("AGMX_PHYS_FIXES", "1") != "0"
+
+
+def detection_bg(Qc, valid, bg, half=30, lam_grid=np.geomspace(1e-6, 0.9, 400)):
+    """background for the few-electron tests: lam_det = max(fitted lam, lam_q), lam_q = the dark charge that gives the
+    MEASURED rate of single-electron pixels (rounded count 1) among the quiet pixels (outside the cluster mask) of the
+    rows r-half..r+half, with the row's read noise (rounding miscounts included, as pix_null_logp). This is the
+    occupancy that produces fake groups; the fitted lam map can drop far below it where the dark charge is tiny."""
+    H = Qc.shape[0]
+    nn = np.where(valid, np.round(Qc - bg.o), -1)
+    quiet = valid & ~bg.mask
+    # dark electrons are isolated; pixels of real few-electron events come with neighbours: count single-electron
+    # pixels with no other counted pixel within 2 px (the chance that a dark pixel has a dark neighbour there, ~24 q,
+    # is corrected for)
+    occ = (nn >= 1).astype(float)
+    nb = ndimage.uniform_filter(occ, 5, mode="constant") * 25 - occ
+    iso = (nn == 1) & quiet & (nb < 0.5)
+    n1 = iso.sum(1).astype(float); nq = quiet.sum(1).astype(float)
+    k = np.ones(2 * half + 1)
+    r1 = np.convolve(n1, k, "same") / np.maximum(np.convolve(nq, k, "same"), 1.0)
+    q_all = np.convolve(occ.sum(1) * 0 + ((nn >= 1) & quiet).sum(1), k, "same") / np.maximum(np.convolve(nq, k, "same"), 1.0)
+    r1 = r1 / np.maximum(np.exp(-24.0 * q_all), 0.5)   # isolated fraction of the dark single pixels
+    s_r = np.array([np.median(bg.s[r][valid[r]]) if valid[r].any() else np.nan for r in range(H)])
+    s_r = np.where(np.isfinite(s_r), s_r, np.nanmedian(s_r))
+    lam_q = np.zeros(H)
+    sk = np.round(s_r, 3)                      # P(n=1 | lam) rises monotonically for lam < 1: invert by interpolation
+    for sv in np.unique(sk):
+        p1 = np.exp(pix_null_logp(np.ones(lam_grid.size), lam_grid, np.full(lam_grid.size, sv)))
+        rows = sk == sv
+        lam_q[rows] = np.interp(r1[rows], p1, lam_grid, left=0.0, right=lam_grid[-1])
+    lam = np.maximum(bg.lam, lam_q[:, None])
+    return AM.Background(bg.o, lam, bg.s2, bg.mask, bg.rows)
+
+
+def hot_columns_as_dark(Q, valid, bg, nsig=5.0, min_excess=0.05, n_min=20):
+    """B1 (audit): hot columns as extra dark charge. Per column, the excess of (Q - bg.mean) over the active pixels
+    is a clipped mean (iterative 5-sigma clip of the cluster pixels; no cluster mask, which hid bright columns); a
+    significant excess d is added to the column's dark charge (lam += d, so mean and variance, the Poisson checks and
+    the few-electron finder all follow) instead of being subtracted as a constant. Returns (new background, flags)."""
+    R = np.where(valid, Q - bg.mean, np.nan)
+    v0 = np.nanmedian(np.where(valid, bg.var, np.nan), axis=0)
+    ex = np.nanmedian(R, axis=0)
+    for _ in range(3):
+        thr = ex + 5 * np.sqrt(np.maximum(v0 + np.maximum(ex, 0), 1e-6))
+        keep = np.isfinite(R) & (R < thr[None, :])
+        n = keep.sum(0)
+        ex = np.where(n > 0, np.where(keep, R, 0).sum(0) / np.maximum(n, 1), 0.0)
+    err = np.sqrt((v0 + np.maximum(ex, 0)) / np.maximum(n, 1))
+    hot = (n > n_min) & (ex > nsig * err) & (ex > min_excess)
+    if not hot.any():
+        return bg, hot
+    lam = bg.lam.copy(); lam[:, hot] += ex[hot][None, :]
+    return AM.Background(bg.o, lam, bg.s2, bg.mask, bg.rows), hot
+
+
 def get_bg(Q, valid, bg=None):
     if bg is not None:
         return bg
@@ -472,7 +530,10 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
     H, W = Q.shape
     info = {}
     Qc = Q
-    if hotcol:
+    if hotcol and PHYS_FIX:
+        bg, hot = hot_columns_as_dark(Q, valid, bg)
+        info["hot_columns"] = np.nonzero(hot)[0].tolist()
+    elif hotcol:
         try:
             ex, hot = MH.hot_columns(Q, valid, bg)
             Qc = Q - ex[None, :]
@@ -483,18 +544,22 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
     V = np.where(valid, bg.var, 1e6)
     Rp = np.clip(R, 0, None)
     eps = eps_k * np.sqrt(np.where(valid, bg.var, 1.0))
-    counting = float(np.median(bg.s[valid])) < 0.5
+    counting = float(np.median(bg.s[valid])) < (0.35 if PHYS_FIX else 0.5)    # C2 (audit): counting only where e- are resolved
+    # detection background: the fitted lam can fluctuate far below the true dark charge where it is tiny (a few dark
+    # electrons per fit cell); every few-electron test uses at least the lam implied by the measured rate of
+    # single-electron pixels (energies keep the fitted background)
+    bg_det = detection_bg(Qc, valid, bg) if (PHYS_FIX and counting) else bg
     # 1. seeds
     T = mf_maps(R, np.where(valid, bg.var, 0.0), scales)
     if seed_mode == "maxscale":
         Tm = T.max(0); bk = T.argmax(0)
         pk = (Tm == _local_max(Tm, valid, 5)) & (Tm > nsig) & valid
         py, px = np.nonzero(pk)
-        keep = poisson_keep(Qc, valid, bg, py, px, nsig)
+        keep = poisson_keep(Qc, valid, bg_det, py, px, nsig)
         py, px = py[keep], px[keep]
         s0 = np.asarray(scales)[bk[py, px]]
     else:
-        py, px, s0 = scale_space_seeds(T, scales, Qc, valid, bg, nsig)
+        py, px, s0 = scale_space_seeds(T, scales, Qc, valid, bg_det, nsig)
     A0 = np.maximum(R[py, px] * 2 * np.pi * (s0 ** 2 + PIX), 1.0)
     mix = Mix(A0, np.c_[py, px].astype(float), np.c_[s0 ** 2, s0 ** 2, np.zeros_like(s0)])
     # 2. EM + residual pass
@@ -509,7 +574,7 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
         qy, qx = np.nonzero(pk2)
         if qy.size:
             # the residual plus the full background (o + lam): poisson_keep removes o and tests against Poisson(lam)
-            k2 = poisson_keep(np.where(valid, Rr + bg.mean, 0.0), valid, bg, qy, qx, nsig) if counting else np.ones(qy.size, bool)
+            k2 = poisson_keep(np.where(valid, Rr + bg.mean, 0.0), valid, bg_det, qy, qx, nsig) if counting else np.ones(qy.size, bool)
             qy, qx = qy[k2], qx[k2]
             d, _ = cKDTree(mix.mu).query(np.c_[qy, qx]) if len(mix) else (np.full(qy.size, 9.0), None)
             new = d > 1.0
@@ -636,11 +701,15 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
             comps = np.nonzero(lab == k)[0]
             if ncomp[k] == 1:
                 syy, sxx, sxy = mix.S[comps[0]]
-                sx = float(np.sqrt(max(0.5 * (syy + sxx), 0)))
+                sx_fit = float(np.sqrt(max(0.5 * (syy + sxx), 0)))
             else:
-                sx = float(sxy_m[k])
+                sx_fit = float(sxy_m[k])
+            # D2 (audit): the EM width is pulled low by the 'unexplained' floor eps = sqrt(V) (1-4 % for Fe-55, up to
+            # 18 % for 200-e- clusters at 1 e-/pix); the second moment of the cluster's shared charge is unbiased to
+            # ~1 % for Fe-55 (2-6 % high for 200 e- at 1 e-/pix) -> it is the reported width (depth estimator)
+            sx = float(sxy_m[k]) if PHYS_FIX else sx_fit
             e = float(E[k])
-            c = dict(E=e * E_PER_E, y=float(cy[k]), x=float(cx[k]), sxy=sx, sxy_mom=float(sxy_m[k]), n_comp=int(ncomp[k]),
+            c = dict(E=e * E_PER_E, y=float(cy[k]), x=float(cx[k]), sxy=sx, sxy_fit=sx_fit, sxy_mom=float(sxy_m[k]), n_comp=int(ncomp[k]),
                      sig=float(e / np.sqrt(max(varE[k], 1e-9))), edge=bool(edge[k]), blend=float(blend[k]),
                      ped=float(ped[k]), peakfrac=float(peakfrac[k]), chi2=float(chi2[k]))
             if counting and e < count_E_max:
@@ -659,13 +728,21 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
             out.append(c)
         # 6. classes
         _classify(out, mix, lab, R, Rp, pI, pL, rc, W)
+        if PHYS_FIX:
+            # G2 (audit): saturation flag. Alphas (4-9 MeV) and other huge deposits can reach the ADC limit, which
+            # appears as a plateau at the image maximum; their energy is then a lower limit
+            qv = Q[valid]; qmax = float(qv.max()) if qv.size else 0.0
+            sat_level = qmax - 0.5 if qv.size and np.sum(qv >= qmax - 0.5) >= 3 and qmax > 1000 else np.inf
+            qk = np.full(nc, -np.inf); np.maximum.at(qk, pL, Q.ravel()[pI])
+            for k, c in enumerate(out[:nc]):
+                c["saturated"] = bool(qk[k] >= sat_level)
     # 5. counting finder
     if counting:
         covered = np.zeros((H, W), bool)
         if len(mix):
             covered.ravel()[pI[rc > 0.05]] = True
         if count_mode == "pix":
-            out += _counting_pix(Qc, valid, bg, covered, count_fakes)
+            out += _counting_pix(Qc, valid, bg_det, covered, count_fakes)
         else:                                  # the earlier box test (Poisson tail of the group's charge)
             out += _counting(Qc, valid, bg, covered, p_count)
     fill_flags(out, R, valid, ped_ring, ped_q)
@@ -789,11 +866,23 @@ def pix_null_logp(n, lam, s):
     return np.log(np.maximum(tot, 1e-300))
 
 
-def _group_stats(nn, valid, lam, s, covered=None, m_max=9):
+COUNT_LINK = 1      # px: counted electrons within this distance form one group (1 = touching; 2 was tested: worse, it links unrelated dark electrons)
+
+
+def _group_stats(nn, valid, lam, s, covered=None, m_max=9, link=None):
     """groups of 8-connected pixels with >= 1 counted e- (nn: rounded counts): label image, group labels kept
     (<= m_max pixels, not touching `covered`) and their statistic T = -sum ln P(n_i | lam_i, s_i) - ln N_shapes(m)
     (the null probability of the observed counts times the number of shapes the group could have)"""
-    lab, k = ndimage.label(nn >= 1, structure=EIGHT)
+    link = COUNT_LINK if link is None else link
+    occ = nn >= 1
+    if link > 1:
+        # a diffusing few-electron event can leave its electrons in pixels that do not touch ("1 0 1"): link counted
+        # pixels within `link` px (labels of the dilated mask, restricted to the counted pixels); the extra shapes are
+        # paid for by the threshold, which is calibrated on blanks grouped the same way
+        labd, k = ndimage.label(ndimage.binary_dilation(occ, structure=EIGHT, iterations=link - 1), structure=EIGHT)
+        lab = np.where(occ, labd, 0)
+    else:
+        lab, k = ndimage.label(occ, structure=EIGHT)
     if k == 0:
         return lab, np.zeros(0, int), np.zeros(0)
     lf = lab.ravel()
@@ -802,7 +891,7 @@ def _group_stats(nn, valid, lam, s, covered=None, m_max=9):
     lpm = np.zeros(nn.shape)
     lpm[pos] = pix_null_logp(nn[pos], lam[pos], s[pos])
     T = -np.bincount(lf, lpm.ravel(), k + 1)[1:] - np.log(POLYPLETS[np.minimum(m, 9)])
-    keep = m <= m_max
+    keep = (m >= 1) & (m <= m_max)
     if covered is not None:
         hit = np.bincount(lf, covered.ravel().astype(float), k + 1)[1:] > 0
         keep &= ~hit
@@ -811,10 +900,10 @@ def _group_stats(nn, valid, lam, s, covered=None, m_max=9):
 
 
 def count_threshold(valid, lam, s, fakes_per_mpix, seed=12345, n_min=10, n_max=50):
-    """threshold on T for `fakes_per_mpix` false groups per Mpix of active area: the larger of the analytic value
-    ln(N_pix / F) and the value exceeded by F groups per image in blank images simulated from this image's own
-    background (Poisson(lam) + N(0, s) per pixel; fixed seed, so reproducible). The analytic value is right at low
-    dark charge; at ~0.05 e-/pix it lets through too many groups, which the simulation catches."""
+    """threshold on T for `fakes_per_mpix` false groups per Mpix of active area: the value exceeded by F groups per
+    image in blank images simulated from this image's own background (Poisson(lam) + N(0, s) per pixel; fixed seed,
+    so reproducible); the analytic value ln(N_pix / F) (one trial per pixel) only when the simulated blanks have too
+    few groups to measure it. Returns (threshold, analytic, simulated)."""
     npix = float(valid.sum())
     F = max(fakes_per_mpix * npix / 1e6, 1e-6)                 # expected false groups in this image
     t_an = float(np.log(npix / F))
@@ -827,7 +916,12 @@ def count_threshold(valid, lam, s, fakes_per_mpix, seed=12345, n_min=10, n_max=5
     Ts = np.sort(np.concatenate(Ts))[::-1]
     n_exceed = int(np.floor(F * nb))
     t_emp = float(Ts[n_exceed]) if Ts.size > n_exceed else -np.inf
-    return max(t_an, t_emp), t_an, t_emp
+    if np.isfinite(t_emp) and Ts.size > n_exceed + 2:
+        # the calibrated threshold: at low dark charge there are few candidate groups and the analytic bound (one
+        # trial per pixel) is far too strict (0.001 e-/pix: 0.000 fakes/image instead of 0.14, 3-e- efficiency 0.77
+        # instead of 0.93); at higher dark charge it is the other way round (0.05 e-/pix: analytic too loose)
+        return t_emp, t_an, t_emp
+    return t_an, t_an, t_emp
 
 
 def _counting_pix(Qc, valid, bg, covered, fakes_per_mpix=0.08):

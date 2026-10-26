@@ -28,6 +28,7 @@ Methods (each documented with its formula and source):
 
 Energies are returned in keV with CM.E_PER_E = 3.74e-3 keV/e-, cluster dicts with keys E, y, x, sxy (+ extras).
 """
+import os
 import numpy as np
 from scipy import ndimage, optimize, special, stats
 
@@ -142,6 +143,27 @@ def smooth_bblocks(y, err, p0=0.01):
     return out
 
 
+
+
+# physics fixes of the 2026-10-25 audit (docs/aGMX, section 'Physics audit'); AGMX_PHYS_FIXES=0 restores the earlier behaviour
+PHYS_FIX = os.environ.get("AGMX_PHYS_FIXES", "1") != "0"
+# lowest dark charge the background model can return [e-/pix]: was 1e-3 (map) / 1e-4 (row fit), which is above the
+# dark current of the best skipper CCDs (DAMIC-M ~1e-4 e-/pix/day) and made the few-electron tests conservative there
+LAM_FLOOR = 1e-6 if PHYS_FIX else 1e-3
+
+
+def read_noise(Q, valid):
+    """read noise [e-] of an image in electrons: MAD of the pixels in the zero-electron peak (|Q| < 0.5); that
+    estimate cannot exceed 1.4826 x 0.25 = 0.37 (a uniform spread), so when it comes out above 0.3 (I1, audit) the
+    robust spread of all active pixels is used instead (clusters are a small fraction of the pixels)"""
+    act = Q[valid]
+    z = act[np.abs(act) < 0.5]
+    s0 = float(1.4826 * np.median(np.abs(z - np.median(z)))) if z.size > 100 else 1.0
+    if PHYS_FIX and s0 > 0.3:
+        s0 = max(s0, float(1.4826 * np.median(np.abs(act - np.median(act)))))
+    return s0
+
+
 class Background:
     """Result of background_map: per-pixel maps (arrays of the image shape)
        o    offset [e-]           lam  dark charge [e-/pix]     s2  Gaussian noise variance [e-^2]
@@ -183,7 +205,7 @@ def truncated_poisson_mle(n, K):
         return np.nan
     S, N = n.sum(), n.size
     f = lambda l: -(S * np.log(l) - N * l - N * stats.poisson.logcdf(K, l))
-    r = optimize.minimize_scalar(f, bounds=(1e-4, max(5 * n.mean() + 1, 1.0)), method="bounded",
+    r = optimize.minimize_scalar(f, bounds=(LAM_FLOOR, max(5 * n.mean() + 1, 1.0)), method="bounded",
                                  options=dict(xatol=1e-6))
     return float(r.x)
 
@@ -199,7 +221,10 @@ def fit_row_fast(v, min_frac=0.003):
     Only valid when the comb is resolved (s < ~0.45); otherwise returns resolved=False."""
     z = np.mean(np.exp(2j * np.pi * v))
     R = np.abs(z)
-    if R < np.exp(-2 * np.pi ** 2 * 0.45 ** 2):
+    # A1 (audit): for unresolved noise |z| fluctuates around sqrt(pi / 4N); the fixed 0.018 threshold sits below that
+    # floor for rows of < ~6000 pixels, so pure Gaussian noise was declared 'resolved' with s ~ 0.4 e-
+    r_min = max(np.exp(-2 * np.pi ** 2 * 0.45 ** 2), 4.0 / np.sqrt(max(len(v), 1))) if PHYS_FIX else np.exp(-2 * np.pi ** 2 * 0.45 ** 2)
+    if R < r_min:
         return dict(resolved=False)
     o_frac = np.angle(z) / (2 * np.pi)
     s = np.sqrt(max(-np.log(R), 1e-8) / (2 * np.pi ** 2))
@@ -236,8 +261,7 @@ def simple_bg(Q, valid, sw=None):
     clusters masked above 3 sigma (+2 px). (One copy for gmx, adaptive and the wide tests.)"""
     act = Q[valid]
     if sw is None:
-        z = act[np.abs(act) < 0.5]
-        sw = float(1.4826 * np.median(np.abs(z - np.median(z)))) if z.size > 100 else 1.0
+        sw = read_noise(Q, valid)
     quiet = act[act < 3 * sw + 0.5]
     p0 = np.mean(np.abs(quiet) < max(0.5, 2 * sw)) if quiet.size else 1.0
     lam = float(-np.log(max(p0, 1e-6))) if sw < 0.5 else 0.0
@@ -287,6 +311,13 @@ def background_map(Q, valid, n_iter=2, colbin=128, rowbin=60, smooth="local_line
                 broad.append(r)
         # broad-noise rows: pooled comb fits
         broad = np.array(broad, int)
+        n_res = int(np.isfinite(lam_r).sum())
+        if PHYS_FIX and n_res >= max(10, 0.05 * H):
+            # A1 (audit): with the stricter resolve test, rows whose comb is washed out (e.g. a charge sheet across
+            # the row) are not 'broad noise': the read noise is a property of the amplifier, so when enough rows of
+            # the CCD are resolved these rows take o, lam, s from the nearest resolved rows (rows_ok False below)
+            # instead of a pooled fit that would read the event charge as noise
+            broad = np.zeros(0, int)
         for b0 in range(0, broad.size, pool):
             rows = broad[b0:b0 + pool]
             vals, means = [], {}
@@ -345,6 +376,14 @@ def background_map(Q, valid, n_iter=2, colbin=128, rowbin=60, smooth="local_line
         o_full = np.where(rows_ok, o_r, o_r[near])
         lam_s = np.where(np.isfinite(lam_s), lam_s, lam_r[near])
         s2_s = np.where(np.isfinite(s2_s), s2_s, s_r[near] ** 2)
+        if PHYS_FIX:
+            # A2 (audit): rows fitted by rounding to whole electrons (fit_row_fast) count read noise > +0.5 e- as an
+            # electron and lose noise < -0.5 e- below zero, so their lam (and the row mean o + lam, hence every
+            # energy) is high by ~ p (1 - 2 lam) with p = P(noise > 0.5 e-); the offset o (comb phase) is unbiased.
+            # Invert the first-order miscount for those rows; pooled comb-likelihood rows (broad) are not affected.
+            fast = rows_ok.copy(); fast[broad] = False
+            pmis = stats.norm.sf(0.5 / np.sqrt(np.maximum(s2_s, 1e-6)))
+            lam_s = np.where(fast, np.maximum((lam_s - pmis) / np.maximum(1.0 - 2.0 * pmis, 1e-3), LAM_FLOOR), lam_s)
         # broad rows: the per-row mean fixes o + lam, keep it when lam is smoothed
         for r in broad:
             o_full[r] = o_r[r] + lam_r[r] - lam_s[r]
@@ -367,7 +406,7 @@ def background_map(Q, valid, n_iter=2, colbin=128, rowbin=60, smooth="local_line
         rr, cc = np.meshgrid(np.arange(H), np.arange(W), indexing="ij")
         dmap = ip(np.stack([rr.ravel(), cc.ravel()], 1)).reshape(H, W)
         dcol = dmap.mean(0)
-        lam_map = np.maximum(lam_s[:, None] + dmap, 1e-3)
+        lam_map = np.maximum(lam_s[:, None] + dmap, LAM_FLOOR)
         o_map = np.repeat(o_full[:, None], W, 1)
         s2_map = np.repeat(np.maximum(s2_s, 1e-4)[:, None], W, 1)
         bg = Background(o_map, lam_map, s2_map, mask, dict(o=o_r, lam=lam_r, s=s_r, err=err, lam_smooth=lam_s,

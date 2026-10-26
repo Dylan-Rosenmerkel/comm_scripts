@@ -121,13 +121,22 @@ def streak(reg, above, R, frac=0.85, run_min=8):
     return None
 
 
+# physics fixes of the 2026-10-25 audit (docs/aGMX, section 'Physics audit'); AGMX_PHYS_FIXES=0 restores the earlier behaviour
+PHYS_FIX = __import__("os").environ.get("AGMX_PHYS_FIXES", "1") != "0"
+MIP_MIN = 2.5      # keV per projected pixel: a minimum-ionising particle loses ~0.27 keV/um, >= ~4 keV per 15-um pixel
+
+
 def classify_ext(E, sh, npix):
     a = sh["angle"]
     if sh["width"] < 0.6 and sh["length"] >= 5:
         if min(abs(a - 90), abs(a - 270)) < 5: return "artifact-column"
         if min(a, abs(a - 180)) < 5: return "artifact-row"
     if E > 1000 and sh["ratio"] > 0.4: return "alpha"
-    if sh["length"] >= 10 and sh.get("sk_straight", 9) < 1.0 and sh.get("sk_straight", 9) < 0.06 * sh["length"]: return "muon"
+    if sh["length"] >= 10 and sh.get("sk_straight", 9) < 1.0 and sh.get("sk_straight", 9) < 0.06 * sh["length"]:
+        # G1 (audit): a straight track is a muon only if it deposits at least the minimum-ionising rate
+        if PHYS_FIX and E / max(sh["length"], 1.0) < MIP_MIN:
+            return "extended"
+        return "muon"
     if sh["ratio"] > 0.6 and sh["length"] < 12: return "x-ray diffuse"
     return "worm"
 

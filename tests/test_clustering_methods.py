@@ -37,7 +37,7 @@ class ClusteringMethods(unittest.TestCase):
         n = 1580
         add("fe55", 80 + rng.normal(0, .5, n), 100 + rng.normal(0, .5, n), n / NE)
         add("fe55_diffuse", 80 + rng.normal(0, 1.6, n), 250 + rng.normal(0, 1.6, n), n / NE)
-        L, n = 40, 40 * 250
+        L, n = 40, 40 * 1100                         # minimum ionising: ~4 keV (1100 e-) per 15-um pixel
         t = rng.uniform(0, 1, n); s = 0.2 + t
         add("muon", 200 + (t - .5) * L * np.sin(.5) + rng.normal(0, 1, n) * s,
             150 + (t - .5) * L * np.cos(.5) + rng.normal(0, 1, n) * s, n / NE)
@@ -147,6 +147,64 @@ class AGMXEdgesAndFlags(unittest.TestCase):
             self.AD.adaptive_cluster(Q, valid, engine="GMX")
         with self.assertRaises(ValueError):
             self.AD.adaptive_cluster(Q, valid, engine="mhc", return_pixels=True)
+
+
+class PhysicsAuditFixes(unittest.TestCase):
+    """the physics fixes of the 2026-10-25 audit (docs/aGMX, 'Physics audit'), on simulated images"""
+
+    @classmethod
+    def setUpClass(cls):
+        import adaptive as AD
+        import gmx as GX
+        cls.AD, cls.GX = AD, GX
+        H, W = 200, 1500
+        cls.valid = np.zeros((H, W), bool); cls.valid[3:-3, 3:-3] = True
+        cls.shape = (H, W)
+
+    def blank(self, lam, s, seed):
+        rng = np.random.default_rng(seed)
+        return np.where(self.valid, rng.poisson(lam, self.shape) + rng.normal(0, s, self.shape), 0.0)
+
+    def test_gaussian_noise_is_not_resolved_as_a_comb(self):
+        """A1 + I1: pure Gaussian noise of 1.5 e- was fitted as ~0.4 e- read noise (thousands of fake clusters)"""
+        Q = np.where(self.valid, np.random.default_rng(1).normal(0, 1.5, self.shape), 0.0)
+        self.assertAlmostEqual(AM.read_noise(Q, self.valid), 1.5, delta=0.1)
+        cl = self.AD.adaptive_cluster(Q, self.valid, engine="gmx")
+        self.assertLess(len(cl), 5)
+
+    def test_no_counting_when_electrons_are_not_resolved(self):
+        """C2: at 0.45 e- read noise rounding miscounts made hundreds of fake few-electron clusters"""
+        cl = self.AD.adaptive_cluster(self.blank(0.01, 0.45, 2), self.valid, engine="gmx")
+        self.assertEqual(sum(c.get("cls") == "low-E" for c in cl), 0)
+
+    def test_hot_column_is_dark_charge(self):
+        """B1: a column with +2 e-/pix was not flagged and gave dozens of fake low-E clusters"""
+        Q = self.blank(0.01, 0.16, 3)
+        Q[:, 700] += np.random.default_rng(4).poisson(2.0, self.shape[0]) * self.valid[:, 700]
+        cl, info = self.GX.general_cluster(Q, self.valid, return_info=True)
+        self.assertIn(700, info["hot_columns"])
+        self.assertEqual(sum(abs(c["x"] - 700) < 1.5 for c in cl), 0)
+
+    def test_dark_charge_not_biased_by_rounding(self):
+        """A2: rounding miscounts made lam ~ lam + P(noise > 0.5 e-) (0.015 instead of 0.01 at s = 0.2)"""
+        bg = AM.background_map(self.blank(0.01, 0.2, 5), self.valid)
+        self.assertLess(abs(np.median(bg.lam[self.valid]) - 0.01), 0.002)
+
+    def test_width_is_unbiased(self):
+        """D2: the reported width (second moment of the shared charge) is unbiased to a few % (EM width was low)"""
+        rng = np.random.default_rng(6)
+        Q = self.blank(0.01, 0.16, 7); pos = [(100 + rng.uniform(-40, 40), 60 + 70 * j) for j in range(20)]
+        for y0, x0 in pos:
+            np.add.at(Q, (np.floor(y0 + rng.normal(0, 1.2, 1580) + .5).astype(int), np.floor(x0 + rng.normal(0, 1.2, 1580) + .5).astype(int)), 1.0)
+        cl = self.GX.general_cluster(Q, self.valid)
+        w = [near(cl, y, x, 2)[0]["sxy"] for y, x in pos]
+        self.assertLess(abs(np.median(w) / 1.2 - 1), 0.03)
+
+    def test_muon_needs_minimum_ionising_energy(self):
+        """G1: a straight track is a muon only above ~2.5 keV per projected pixel (MIP ~4 keV per 15-um pixel)"""
+        sh = dict(width=1.0, length=20.0, angle=30.0, ratio=0.1, sk_straight=0.3)
+        self.assertEqual(MH.classify_ext(20 * 4.0, sh, 60), "muon")
+        self.assertEqual(MH.classify_ext(20 * 0.9, sh, 60), "extended")
 
 
 if __name__ == "__main__":
