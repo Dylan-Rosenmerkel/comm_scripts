@@ -80,6 +80,7 @@ Gain correction options (put the input first: `run_WADERs images.txt --gain-corr
 | `--gain-correction both` | both, and a comparison per image and CCD (curve, cluster energies, front-side Fe-55 K-alpha) | both folders, `gain_vs_charge/per_image_vs_pooled.csv`; with `--composite` also `composite_per_image/` |
 | `--gain-model interpolated` (default) / `broken` / `linear` | form of g(n): monotone interpolation through the measured points, two straight lines with a fitted knot, or one straight line | |
 | `--gain-combine incoherent` (default) / `coherent` | how several images of a module are combined for the module curve | |
+| `--gain-memory off` (default) / `auto` | remove the horizontal readout memory (a pixel keeps ~3e-4 of the pixel read before it, fitted per CCD) before measuring g(n); the comb stays visible to higher charge | `memory` in the curve JSON |
 | `--gain-anchor comb` (default) / `fit` | low-charge gain from the comb, or each image's fitted gain | |
 
 Curves and plots are in `gain_vs_charge/` (`module_<ACM>_...` and `image_<image>_...`): the

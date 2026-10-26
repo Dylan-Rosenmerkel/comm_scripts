@@ -134,5 +134,27 @@ class ModelFiles(unittest.TestCase):
         np.testing.assert_allclose(GVC.electrons_with_anchor(adu, m, 1.25, "fit"), adu / 1.25)
 
 
+class ReadoutMemory(unittest.TestCase):
+    """remove_memory / fit_memory_coefficients: a leak of the pixel read before is found and removed."""
+
+    def test_remove_memory_first_order_inverse(self):
+        x = np.array([[0.0, 1000.0, 1000.0, 0.0]])
+        y = GVC.remove_memory(x, 3e-4, 1e-4)
+        np.testing.assert_allclose(y, [[-0.1, 1000.0 - 0.1, 1000.0 - 0.3, -0.3]])
+
+    def test_fit_recovers_injected_leak(self):
+        rng = np.random.default_rng(1)
+        data = []
+        for _ in range(3):
+            s = rng.integers(0, 1600, (150, 300)).astype(float)               # true electrons per pixel
+            x = s + rng.normal(0, 0.15, s.shape)
+            x[:, 1:] += 3.0e-4 * s[:, :-1]                                    # leak from the pixel read before
+            data.append((x[:, 1:-1].ravel(), x[:, :-2].ravel(), x[:, 2:].ravel()))
+        kL, kR, p0, p1 = GVC.fit_memory_coefficients(data)
+        self.assertAlmostEqual(kL, 3.0e-4, delta=0.2e-4)
+        self.assertAlmostEqual(kR, 0.0, delta=0.2e-4)
+        self.assertGreater(p1, 1.5 * p0)                                      # the comb gets sharper
+
+
 if __name__ == "__main__":
     unittest.main()

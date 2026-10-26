@@ -401,15 +401,102 @@ def _measure_setup(images, exts, autoconfig_args=()):
     return A, fits, hdul0, exts, cfg, aargs, gp
 
 
-def _measure_clean_values(fits, images, e, cfg, g0):
+MEMORY_WINDOW = (300, 1100)      # e-: charge range where the readout-memory coefficients are fitted
+
+
+def remove_memory(x, kL, kR):
+    """Remove the horizontal readout memory from pixel values x (rows x cols, pedestal-subtracted, ADU).
+
+    The video signal of a pixel keeps a small fraction of the pixel read just before it (and, much less, the one
+    after it): x_j = s_j + kL s_(j-1) + kR s_(j+1). Inside a cluster bright pixels follow bright pixels, so this
+    adds about kL x 1000 e- = 0.3 e- to a 1000 e- pixel and blurs the electron comb at high charge; measured on
+    the AMtest and DM24-26 CCDs kL = 1.6-3.8e-4, kR < 1e-4. First-order inverse: s_j = x_j - kL x_(j-1) - kR x_(j+1)
+    (a missing neighbour at the row ends counts as 0). Returns a new array.
+    """
+    y = np.array(x, float)
+    if kL:
+        y[:, 1:] -= kL * x[:, :-1]
+    if kR:
+        y[:, :-1] -= kR * x[:, 1:]
+    return y
+
+
+def _memory_power(data, kL, kR, lo=MEMORY_WINDOW[0], hi=MEMORY_WINDOW[1]):
+    """Comb power of pixels with lo-hi electrons after removing (kL, kR): sum over images of |sum exp(2 pi i u)|^2,
+    divided by the number of pixels (about 1 for no comb). data: per image (u, u_left, u_right) in electrons,
+    converted with that image's own g(n); each image keeps its own phase (powers added)."""
+    num, n = 0.0, 0
+    for u, L, R in data:
+        v = u - kL * L - kR * R
+        m = (v > lo) & (v < hi)
+        if m.sum() >= 20:
+            num += abs(np.sum(np.exp(2j * np.pi * v[m]))) ** 2
+            n += int(m.sum())
+    return num / max(n, 1)
+
+
+def fit_memory_coefficients(data):
+    """(kL, kR, comb power without, with) maximising the comb power at MEMORY_WINDOW (see _memory_power).
+
+    Coarse grid of -6e-4..6e-4 in both coefficients, then Nelder-Mead. data: per image (u, u_left, u_right).
+    """
+    from scipy import optimize
+    grid = np.linspace(-6e-4, 6e-4, 13)
+    V = np.array([[_memory_power(data, a, b) for b in grid] for a in grid])
+    i, j = np.unravel_index(int(np.argmax(V)), V.shape)
+    r = optimize.minimize(lambda q: -_memory_power(data, q[0], q[1]), [grid[i], grid[j]], method="Nelder-Mead",
+                          options=dict(xatol=2e-6, fatol=1e-3))
+    return float(r.x[0]), float(r.x[1]), _memory_power(data, 0.0, 0.0), _memory_power(data, *r.x)
+
+
+def _fit_memory(images, exts, extrap_factor, model, autoconfig_args):
+    """{EXTn: dict(kL, kR, power_off, power_on, images)} for each extension with >= 1 image whose own g(n) is ok.
+
+    Each image is measured alone without the correction; its clean-row pixels are converted to electrons with its
+    own curve (so the comb is straight at every charge) and paired with their left and right neighbours.
+    """
+    A, fits, hdul0, exts, cfg, aargs, gp = _measure_setup(images, exts, autoconfig_args)
+    per = [measure([f], exts, verbose=False, extrap_factor=extrap_factor, model=model, autoconfig_args=autoconfig_args)
+           for f in images]
+    out = {}
+    for e in exts:
+        name = f"EXT{e}"
+        data = []
+        for f, r in zip(images, per):
+            rr = r.get(name, {})
+            if not rr.get("ok"):
+                continue
+            x = ext_pixels(fits.open(f)[e].data, cfg, rr["g_1e"])
+            mask, _ = clean_rows(x, rr["g_1e"])
+            u = electrons_of_adu(x, rr["model"])[mask]
+            cur, L, R = u[:, 1:-1].ravel(), u[:, :-2].ravel(), u[:, 2:].ravel()
+            keep = cur > 20
+            data.append((cur[keep], L[keep], R[keep]))
+        if data:
+            kL, kR, p0, p1 = fit_memory_coefficients(data)
+            out[name] = dict(kL=kL, kR=kR, power_off=p0, power_on=p1, images=len(data))
+    # a CCD without a usable comb of its own borrows the median of the others: the memory is a property of the
+    # readout and agreed to ~20 % across CCDs (AMtest, DM24-26), while the comb of such a CCD may still be usable
+    # once the images are combined
+    if out:
+        mL = float(np.median([d["kL"] for d in out.values()])); mR = float(np.median([d["kR"] for d in out.values()]))
+        for e in exts:
+            out.setdefault(f"EXT{e}", dict(kL=mL, kR=mR, borrowed=f"median of {', '.join(sorted(out))}"))
+    return out
+
+
+def _measure_clean_values(fits, images, e, cfg, g0, memory=None):
     """Pixel values [ADU] of the clean rows of extension e, one array per image.
 
     Only pixels above 0.9 * N_EDGES[0] electrons are kept (the lowest charge window).
+    memory: (kL, kR) readout-memory coefficients to remove first (remove_memory), or None.
     Returns (list of arrays, number of clean rows, number of rows), rows summed over images.
     """
     vals, nrows_clean, nrows = [], 0, 0
     for f in images:
         x = ext_pixels(fits.open(f)[e].data, cfg, g0)
+        if memory:
+            x = remove_memory(x, *memory)
         mask, _ = clean_rows(x, g0)
         nrows += x.shape[0]
         nrows_clean += int(mask.sum())
@@ -587,7 +674,7 @@ def _coherent_points(us, models):
     return pts
 
 
-def _measure_coherent(images, exts, verbose, extrap_factor, model, autoconfig_args=()):
+def _measure_coherent(images, exts, verbose, extrap_factor, model, autoconfig_args=(), memory=None):
     """measure() for several images, combined coherently (see _coherent_points).
 
     1. Every image is measured on its own (its own g0, row alignment, clean rows and curve), so
@@ -598,10 +685,11 @@ def _measure_coherent(images, exts, verbose, extrap_factor, model, autoconfig_ar
        image's n_max (there the comb checks, and corrects, the images' extrapolated curves).
     3. With fewer than 2 usable images the extension falls back to the incoherent combination.
     Extra result keys: combine, images_used, per_image_n_max; points carry spacing_vs_curves (p).
+    memory: {EXTn: (kL, kR)} readout-memory coefficients removed before every measurement, or None.
     """
     images = sorted(images)                     # same result whatever the order of the input
-    per = [measure([f], exts, verbose=False, extrap_factor=extrap_factor, model=model, autoconfig_args=autoconfig_args)
-           for f in images]
+    per = [measure([f], exts, verbose=False, extrap_factor=extrap_factor, model=model, autoconfig_args=autoconfig_args,
+                   memory=memory) for f in images]
     A, fits, hdul0, exts, cfg, aargs, gp = _measure_setup(images, exts, autoconfig_args)
     results, fallback = {}, None
     for e in exts:
@@ -610,13 +698,13 @@ def _measure_coherent(images, exts, verbose, extrap_factor, model, autoconfig_ar
         if len(usable) < 2:
             if fallback is None:
                 fallback = measure(images, exts, verbose=False, extrap_factor=extrap_factor, model=model,
-                                   combine="incoherent", autoconfig_args=autoconfig_args)
+                                   combine="incoherent", autoconfig_args=autoconfig_args, memory=memory)
             res = dict(fallback[name], combine="incoherent",
                        combine_note=f"only {len(usable)} image(s) with a usable curve of their own")
         else:
             us, nclean, nrows = [], 0, 0
             for f, r in usable:
-                vals, nc, nr = _measure_clean_values(fits, [f], e, cfg, r["g_1e"])
+                vals, nc, nr = _measure_clean_values(fits, [f], e, cfg, r["g_1e"], (memory or {}).get(name))
                 us.append(electrons_of_adu(vals[0], r["model"]))
                 nclean += nc
                 nrows += nr
@@ -635,7 +723,7 @@ def _measure_coherent(images, exts, verbose, extrap_factor, model, autoconfig_ar
 
 
 def measure(images, exts=None, verbose=True, extrap_factor=3.0, model="interpolated", combine="incoherent",
-            autoconfig_args=()):
+            autoconfig_args=(), memory="off"):
     """{ext: result} from a list of images of the same CCDs; model: interpolated, broken or linear.
 
     combine (several images only): "incoherent" (default; comb powers of the images added) or
@@ -653,10 +741,39 @@ def measure(images, exts=None, verbose=True, extrap_factor=3.0, model="interpola
     model, linear, rms, n_max_measured, drop_at_1000 (fractional drop of g from 0 to 1000 e-),
     nonlinearity; reason when not ok. Extensions without resolved electron peaks in any image
     give dict(ok=False, reason=...).
+
+    memory: horizontal readout memory removed from the pixels before the comb is measured (remove_memory):
+      "off" (default) - not removed;
+      "auto" - coefficients fitted per extension from these images (_fit_memory), result key 'memory'
+               = dict(kL, kR, power_off, power_on, images); an extension where no image has its own curve
+               borrows the median of the others (key 'borrowed'); none fitted at all -> no correction;
+      a number k - kL = k, kR = 0 for every extension;
+      {EXTn: (kL, kR)} - given per extension (used internally).
+    The correction sharpens the comb at high charge (on the AMtest and DM24-26 CCDs the comb power at
+    300-1100 e- rose by 25-100 %), so the curve is measured to higher charge.
     """
     images = sorted(images)                     # same result whatever the order of the input
+    if memory == "auto" or isinstance(memory, (int, float)) and not isinstance(memory, bool):
+        if memory == "auto":
+            fitted = _fit_memory(images, exts, extrap_factor, model, autoconfig_args)
+        else:
+            exts_ = _measure_setup(images, exts, autoconfig_args)[3]
+            fitted = {f"EXT{e}": dict(kL=float(memory), kR=0.0) for e in exts_}
+        res = measure(images, exts, verbose, extrap_factor, model, combine, autoconfig_args,
+                      memory={n: (d["kL"], d["kR"]) for n, d in fitted.items()})
+        for n, d in fitted.items():
+            if n in res:
+                res[n]["memory"] = d
+                if verbose:
+                    print(f"  {n}: readout memory removed, kL {d['kL']:+.2e}, kR {d['kR']:+.2e}"
+                          + (f" (comb power at {MEMORY_WINDOW[0]}-{MEMORY_WINDOW[1]} e-: {d['power_off']:.0f} -> "
+                             f"{d['power_on']:.0f})" if "power_on" in d else "")
+                          + (f" ({d['borrowed']}: no image of this CCD has a usable comb of its own)" if "borrowed" in d else ""))
+        return res
+    if memory == "off":
+        memory = None
     if len(images) > 1 and combine == "coherent":
-        return _measure_coherent(images, exts, verbose, extrap_factor, model, autoconfig_args)
+        return _measure_coherent(images, exts, verbose, extrap_factor, model, autoconfig_args, memory)
     A, fits, hdul0, exts, cfg, aargs, gp = _measure_setup(images, exts, autoconfig_args)
     hduls = [hdul0] + [fits.open(f) for f in images[1:]]
 
@@ -676,7 +793,7 @@ def measure(images, exts=None, verbose=True, extrap_factor=3.0, model="interpola
                 print(f"  {name}: skipped ({results[name]['reason']})")
             continue
         g0 = float(np.mean(g0s))
-        vals, nrows_clean, nrows = _measure_clean_values(fits, images, e, cfg, g0)
+        vals, nrows_clean, nrows = _measure_clean_values(fits, images, e, cfg, g0, (memory or {}).get(name))
         pts = _measure_comb_points(vals, g0)
         res = _measure_fit(pts, g0, nrows_clean, nrows, model, extrap_factor)
         res["g_1e_images"] = len(g0s)
@@ -911,6 +1028,9 @@ def main():
     m.add_argument("--autoconfig-args", default="", metavar='"ARGS"',
                    help="autoconfig_panaSKImg settings for the geometry and the gain prior/range, in one quoted string "
                         "(as run_WADERs --autoconfig-args, e.g. \"--ccd-cols 3352 --gain-min 1.0\")")
+    m.add_argument("--memory", default="off", metavar="off|auto|K",
+                   help="remove the horizontal readout memory (a pixel keeps ~3e-4 of the pixel read before it) "
+                        "before measuring: off (default), auto (fit per CCD) or a fixed coefficient K")
     m.add_argument("--model", choices=MODELS, default="interpolated",
                    help="form of g(n): interpolated (default; monotone interpolation through the measured "
                         "points), broken (two straight lines, fitted knot) or linear (straight line)")
@@ -929,8 +1049,9 @@ def main():
         name = args.name or image_stem(args.images[0])
         print(f"g(n) from {len(args.images)} image(s):")
         import shlex
+        mem = args.memory if args.memory in ("off", "auto") else float(args.memory)
         res = measure(args.images, args.ext, extrap_factor=args.extrap_factor, model=args.model, combine=args.combine,
-                      autoconfig_args=shlex.split(args.autoconfig_args))
+                      autoconfig_args=shlex.split(args.autoconfig_args), memory=mem)
         jpath = os.path.join(args.outdir, f"{name}_gain_vs_charge.json")
         with open(jpath, "w") as fh:
             json.dump({"images": [os.path.abspath(i) for i in args.images], "e_per_electron_eV": E_PER_E,

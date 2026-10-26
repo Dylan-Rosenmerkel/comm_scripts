@@ -285,6 +285,12 @@ what it does, per image (gain_dc_split.py --per-ext, always on):
   charge, but on the Am-241 lines (AMtest EXT4, 2026-10-26) it split the two gain periods by 0.6 %,
   so it is not the default (on Fe-55 it was as good or slightly better). The comb
   is measured with the run's --autoconfig-args (geometry, gain prior and range), as the JSONs.
+  --gain-memory auto: before the comb is measured, remove the horizontal readout memory: the video
+  signal of a pixel keeps ~3e-4 of the pixel read just before it (kL 1.6-3.8e-4 on the AMtest and
+  DM24-26 CCDs), which inside clusters adds ~0.3 e- per 1000 e- and blurs the comb at high charge.
+  The coefficients are fitted per CCD (in the JSON as 'memory'); the curve then reaches higher
+  charge (e.g. 1500 -> 2000 e-). Only the measurement changes; cluster energies are converted as
+  before (the memory itself shifts them by only ~+0.03 %). Default off.
   --gain-model interpolated (default) | broken | linear: the form of g(n): monotone
   interpolation through the measured points, two straight lines with a fitted knot, or
   one straight line (see gain_vs_charge.py; the straight line does not follow the measured
@@ -411,6 +417,10 @@ def build_parser(full=False):
                     help="with --gain-correction: how several images of a module are combined for the module curve: "
                          "incoherent (default; comb powers added - independent of the image order) or coherent "
                          "(each image converted with its own curve, then all pixels pooled; reaches higher charge)")
+    ap.add_argument("--gain-memory", choices=("off", "auto"), default="off",
+                    help="with --gain-correction: remove the horizontal readout memory (a pixel keeps ~3e-4 of the "
+                         "pixel read before it) before measuring g(n): off (default) or auto (coefficients fitted "
+                         "per CCD; the comb stays visible to higher charge)")
     ap.add_argument("--gain-anchor", choices=("comb", "fit"), default="comb",
                     help="with --gain-correction: convert with the comb's g(n) including its low-charge gain "
                          "(comb, default), or keep each image's fitted gain and correct only the charge "
@@ -776,7 +786,8 @@ def measure_curve(run, GVC, rs, name, title, run_exts):
     gain_vs_charge/<name>_gain_vs_charge.json (with the original image paths) and its plots
     (<name>_gain_vs_charge.png, <name>_nonlinearity.png). Returns (json path, result per CCD)."""
     res = GVC.measure([r["src"] for r in rs], run_exts, verbose=False, model=run.args.gain_model,
-                      combine=run.args.gain_combine, autoconfig_args=shlex.split(run.args.autoconfig_args))
+                      combine=run.args.gain_combine, autoconfig_args=shlex.split(run.args.autoconfig_args),
+                      memory=run.args.gain_memory)
     mpath = os.path.join(run.dirs["gc"], f"{name}_gain_vs_charge.json")
     with open(mpath, "w") as fh:
         json.dump({"images": [r["orig"] for r in rs], "e_per_electron_eV": GVC.E_PER_E, "extensions": res}, fh, indent=1)
@@ -799,7 +810,8 @@ def report_curve(gc_lines, title, res):
                                if rr.get("source") == "module" else "")
                             + (f" [coherent, {len(rr['images_used'])} images; single images to "
                                f"{'/'.join(f'{v:.0f}' for v in rr['per_image_n_max'])} e-]"
-                               if rr.get("combine") == "coherent" and rr.get("source") != "module" else ""))
+                               if rr.get("combine") == "coherent" and rr.get("source") != "module" else "")
+                            + (f" [readout memory removed, kL {rr['memory']['kL']:.2e}]" if rr.get("memory") else ""))
         else:
             gc_lines.append(f"  {title} {ext}: no correction ({rr.get('reason')})")
 
