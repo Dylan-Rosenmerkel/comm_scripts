@@ -37,7 +37,7 @@ class ClusteringMethods(unittest.TestCase):
         n = 1580
         add("fe55", 80 + rng.normal(0, .5, n), 100 + rng.normal(0, .5, n), n / NE)
         add("fe55_diffuse", 80 + rng.normal(0, 1.6, n), 250 + rng.normal(0, 1.6, n), n / NE)
-        L, n = 40, 40 * 250
+        L, n = 40, 40 * 1100                         # minimum ionising: ~4 keV (1100 e-) per 15-um pixel
         t = rng.uniform(0, 1, n); s = 0.2 + t
         add("muon", 200 + (t - .5) * L * np.sin(.5) + rng.normal(0, 1, n) * s,
             150 + (t - .5) * L * np.cos(.5) + rng.normal(0, 1, n) * s, n / NE)
@@ -147,6 +147,115 @@ class AGMXEdgesAndFlags(unittest.TestCase):
             self.AD.adaptive_cluster(Q, valid, engine="GMX")
         with self.assertRaises(ValueError):
             self.AD.adaptive_cluster(Q, valid, engine="mhc", return_pixels=True)
+
+
+class PhysicsAuditFixes(unittest.TestCase):
+    """the physics fixes of the 2026-10-25 audit (docs/aGMX, 'Physics audit'), on simulated images"""
+
+    @classmethod
+    def setUpClass(cls):
+        import adaptive as AD
+        import gmx as GX
+        cls.AD, cls.GX = AD, GX
+        H, W = 200, 1500
+        cls.valid = np.zeros((H, W), bool); cls.valid[3:-3, 3:-3] = True
+        cls.shape = (H, W)
+
+    def blank(self, lam, s, seed):
+        rng = np.random.default_rng(seed)
+        return np.where(self.valid, rng.poisson(lam, self.shape) + rng.normal(0, s, self.shape), 0.0)
+
+    def test_gaussian_noise_is_not_resolved_as_a_comb(self):
+        """A1 + I1: pure Gaussian noise of 1.5 e- was fitted as ~0.4 e- read noise (thousands of fake clusters)"""
+        Q = np.where(self.valid, np.random.default_rng(1).normal(0, 1.5, self.shape), 0.0)
+        self.assertAlmostEqual(AM.read_noise(Q, self.valid), 1.5, delta=0.1)
+        cl = self.AD.adaptive_cluster(Q, self.valid, engine="gmx")
+        self.assertLess(len(cl), 5)
+
+    def test_no_counting_when_electrons_are_not_resolved(self):
+        """C2: at 0.45 e- read noise rounding miscounts made hundreds of fake few-electron clusters"""
+        cl = self.AD.adaptive_cluster(self.blank(0.01, 0.45, 2), self.valid, engine="gmx")
+        self.assertEqual(sum(c.get("cls") == "low-E" for c in cl), 0)
+
+    def test_hot_column_is_dark_charge(self):
+        """B1: a column with +2 e-/pix was not flagged and gave dozens of fake low-E clusters"""
+        Q = self.blank(0.01, 0.16, 3)
+        Q[:, 700] += np.random.default_rng(4).poisson(2.0, self.shape[0]) * self.valid[:, 700]
+        cl, info = self.GX.general_cluster(Q, self.valid, return_info=True)
+        self.assertIn(700, info["hot_columns"])
+        self.assertEqual(sum(abs(c["x"] - 700) < 1.5 for c in cl), 0)
+
+    def test_dark_charge_not_biased_by_rounding(self):
+        """A2: rounding miscounts made lam ~ lam + P(noise > 0.5 e-) (0.015 instead of 0.01 at s = 0.2)"""
+        bg = AM.background_map(self.blank(0.01, 0.2, 5), self.valid)
+        self.assertLess(abs(np.median(bg.lam[self.valid]) - 0.01), 0.002)
+
+    def test_width_is_unbiased(self):
+        """D2: the reported width (second moment of the shared charge) is unbiased to a few % (EM width was low)"""
+        rng = np.random.default_rng(6)
+        Q = self.blank(0.01, 0.16, 7); pos = [(100 + rng.uniform(-40, 40), 60 + 70 * j) for j in range(20)]
+        for y0, x0 in pos:
+            np.add.at(Q, (np.floor(y0 + rng.normal(0, 1.2, 1580) + .5).astype(int), np.floor(x0 + rng.normal(0, 1.2, 1580) + .5).astype(int)), 1.0)
+        cl = self.GX.general_cluster(Q, self.valid)
+        w = [near(cl, y, x, 2)[0]["sxy"] for y, x in pos]
+        self.assertLess(abs(np.median(w) / 1.2 - 1), 0.03)
+
+    def test_muon_needs_minimum_ionising_energy(self):
+        """G1: a straight track is a muon only above ~2.5 keV per projected pixel (MIP ~4 keV per 15-um pixel)"""
+        sh = dict(width=1.0, length=20.0, angle=30.0, ratio=0.1, sk_straight=0.3)
+        self.assertEqual(MH.classify_ext(20 * 4.0, sh, 60), "muon")
+        self.assertEqual(MH.classify_ext(20 * 0.9, sh, 60), "extended")
+
+
+class ExactPixelModel(unittest.TestCase):
+    """phase 2: exact pixel integrals of the cloud Gaussians (gmx.PIX_EXACT, docs/aGMX 'Phase 2')"""
+    @classmethod
+    def setUpClass(cls):
+        import gmx as GX
+        cls.GX = GX
+        cls.shape = (200, 1500)
+        cls.valid = np.zeros(cls.shape, bool); cls.valid[3:-3, 3:-3] = True
+
+    blank = PhysicsAuditFixes.blank
+
+    def test_pixel_variance_inversion(self):
+        GX = self.GX
+        for s2 in (0.04, 0.25, 1.0):
+            for mu in (0.0, 0.3, 0.5):
+                k = np.arange(-30, 31); p = GX._ndtr((k + .5 - mu) / np.sqrt(s2)) - GX._ndtr((k - .5 - mu) / np.sqrt(s2))
+                m = (p * k).sum(); v = (p * (k - m) ** 2).sum()
+                self.assertAlmostEqual(float(GX.pix_s2_from_var(np.array([v]), np.array([mu]))[0]), s2, delta=0.02 * s2 + 1e-3)
+                self.assertAlmostEqual(float(GX.pix_mu_from_mean(np.array([m]), np.array([s2]))[0]), mu, delta=0.02)
+
+    def test_numba_matches_numpy(self):
+        GX = self.GX
+        if not GX.PIX_EXACT or not hasattr(GX, "em_numba"):
+            self.skipTest("exact pixel model off or numba not installed")
+        rng = np.random.default_rng(8); Q = self.blank(0.01, 0.15, 8)
+        for j in range(25):
+            s = (0.2, 0.5, 1.3)[j % 3]
+            np.add.at(Q, (np.round(100 + rng.normal(0, s, 1580)).astype(int), np.round(40 + 55 * j + rng.normal(0, s, 1580)).astype(int)), 1.0)
+        E = {}
+        for nb in (True, False):
+            old, GX.EM_NUMBA = GX.EM_NUMBA, nb
+            try:
+                E[nb] = np.sort([c["E"] for c in GX.general_cluster(Q, self.valid)])
+            finally:
+                GX.EM_NUMBA = old
+        self.assertEqual(E[True].size, E[False].size)
+        self.assertLess(np.abs(E[True] - E[False]).max(), 1e-9)
+
+    def test_sharp_width_is_unbiased(self):
+        """a sharp (sigma 0.25 px) X-ray: exact-pixel EM width within ~10 % (the -1/12 moment is ~16 % low, noise-dominated)"""
+        if not self.GX.PIX_EXACT:
+            self.skipTest("exact pixel model off")
+        rng = np.random.default_rng(9)
+        Q = self.blank(0.01, 0.16, 9); pos = [(100 + rng.uniform(-40, 40), 60 + 70 * j + rng.uniform(0, 1)) for j in range(20)]
+        for y0, x0 in pos:
+            np.add.at(Q, (np.floor(y0 + rng.normal(0, .25, 1580) + .5).astype(int), np.floor(x0 + rng.normal(0, .25, 1580) + .5).astype(int)), 1.0)
+        cl = self.GX.general_cluster(Q, self.valid)
+        w = [near(cl, y, x, 2)[0]["sxy"] for y, x in pos]
+        self.assertLess(abs(np.median(w) / .25 - 1), 0.12)
 
 
 if __name__ == "__main__":

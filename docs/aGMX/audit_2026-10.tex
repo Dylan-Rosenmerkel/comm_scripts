@@ -1,0 +1,177 @@
+% included by aGMX_clustering.tex: the changes of 25-26 October 2026 (phase 1, physics audit, few-electron detection,
+% the few-electron candidate catalogue). Numbers from the validation runs named in each paragraph.
+%======================================================================================================
+\section{Faster EM, few-electron finder and fairer tests (phase 1, 25 October)}\label{sec:phase1}
+
+\paragraph{Compiled EM.} The EM iteration of section~\ref{sec:heart} is fused into one compiled pass (numba): the
+model $M$ is accumulated first, then the responsibility-weighted moments, with the same footprints and the same
+M-step. The results are identical to $10^{-10}$\,keV on a clean and on the crowded CCD; the crowded CCD takes 15\,s
+instead of 32\,s. \code{AGMX\_NUMBA=0} selects the numpy version.
+
+\paragraph{Few-electron finder with the full pixel likelihood.} A group of touching pixels with $n_i\ge1$ counted
+electrons is scored by
+\begin{equation}
+T=-\sum_{i\in g}\ln P(n_i\,|\,\lambda_i,s_i)-\ln N_\mathrm{shapes}(m),\qquad
+P(n\,|\,\lambda,s)=\sum_k \mathrm{Pois}(k;\lambda)\Big[\Phi\big(\tfrac{n+\frac12-k}{s}\big)-\Phi\big(\tfrac{n-\frac12-k}{s}\big)\Big],
+\end{equation}
+the probability of the observed rounded counts under dark charge plus read noise (rounding miscounts included), with
+the number of 8-connected shapes of $m$ pixels as the trial factor of the shape. The threshold is the value exceeded
+by the wanted number of fake groups ($0.08$ per Mpix by default, the earlier operating point) in blank images
+simulated from the image's own background; the analytic bound $\ln(N_\mathrm{pix}/F)$ is used only when the blanks
+have too few groups. Section~\ref{sec:lowdark} gives the performance at the lowest dark currents.
+
+\paragraph{Injection tests: objects away from real events.} The injected objects were placed where their centre was
+quiet; a 15--35-px track could still cross a real event, and every method then ``failed'' on it. Objects are now
+placed only where their whole footprint (+2\,px) avoids real events (\code{INJECT\_FOOTPRINT=0} for the earlier
+placement, used for the wide test so that all methods stay comparable). On the injected tracks of the real Am-241
+images (EXT3, the denser CCD) the muon success of every method goes from $\approx0.2$ to $1.00$: the earlier numbers
+measured overlap, not clustering. With the new placement, \AGMX{} on EXT1: muon $0.93\to0.99$, worm $0.93\to0.99$,
+hot column $0.74\to0.90$, pairs 3/4/6\,px $0.65/0.90/0.94$ (new objects); on the dense EXT3 not every object kind finds
+a clean place any more (alphas, hot columns, low-E). On the 878-image wide test phase~1 changes no X-ray result (real
+K$\alpha$ identical to 0.0\,eV on every image-CCD, injections within 0.006).
+
+%======================================================================================================
+\section{Physics audit (25--26 October)}\label{sec:audit}
+
+Every step of \AGMX{} and of the other methods was checked for physical and statistical soundness (simulations of
+skipper images with exactly known electrons; code review). The findings and what was done:
+
+\begin{table}[H]\centering\footnotesize
+\begin{adjustbox}{max width=\linewidth}
+\begin{tabular}{p{0.6cm}p{6.3cm}p{6.4cm}p{3.2cm}}
+\toprule
+id & finding & fix & effect (simulation) \\
+\midrule
+A1 & a row counts as ``comb resolved'' when $|\langle e^{2\pi iQ}\rangle|>0.018$, below the noise floor $\sqrt{\pi/4N}$ of
+pure noise: Gaussian noise of 1.5\,\el{} was fitted as $s\approx0.4$\,\el, the switch did not fire &
+threshold $\max(0.018,4/\sqrt N)$; rows whose comb is washed out by event charge take $o,\lambda,s$ from the nearest
+resolved rows (the read noise belongs to the amplifier); the pooled broad-noise fit only when $<5\,\%$ of the rows
+are resolved & fakes on Gaussian noise 7966 $\to$ 1 per Mpix; crowded CCD unchanged \\
+I1 & the read-noise estimate (MAD of $|Q|<0.5$) cannot exceed $1.4826\times0.25=0.37$\,\el &
+robust spread of all active pixels when the first estimate is $>0.3$ & 0.37 $\to$ 1.50 / 3.00\,\el{} \\
+A2 & rounding counts noise $>+0.5$\,\el{} as an electron: $\lambda$ high by $p=\Phi^c(0.5/s)$ (and the row mean, so
+every energy $-N_\mathrm{pix}p$) & $\lambda\leftarrow(\lambda-p)/(1-2p)$ on comb-fitted rows (offset unbiased) &
+$s=0.3$, $\lambda=0.001$: 0.051 $\to$ 0.004 \\
+--- & $\lambda$ clipped at $10^{-3}$\,\el/pix (above DAMIC-M dark currents) & floor $10^{-6}$; detection uses the
+measured single-electron occupancy (section~\ref{sec:lowdark}) & \\
+B1 & bright hot columns hidden by the cluster mask (not flagged); flagged ones only had the mean subtracted (no
+variance) & column excess (clipped mean, no mask) added to the column's $\lambda$, so mean, variance and the Poisson
+tests follow & +2\,\el/pix column: 50 $\to$ 0 fake few-electron clusters \\
+C2 & counting mode for $s<0.5$\,\el{} although rounding miscounts are $\sim10\,\%$ at $s=0.4$ & counting only for
+$s<0.35$\,\el & $s=0.45$ blank: 313 $\to$ 0 fakes per Mpix \\
+D1 & the pixel model samples a Gaussian of variance $\sigma^2+\frac1{12}$ at the pixel centre; its sum is 1.38 / 0.68
+for $\sigma=0.2$ (centred / half-pixel) & exact pixel integrals: phase~2 (section~\ref{sec:phase2}) & sharp X-rays fitted with one cloud \\
+D2 & the E-step floor $\varepsilon=\sqrt V$ pulls the fitted width low (1--4\,\% for Fe-55, up to 18\,\% for
+200\,\el{} at 1\,\el/pix): the width is the depth estimator & reported width = second moment of the cluster's shared
+charge (\code{sxy}); the EM width is kept as \code{sxy\_fit} & Fe-55: 0.2--1.8\,\% instead of $-1$ to $-4.5$\,\% \\
+G1 & muon label from geometry only & a straight track is a muon only above 2.5\,keV per projected pixel (a minimum
+ionising particle loses 0.27\,keV/$\mu$m, $\ge4$\,keV per 15-$\mu$m pixel) & physical muons 33/40 muon; the old
+too-faint test muons $\to$ ``extended'' \\
+G2 & saturated alphas not flagged & flag \code{saturated} (pixels at the image's maximum plateau) & \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\caption*{Physics-audit findings and fixes (\code{AGMX\_PHYS\_FIXES=0} restores the earlier behaviour).}
+\end{table}
+
+\paragraph{Real data.} 104 image-CCDs (every 12th Fe-55 image-CCD, every 6th Am-241 and all PD06/DM12), fixes on vs
+off with the same injected objects: Fe-55 data unchanged (injections equal to 0.004; front-side K$\alpha$ $-0.2$\,eV
+median, at most 7\,eV). The noisy PD06/DM12 images (read noise $\approx3.5$--4\,\el, now measured correctly) keep the
+WADERs-like branch with the earlier thresholds (pixel $>4.5$\,\el, seed $\approx11$\,\el): with the correct read noise
+the background model fits them and GMX would run there (pairs 0.15 $\to$ 0.97), but its footprint energy collects
+$\sqrt{N_\mathrm{pix}}\times3.5$\,\el{} and the 59.5\,keV line widens by $\sim40\,\%$; choosing proper thresholds and
+energies for noisy images is an open item.
+
+\paragraph{Found sound.} The Poisson$\otimes$Gaussian pixel model and its variance $\lambda+s^2$; the matched filter;
+the exact Poisson box check; charge conservation and unbiased energies (also at 1\,\el/pix and at every width); one
+dark-charge subtraction everywhere; units; the satellite limit, the width-ratio rule and the CTI growth.
+
+\paragraph{Documented, not changed.}
+\begin{itemize}
+\item Detection fakes depend on the dark charge: none in 4\,Mpix at $\lambda\le0.05$, about one 16--27-\el{} cluster
+per 3--4\,Mpix at $\lambda=1$--2\,\el/pix.
+\item Footprint noise: $\sigma_E^2=\sum_p\tilde r_p^2V_p$ over the $4\sigma$ ellipse; K$\alpha$ ($\sigma=1.5$\,px): 2.2\,\el{}
+at $\lambda=0.01$, 11\,\el{} at $\lambda=1$, comparable with the Fano width 13.7\,\el. A threshold sum has less noise
+but loses the tails.
+\item The ridge test merges equal clouds up to $d=3.3\,\sigma_\mathrm{tot}$ although they are bimodal above
+$2\,\sigma_\mathrm{tot}$ ($\approx3.5$\,px back side, 1.4\,px front side); only \code{peakfrac} shows such merges.
+\item The island BIC test uses a heuristic $\chi^2$ likelihood with an un-derived margin of 30, compares a global model
+with an island refit (biased toward merging), and its round-X-ray hypothesis penalises elliptical X-rays (CTI, column
+binning). To be recalibrated on injected tracks before changing it.
+\item The blend cut removes deep (diffuse) events preferentially in crowded fields: fine for line positions, an
+efficiency correction for rates.
+\item In the WADERs-format files, \AGMX{} Energy is dark-subtracted (WADERs includes $N_\mathrm{pix}\lambda$), and
+\code{STD\_X/Y}, \code{DX/DY}, \code{npix} are footprint sizes: WADERs cuts on them do not transfer (\code{fSTD} does).
+\item Test harness: the simulated muons deposited 250\,\el/px (0.94\,keV/px), four times below a minimum-ionising
+particle.
+\end{itemize}
+
+%======================================================================================================
+\section{Few-electron events at the lowest dark current (26 October)}\label{sec:lowdark}
+
+For rare-event searches the decisive regime is a dark current of $10^{-4}$--$10^{-3}$\,\el/pix. Three problems limited
+\AGMX{} there: the $\lambda$ floor of $10^{-3}$; the analytic threshold, which counts one trial per pixel although at
+such dark currents an image has only a handful of candidate groups (0.001\,\el/pix: 0.000 fakes per image instead of
+the wanted 0.14, and 3-\el{} efficiency 0.77 instead of 0.93); and the fitted $\lambda$ map, which fluctuates far
+below and above the truth when a fit cell holds only a few dark electrons. The detection background is now the dark
+charge implied by the measured rate of \emph{isolated} single-electron pixels (dark electrons are isolated; real
+events come with neighbours), smoothed over $\pm30$ rows, with the rounding miscounts of the read noise; \AGMX's
+per-event finder uses it conservatively (never below the fitted map), the candidate catalogue
+(section~\ref{sec:fecand}) exactly.
+
+\begin{table}[H]\centering\small
+\begin{tabular}{lcccc}
+\toprule
+dark charge [\el/pix] & 3\,\el{} found (before $\to$ now) & 4\,\el{} found & fakes per 1.7\,Mpix (before $\to$ now) \\
+\midrule
+0.0001 & 0.91 $\to$ \textbf{0.96} & 1.00 & 0.00 $\to$ 0.30 \\
+0.0005 & 0.90 $\to$ \textbf{0.93} & 0.99 & 0.00 $\to$ 0.37 \\
+0.001 & 0.84 $\to$ 0.85 & 1.00 & 0.07 $\to$ 0.07 \\
+0.003 & 0.39 $\to$ 0.40 & 0.98 $\to$ 0.96 & 0.30 $\to$ \textbf{0.07} \\
+0.01 & 0.04 & 0.37 $\to$ \textbf{0.53} & 0.43 $\to$ \textbf{0.23} \\
+\bottomrule
+\end{tabular}
+\caption*{Full \AGMX{} on simulated images (0.15\,\el{} read noise): 1800 events of 2--5\,\el{} (Gaussian
+$\sigma$ 0.2--0.6\,px) and 30 blank images per dark charge.}
+\end{table}
+
+What a per-event decision cannot do at the lowest dark current: the remaining fakes there are mostly single pixels
+with 2\,\el. Dark charge and rounding miscounts produce about 0.5 of them per 1.7-Mpix image at
+$5\times10^{-4}$\,\el/pix ($\lambda^2/2$ plus $\lambda\,p$), indistinguishable from a real 2-\el{} event; two
+neighbouring single electrons (about 14 per image at $10^{-3}$\,\el/pix) likewise. Rare-event searches therefore do
+not decide per event: they keep every candidate and compare the counts with the expected background, which is what the
+candidate catalogue provides.
+
+%======================================================================================================
+\section{The few-electron candidate catalogue (26 October)}\label{sec:fecand}
+
+A separate stage after \AGMX{} (\code{clustering\_tests/fe\_candidates.py}), in the style of the low-background
+experiments (DAMIC-M, SENSEI). For electron-counting images (read noise $<0.35$\,\el) \code{run\_AGMX} and
+\code{run\_WADERs --clusterer agmx} write \code{fe\_candidates/<image>\_ext<n>\_fe\_candidates.csv} and \code{.json}:
+\begin{itemize}
+\item \textbf{candidates}: every group of touching pixels with 2--20 counted electrons ($\le9$ pixels): position,
+charge, pixels, local dark charge and read noise, the statistic $T$, $n_\mathrm{exp}$ = the expected number of
+dark-charge groups per image at least as unlikely in the clean area (simulated blanks; analytic tail
+$N_\mathrm{clean}e^{-T}$ beyond them) and $p_\mathrm{image}=1-e^{-n_\mathrm{exp}}$;
+\item \textbf{mask flags} (nothing is removed): halo within $5\sqrt{E/\mathrm{keV}}$\,px (5--60\,px) of an \AGMX{}
+cluster, charge-transfer trails along its row and column ($E>1$\,keV, 50\,px), hot columns (also from an excess
+single-electron rate), the edge (5\,px), overlap with an \AGMX{} cluster; \code{clean} = no flag;
+\item \textbf{summary}: the isolated single-electron rate, the clean area, and per class (charge, pixels) the observed
+clean candidates and the number expected from dark charge alone (blanks simulated from the image's own detection
+background).
+\end{itemize}
+
+\begin{table}[H]\centering\small
+\begin{tabular}{lccc}
+\toprule
+dark charge [\el/pix] & 2\,\el{} in 1\,px & 2\,\el{} in 2\,px & 3\,\el{} in 3\,px \\
+\midrule
+0.0005 & 5 / 5.2 & 58 / 48.2 & 0 / 0.1 \\
+0.001 & 14 / 12.7 & 120 / 114.8 & 0 / 0.7 \\
+0.003 & 89 / 93.4 & 731 / 734.0 & 11 / 13.4 \\
+\bottomrule
+\end{tabular}
+\caption*{Calibration: observed / expected clean candidates in 10 blank images (1.7\,Mpix each) per dark charge.
+Injected 3-\el{} events are listed in 99\,\% of cases (median $n_\mathrm{exp}=0.008$ per image); candidates next to a
+60-keV deposit carry the halo flag.}
+\end{table}

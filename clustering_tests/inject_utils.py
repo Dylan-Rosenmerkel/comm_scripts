@@ -1,4 +1,5 @@
-"""Shared by the injection tests (wide_test.py, mhc_tracks.py): where an injected object may be placed."""
+"""Shared by the injection tests (wide_test.py, tracks_test.py, mhc_tracks.py): where an injected object may be placed,
+and the number of electrons of an injected muon."""
 import os
 import numpy as np
 from scipy import ndimage
@@ -17,3 +18,22 @@ def footprint_busy(busy, iy, ix, grow=2):
     fp[iy - y0, ix - x0] = True
     fp = ndimage.binary_dilation(fp, iterations=grow)
     return bool((fp & busy[y0:y1, x0:x1]).any())
+
+
+# muons: MUON_PHYS=1 (since 2026-10-26) gives minimum-ionising muons; the default (0) keeps the earlier faint test muon
+# (250 e- per projected pixel, 0.94 keV/px) so that saved results stay comparable
+MUON_PHYS = os.environ.get("MUON_PHYS", "0") != "0"
+PIX_UM, THICK_UM = 15.0, 675.0      # pixel pitch and fully depleted thickness [um]
+DEDX_MP = 0.27                      # most probable energy loss of a minimum-ionising particle in silicon [keV/um]
+XI_KEV = 12.0                       # Landau width xi for 675 um of Si (0.1535 MeV cm2/g * Z/A * rho * x) [keV]
+
+
+def muon_electrons(rng, L, e_per_e):
+    """electrons deposited by a muon with projected length L [px]: MUON_PHYS -> 3-D path sqrt((15 L)^2 + 675^2) um at the
+    most probable 0.27 keV/um plus a Moyal (Landau-like) fluctuation of width xi (scaled with the path); else L * 250"""
+    if not MUON_PHYS:
+        return int(rng.poisson(L * 250))
+    path = np.hypot(PIX_UM * L, THICK_UM)
+    from scipy.stats import moyal
+    E = DEDX_MP * path + XI_KEV * (path / THICK_UM) * float(moyal.rvs(random_state=rng))
+    return int(rng.poisson(max(E, 0.0) / e_per_e))

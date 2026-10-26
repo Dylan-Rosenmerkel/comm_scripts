@@ -14,7 +14,9 @@ Output, inside the run folder (nothing existing is changed):
     root_agmx_gaincorr/           if the run has gain_vs_charge/ (run_WADERs --gain-correction): A_GMX on the
                                   images converted with the module's g(n) curve (--per-image: the image's own curve,
                                   -> root_agmx_gaincorr_per_image/); --no-gaincorr skips it
-    each with root_files.txt (full paths, the input list for MakeComposite)
+    each with root_files.txt (full paths, the input list for MakeComposite), and for electron-counting images
+    (read noise < 0.35 e-) fe_candidates/<image>_ext<n>_fe_candidates.csv/.json: the few-electron candidate
+    catalogue (every 2-20 e- group, masks, expected dark-charge background per class; clustering_tests/fe_candidates.py)
 
 Recommended selection for X-ray lines: agmx_blend < 0.02 and agmx_ped < 10 (e-/pix), plus the usual
 sigma_xy cut of the analysis (details: docs/aGMX/aGMX_clustering.tex, section 'Running A_GMX').
@@ -54,6 +56,8 @@ def main():
     ap.add_argument("--per-image", action="store_true", help="gain correction with each image's own g(n) curve "
                     "(needs run_WADERs --gain-correction per-image/both) -> root_agmx_gaincorr_per_image/")
     ap.add_argument("--anchor", choices=("comb", "fit"), default="comb", help="as run_WADERs --gain-anchor (default comb)")
+    ap.add_argument("--no-fe-candidates", action="store_true",
+                    help="do not write the few-electron candidate catalogue (fe_candidates/, electron-counting images)")
     ap.add_argument("--env", metavar="NAME", default=os.environ.get("WADERS_ENV"), help="conda environment (as run_WADERs)")
     a = ap.parse_args()
     run_dir = os.path.abspath(a.run_dir)
@@ -64,6 +68,8 @@ def main():
     # as run_WADERs: re-run inside the conda environment with panaSKImg if this python lacks ROOT/pysimdamicm
     run_waders_module().ensure_environment(a.env, prog="run_AGMX", script=SCRIPT_PATH, inside_flag=INSIDE_FLAG)
     sys.path.insert(0, SRC)
+    if a.no_fe_candidates:
+        os.environ["AGMX_FE_CANDIDATES"] = "0"          # read by agmx_root.process in the worker processes
     import agmx_root as AR
     if not AR.tasks_for_run(run_dir):
         sys.exit(f"run_AGMX: no CCDs found in {run_dir} (needs root/, json/<image>/final/ and the *_waders.fits images)")

@@ -84,6 +84,9 @@ class AGMXRootFile(unittest.TestCase):
             self.assertIn(b, self.v)
         self.assertEqual(self.v["RUNID"], RUNID)
         self.assertEqual(self.cfg["version"], self.AR.AGMX_VERSION)
+        # electron-counting image (0.15 e- noise): the few-electron candidate catalogue is written next to the file
+        fe = os.path.join(self.d, "root_agmx", "fe_candidates", "sim_ext1_fe_candidates.json")
+        self.assertTrue(os.path.exists(fe))
         # no WADERs clusters in the reference: ccd / seed taken from its info tree (as panaSKImg)
         self.assertEqual(set(self.v["ccd"]), {106})
         self.assertAlmostEqual(self.v["sigma_seed_eV"][0], 0.15 * E2EV, places=6)

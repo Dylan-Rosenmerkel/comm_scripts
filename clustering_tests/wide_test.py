@@ -21,6 +21,7 @@ sys.path.insert(0, HERE)
 import agent_methods as AM
 import cluster_methods as CM
 import methods2 as M2
+import inject_utils as IU
 import mhc as MH
 OUT = os.path.join(HERE, os.environ.get("WIDE_OUT", "results_wide"))
 NE = 1 / AM.E_PER_E
@@ -82,7 +83,7 @@ def sim(rng, kind, y0, x0):
         n = rng.poisson(1580); s = rng.uniform(0.3, 1.6)
         return y0 + rng.normal(0, s, n), x0 + rng.normal(0, s, n), [n / NE], [(y0, x0)]
     if kind == "muon":
-        L = rng.uniform(15, 35); th = rng.uniform(0, np.pi); n = rng.poisson(L * 250); t = rng.uniform(0, 1, n); s = 0.2 + t
+        L = rng.uniform(15, 35); th = rng.uniform(0, np.pi); n = IU.muon_electrons(rng, L, AM.E_PER_E); t = rng.uniform(0, 1, n); s = 0.2 + t
         return (y0 + (t - .5) * L * np.sin(th) + rng.normal(0, 1, n) * s, x0 + (t - .5) * L * np.cos(th) + rng.normal(0, 1, n) * s,
                 [n / NE], [(y0, x0)])
     if kind == "worm":

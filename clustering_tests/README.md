@@ -28,6 +28,7 @@ data): `python -m unittest tests.test_clustering_methods` (from the repo root).
 | `gmx.py` | GMX | Gaussian-mixture EM deblending (`general_cluster`) - from the exploratory agent, verified; quality flags `blend`, `ped`, `peakfrac`, `chi2` |
 | `pws.py` | PWS | persistence-simplified watershed (control in the GMX study; not recommended; its test harness is in the data folder, `clustering_2026-10-25/general_agent/`; import it from this folder) |
 | `adaptive.py` | adaptive / **A_GMX** | regime switch: 'unmodelled' -> hysteresis; engine 'mhc' (crowded -> hysteresis, sparse -> MHC) or 'gmx' (GMX everywhere) |
+| `fe_candidates.py` | few-electron candidate catalogue | runs after A_GMX (low-background / DAMIC-M style): every 2-20 e- group with its null statistic and expected background, mask flags (halo, trails, hot columns, edge, A_GMX clusters), per-image single-electron rate and expected dark-charge counts per class; written by `src/agmx_root.py` to `fe_candidates/` for electron-counting images |
 
 ## Test scripts
 
