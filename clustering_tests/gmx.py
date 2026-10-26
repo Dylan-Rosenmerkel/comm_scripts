@@ -482,7 +482,7 @@ def significance(mix, Rp, V, valid):
 
 
 # ------------------------------------------------------------------------------------------------ merging
-def merge_graph(mix, r_merge=0.5, w_ratio=1.6, elong=1.4, cos_min=0.8, nt=17, f_bridge=0.1):
+def merge_graph(mix, r_merge=0.5, w_ratio=1.6, elong=1.4, cos_min=0.8, nt=17, f_bridge=0.1, a_faint=50.0):
     n = len(mix)
     if n < 2:
         return np.arange(n)
@@ -527,7 +527,7 @@ def merge_graph(mix, r_merge=0.5, w_ratio=1.6, elong=1.4, cos_min=0.8, nt=17, f_
     narrow_is_mode = f_n0 > f_n1
     m = (ridge > r_merge) & ((wr < w_ratio) | track | ~narrow_is_mode)
     if PIX_EXACT and m.any():
-        # phase 2: a faint cloud (< f_bridge of the amplitude of its brightest merge partner, e.g. a 5-e- tail
+        # phase 2: a faint cloud (< a_faint e- and < f_bridge of the amplitude of its brightest merge partner, e.g. a 5-e- tail
         # fragment fitted as a thin 'track') joins exactly one cluster, that partner's (following chains of faint
         # clouds): it cannot bridge an X-ray to the big deposit next to it, and fragment chains are not orphaned
         ii, jj = i[m], j[m]
@@ -535,7 +535,7 @@ def merge_graph(mix, r_merge=0.5, w_ratio=1.6, elong=1.4, cos_min=0.8, nt=17, f_
         for u, v in ((ii, jj), (jj, ii)):
             o = np.argsort(mix.A[v], kind="stable")
             best[u[o]] = v[o]; bA[u[o]] = mix.A[v[o]]          # last write = brightest partner
-        faint = mix.A < f_bridge * bA
+        faint = (mix.A < f_bridge * bA) & (mix.A < a_faint)
         strong = ~faint[ii] & ~faint[jj]
         fi = np.nonzero(faint)[0]
         G = sparse.coo_matrix((np.ones(strong.sum() + fi.size), (np.r_[ii[strong], fi], np.r_[jj[strong], best[fi]])), shape=(n, n))
