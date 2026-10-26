@@ -9,6 +9,7 @@
 | `gain_correction_method/gain_correction_method.tex` (+ Overleaf zip) | the gain-versus-charge g(n) method note |
 | `gain_correction_report.pdf`, `gain_correction_Am241.pdf` | effect of `--gain-correction` on Fe-55 (production data) and on the Am-241 lines (made by `report_scripts/`) |
 | `am241_note/` (+ `AMtest_Am241_10-30keV_note_overleaf.zip`) | the Am-241 10-30 keV note: scripts (README there) and LaTeX source |
+| **`notes/HANDOFF_2026-10-25_agmx_phase1-2_audit.md`** | **latest handoff: phase 1 done, phase 2 + physics-audit fixes in progress, next steps** |
 | `notes/OPEN_ITEMS.md` | everything still open, in one list |
 | `notes/CONTEXT_2026-10-24.md` | current hand-over of the clustering study (A_GMX, flags, pipeline integration) |
 | `notes/CONTEXT_2026-10-16.md` | ground rules, environment and decisions (sections 1-3 still apply) |

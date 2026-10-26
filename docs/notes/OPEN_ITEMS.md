@@ -1,5 +1,10 @@
 # Open items (single list, updated 2026-10-25)
 
+**In progress (see `HANDOFF_2026-10-25_agmx_phase1-2_audit.md`):** phase-1 validation analysis, phase 2 (exact pixel
+integrals, EM convergence), physics-audit fixes (A1 row-fit threshold, I1 read-noise estimate, C2 counting gate, B1 hot
+columns as dark; A2 lam bias, G1 muon rule + realistic muon simulation, G2 saturation flag, D2 width bias), and the
+A_GMX document sections for all of these.
+
 Collected from the dated notes in this folder; each item says where its details are. Remove an item here when it
 is done (and say so in the note of that day).
 
