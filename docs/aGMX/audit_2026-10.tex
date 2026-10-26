@@ -55,7 +55,7 @@ $s=0.3$, $\lambda=0.001$: 0.051 $\to$ 0.004 \\
 --- & $\lambda$ clipped at $10^{-3}$\,\el/pix (above DAMIC-M dark currents) & floor $10^{-6}$; detection uses the
 measured single-electron occupancy (section~\ref{sec:lowdark}) & \\
 B1 & bright hot columns hidden by the cluster mask (not flagged); flagged ones only had the mean subtracted (no
-variance) & column excess (clipped mean, no mask) added to the column's $\lambda$, so mean, variance and the Poisson
+variance) & column excess (clipped mean, no mask; revised against the neighbouring columns, section~\ref{sec:phase2}) added to the column's $\lambda$, so mean, variance and the Poisson
 tests follow & +2\,\el/pix column: 50 $\to$ 0 fake few-electron clusters \\
 C2 & counting mode for $s<0.5$\,\el{} although rounding miscounts are $\sim10\,\%$ at $s=0.4$ & counting only for
 $s<0.35$\,\el & $s=0.45$ blank: 313 $\to$ 0 fakes per Mpix \\

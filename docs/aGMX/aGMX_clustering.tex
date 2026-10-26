@@ -248,7 +248,9 @@ $\Sigma_k=\begin{pmatrix}\sigma_{yy}&\sigma_{xy}\\ \sigma_{xy}&\sigma_{xx}\end{p
 elliptical and tilted (a piece of a track). The $+\tfrac1{12}$ is the variance of a uniform distribution on a pixel: evaluating
 a Gaussian at the pixel centre with its variance increased by $\tfrac1{12}$ approximates the pixel integral (good for
 $\sigma\gtrsim0.3$\,px; for very sharp clusters the model's peak is too high --- figure~\ref{fig:resp} shows it --- but the
-energies do not use the model's peak, see section~\ref{sec:energy}). Each cloud is evaluated only within its $4\sigma$ ellipse
+energies do not use the model's peak, see section~\ref{sec:energy}). \textbf{Since phase~2 (section~\ref{sec:phase2})
+uncorrelated clouds ($|\rho|<0.5$, every X-ray) use the exact pixel integral of their Gaussian (error functions) with a
+matching M-step; only strongly correlated track pieces keep the $+\tfrac1{12}$ approximation.} Each cloud is evaluated only within its $4\sigma$ ellipse
 (at least 2\,px, at most 16\,px), as sparse arrays.
 
 \subsection{What is maximised}
@@ -432,7 +434,9 @@ but covered by no cloud (CTI trails along the readout), are added to the nearest
 \end{itemize}
 
 \paragraph{Width.} One-cloud clusters: $\sigma_{xy}=\sqrt{(\sigma_{yy}+\sigma_{xx})/2}$ of the fitted cloud; several clouds:
-second moment of the shared charge, $\sigma_{xy}^2=\tfrac12(\mathrm{var}_y+\mathrm{var}_x)-\tfrac1{12}$.
+second moment of the shared charge, $\sigma_{xy}^2=\tfrac12(\mathrm{var}_y+\mathrm{var}_x)-\tfrac1{12}$. Since the
+audit (D2) the second moment is reported for every cluster, and since phase~2 a single cloud with an exact-pixel EM width
+below 0.4\,px reports the EM width (section~\ref{sec:phase2}).
 
 \paragraph{Significance.} $E_c\big/\sqrt{\sum_p\tilde r_{pc}^2V_p}$.
 
@@ -786,6 +790,7 @@ $k$ 1.0016 $\to$ 0.9994, 59.5-keV tail 0.62 $\to$ 0.23. Injection success is unc
 
 %======================================================================================================
 \input{audit_2026-10}   % phase 1, physics audit, few-electron detection, candidate catalogue (25-26 October)
+\input{phase2_2026-10}  % phase 2: exact pixel integrals, convergence (26 October)
 
 \section{Does \AGMX{} supersede the other methods?}\label{sec:supersede}
 
@@ -823,9 +828,10 @@ integrated and checked by eye on real tracks.
 %======================================================================================================
 \section{Limits and open items}
 \begin{itemize}
-\item \textbf{Very sharp clusters:} the pixel-integration approximation ($\Sigma+\tfrac1{12}$) over-predicts the peak for
-$\sigma\lesssim0.2$\,px; sharing then moves a few \% of a sharp X-ray's charge to a diffuse neighbour (worked example). An exact
-pixel integral (error functions, already in \code{agent\_methods.gauss\_pix}) would fix it at some cost in speed.
+\item \textbf{Very sharp clusters} (done in phase~2, section~\ref{sec:phase2}): the pixel-integration approximation
+($\Sigma+\tfrac1{12}$) over-predicted the peak for $\sigma\lesssim0.3$\,px, and a sharp X-ray next to a diffuse one was lost
+or mis-shared; the exact pixel integral fixes it (found 0.78\,$\to$\,0.99, within 5\,\% 0.35\,$\to$\,0.97) for +20\,\% time.
+Widths below $\approx0.25$\,px remain hard to measure (a centred 0.2-px X-ray is one pixel).
 \item \textbf{Unmodelled images} fall back to WADERs: close pairs are then not resolved (0.15). A background model for those
 images would let GMX run there.
 \item \textbf{EM depends on the seeds} (scale-space seeding is what makes close pairs work); no global optimum is guaranteed.

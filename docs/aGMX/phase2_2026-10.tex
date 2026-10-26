@@ -1,0 +1,138 @@
+% included by aGMX_clustering.tex: phase 2 of 26 October 2026, the exact pixel integrals of the cloud Gaussians.
+% Numbers from the validation runs named in each paragraph (clustering_tests/gmx.py, PIX_EXACT).
+%======================================================================================================
+\section{Exact pixel integrals (phase 2, 26 October)}\label{sec:phase2}
+
+\paragraph{The approximation it replaces.} Step~2 evaluates each cloud at the pixel centre with its covariance increased by
+$\tfrac1{12}$ (the variance of a uniform distribution on the pixel), and the M-step subtracts $\tfrac1{12}$ again. This is
+exact for the second moment but not for the profile: for a cloud with $\sigma\lesssim0.3$\,px almost all the charge is in
+one or two pixels, the approximated peak is too high and the tails too low, and the EM compensates by moving charge
+between neighbouring clouds. The visible symptom was a sharp (front-side) X-ray next to a diffuse one: the sharp one was
+lost or merged in 22\,\% of cases and its energy was within 5\,\% only 35\,\% of the time.
+
+\paragraph{The exact model.} A cloud with covariance $\Sigma_k$ deposits in pixel $p=(i,j)$ (pixel centres at integers)
+the charge
+\begin{equation}
+g_k(p)=A_k\int_{i-\frac12}^{i+\frac12}\!\!\int_{j-\frac12}^{j+\frac12}\N\!\big(\mathbf x;\bm\mu_k,\Sigma_k\big)\,d\mathbf x
+\;=\;A_k\Big[\Phi\big(\tfrac{i+\frac12-\mu_{y}}{\sigma_{y}}\big)-\Phi\big(\tfrac{i-\frac12-\mu_{y}}{\sigma_{y}}\big)\Big]
+\Big[\Phi\big(\tfrac{j+\frac12-\mu_{x}}{\sigma_{x}}\big)-\Phi\big(\tfrac{j-\frac12-\mu_{x}}{\sigma_{x}}\big)\Big],
+\end{equation}
+the product of two one-dimensional pixel integrals (error functions). The product form is exact only for an
+uncorrelated cloud; it is used for clouds with $|\rho|=|\sigma_{xy}|/\sqrt{\sigma_{yy}\sigma_{xx}}<0.5$ (all X-rays),
+and the strongly correlated clouds (pieces of tilted tracks, which are broad along the track) keep the Gaussian with
+$+\tfrac1{12}$. The footprint is unchanged ($4\sigma$ ellipse, at least 2\,px).
+
+\paragraph{A consistent M-step.} The weighted moments of a cloud's share are now the mean and variance of the
+\emph{pixelised} Gaussian, which depend on $\sigma$ and on the sub-pixel position of the centre (a $\sigma=0.2$\,px cloud
+centred on a pixel has variance $0.01$\,px$^2$, centred on a pixel edge $0.25$\,px$^2$). The M-step inverts them
+with tables computed once (variance against $\sigma^2$ and the centre offset; mean against offset and $\sigma^2$):
+$\sigma^2_{y}=V^{-1}\big(\mathrm{var}_y\,|\,\mathrm{frac}(\mu_y)\big)$, $\mu_y=\bar M^{-1}\big(\bar y\,|\,\sigma_y^2\big)$, the
+same for $x$. Without this step the exact model and the moment update disagree, and sharp clouds drift in width.
+
+\paragraph{Cost.} The compiled EM pass (section~\ref{sec:phase1}) has an exact kernel (\code{math.erf}); it agrees with
+the numpy version to $10^{-15}$\,keV. The time per image increases by $\approx20\,\%$ (the prototype without the compiled
+kernel took twice as long).
+
+\paragraph{Two settings that change with it.} (i) The island arbitration (section~\ref{sec:heart}, tracks against several
+X-rays) compares the BIC of fixed-shape clouds with free clouds; the exact model fits sharp X-rays with free clouds
+better, so the margin was recalibrated on the simulation below from 30 to 100. (ii) With the better fit a sharp
+X-ray is one cloud instead of three, and a faint fragment (a few electrons in the tail of a large deposit, fitted as a thin
+``track'' cloud) could then join both the X-ray and the deposit and merge them. A fragment --- a cloud below 50\,\el{} and below 10\,\% of its
+brightest merge partner --- now joins only that partner's cluster: it can be part of a cluster but cannot connect two.
+(The first version used only the 10\,\% condition; next to a 600-keV deposit a 5000-\el{} piece of the same deposit then
+counted as faint and the deposit was split, $+25\,\%$ clusters on the crowded CCD.)
+
+\paragraph{The reported width.} The width that separates front- and back-side events is the second moment of the
+cluster's shared charge minus $\tfrac1{12}$ (audit D2). It is unbiased for $\sigma\ge0.4$\,px, but below it the pixelised
+variance is so small that the noise and dark charge in the footprint dominate it; inverting it exactly does not help
+(0.28 for a 0.2-px X-ray). The exact-pixel EM width is unbiased there, so a single cloud with an EM width below 0.4\,px reports
+it. Single 5.9-keV X-rays (80 per width, 0.15\,\el{} noise):
+
+\begin{table}[H]\centering\footnotesize
+\begin{tabular}{lcccccc}
+\toprule
+true $\sigma$ [px] & 0.2 & 0.3 & 0.4 & 0.6 & 1.0 & 1.5 \\
+\midrule
+moment $-\tfrac1{12}$ (before) & 0.168 & 0.289 & 0.400 & 0.600 & 0.997 & 1.505 \\
+reported now & 0.250 & 0.304 & 0.401 & 0.600 & 0.997 & 1.505 \\
+$E_\mathrm{rec}/E_\mathrm{true}$ (both) & 1.000 & 1.000 & 1.000 & 1.000 & 1.000 & 1.000 \\
+\bottomrule
+\end{tabular}
+\end{table}
+\noindent A 0.2-px cloud puts 99\,\% of its charge in one pixel when centred, so its width is barely measurable. Either
+way it is far below the front/back cut at 1\,px.
+
+\paragraph{Simulation: sharp X-rays next to diffuse ones.} Skipper blanks (0.1\,\el/pix, 0.16\,\el{} noise), 5.9-keV
+X-rays in four scenes, 777 of each (three images):
+
+\begin{table}[H]\centering\footnotesize
+\begin{tabular}{llcccc}
+\toprule
+scene & cluster & \multicolumn{2}{c}{found} & \multicolumn{2}{c}{$|E/E_\mathrm{true}-1|<5\,\%$} \\
+ & & before & exact & before & exact \\
+\midrule
+isolated sharp ($\sigma$ 0.15--0.35) & sharp & 1.000 & 1.000 & 1.000 & 1.000 \\
+sharp 3\,px from diffuse ($\sigma$ 1.2--1.6) & sharp & 0.781 & 0.988 & 0.350 & 0.967 \\
+ & diffuse & 0.773 & 0.981 & 0.349 & 0.967 \\
+two sharp 3\,px apart & sharp & 0.942 & 0.934 & 0.829 & 0.851 \\
+isolated diffuse ($\sigma$ 1.0--1.6) & diffuse & 1.000 & 1.000 & 1.000 & 1.000 \\
+\bottomrule
+\end{tabular}
+\end{table}
+\noindent The energies of the separated pairs are within $\pm0.8\,\%$ (median). Isolated clusters do not change.
+
+\paragraph{Real data.} The wide-test subset (every 12th Fe-55 image-CCD, every 6th Am-241; 80 paired image-CCDs, the
+earlier injection placement), current model against exact pixel integrals:
+
+\begin{table}[H]\centering\footnotesize
+\begin{tabular}{lcc}
+\toprule
+ & before & exact \\
+\midrule
+Fe-55: injected X-ray pairs 4\,px apart resolved & 0.907 & 0.941 \\
+Fe-55: injected X-rays / muons / worms correct & 0.956 / 0.640 / 0.839 & 0.958 / 0.640 / 0.839 \\
+Am-241: injected pairs resolved & 0.607 & 0.655 \\
+real front-side K$\alpha$ (exact $-$ before, median over image-CCDs) & \multicolumn{2}{c}{$-0.2$\,eV (68\,\%: $-1.8$ to $+2.8$)} \\
+K$\alpha$ clusters: $\chi^2$ flag median (90th percentile) & 6.46 (33.3) & 1.31 (4.18) \\
+K$\alpha$ clusters: front-side ($\sigma_{xy}<1$) fraction & 0.591 & 0.587 \\
+time per image-CCD, Fe-55 / Am-241 (median) & 0.8 / 42\,s & 0.9 / 62\,s \\
+\bottomrule
+\end{tabular}
+\end{table}
+\noindent The model now describes the X-rays it fits (the $\chi^2$ flag falls five-fold), so that flag separates
+contaminated clusters better; its cut has to be recalibrated. The real front-side K$\alpha$ does not move.
+
+\paragraph{The crowded CCD.} The 29 Am-241 images of the crowded CCD (AMtest EXT4) with the constrained line fit of
+section~\ref{sec:perf} (\AGMX, $\sigma_{xy}<0.7$, blend $<0.02$):
+
+\begin{table}[H]\centering\footnotesize
+\begin{tabular}{lcccc}
+\toprule
+ & clusters (all) & $k$ & dev/ndf & $Z$ (Np L, $\gamma$\,26.3) \\
+\midrule
+published (section~\ref{sec:perf}) & --- & 1.0014 & 1.98 & 34.3 \\
+before (with the hot-column fix below) & 497\,765 & $1.0016\pm0.0005$ & 1.75 & 32.8 \\
+exact pixel integrals & 504\,440 & $1.0006\pm0.0003$ & 2.59 & 37.4 \\
+\quad + ped $<10$ & & $0.9990\pm0.0003$ & 2.12 & 29.9 (before 26.8) \\
+\bottomrule
+\end{tabular}
+\end{table}
+\noindent The lines are more significant (L$\beta$ $19.9\to22.4\,\sigma$, L$\gamma$ $17.9\to20.6$, $\gamma$\,26.3
+$18.3\to21.1$) and the energy scale is closer to 1, but the deviance per degree of freedom of the spectrum is higher
+(1.75 $\to$ 2.59): the shape between the lines is described less well. This is not understood yet and is an open item.
+
+\paragraph{A hot-column bug found on the way.} On this CCD the hot-column correction of the audit (B1) flagged 2400 of
+the 3348 columns as hot, with $\approx17$\,\el/pix: its clip was iterated with a threshold that grew with the excess it
+measured, so on a charge sheet it swallowed the event charge. Every energy was pulled down by $\approx0.5\,\%$ (59.5-keV
+peak 59.55 $\to$ 59.25\,keV on one image; $k=0.975$ on the 29 images). A hot column is now a single column standing
+out from its $\pm10$ neighbours (one clip around the column median), and nothing is flagged when more than 10\,\% of the
+columns would be; on this CCD no column is flagged, and the published numbers are recovered (table above, ``before'').
+
+\paragraph{EM convergence.} The EM runs a fixed 30 iterations (section~\ref{sec:heart}). Running it to convergence
+(largest centre step $<0.01$\,px, at most 300 iterations; 99.4\,\% of the fits converged) was tested with \AGMX{} on the
+29 crowded images (before the hot-column fix, so $k$ is low in both): $Z=6.2\to4.3$ with the blend cut and $6.0\to7.2$
+with the ped cut in addition, dev/ndf $1.28\to1.04$ and $1.51\to1.41$. There is no consistent gain, and the cluster
+energies were already stable at 30 iterations (Step~2). \textbf{The fixed 30 iterations are kept.}
+
+
+\paragraph{Switch.} \code{AGMX\_PIX\_EXACT=0} restores the earlier pixel model, island margin 30 and merge graph.
