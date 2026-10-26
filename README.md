@@ -79,17 +79,18 @@ Gain correction options (put the input first: `run_WADERs images.txt --gain-corr
 | `--gain-correction per-image` | each image corrected with its own curve; a CCD whose own comb is not usable (e.g. a noisy image) gets the module curve, noted in `summary.txt` | `root_gaincorr_per_image/` |
 | `--gain-correction both` | both, and a comparison per image and CCD (curve, cluster energies, front-side Fe-55 K-alpha) | both folders, `gain_vs_charge/per_image_vs_pooled.csv`; with `--composite` also `composite_per_image/` |
 | `--gain-model interpolated` (default) / `broken` / `linear` | form of g(n): monotone interpolation through the measured points, two straight lines with a fitted knot, or one straight line | |
-| `--gain-combine coherent` (default) / `incoherent` | how several images of a module are combined for the module curve | |
+| `--gain-combine incoherent` (default) / `coherent` | how several images of a module are combined for the module curve | |
 | `--gain-anchor comb` (default) / `fit` | low-charge gain from the comb, or each image's fitted gain | |
 
 Curves and plots are in `gain_vs_charge/` (`module_<ACM>_...` and `image_<image>_...`): the
 local gain `*_gain_vs_charge.png` and the nonlinearity curve `*_nonlinearity.png` (measured charge
 minus peak number against measured charge, `A(n)/g(0) - n`, reference gain g(0) of the curve; its
 quadratic fit is also in the JSON and in `summary.txt`). Several
-images of a module are combined coherently by default (`--gain-combine coherent`): each image is
-converted to electrons with its own curve, the images' teeth are aligned, and all pixels are pooled
-into one comb, which reaches higher charge than one image and does not depend on the image order
-(`--gain-combine incoherent`: comb powers added, the earlier method).
+images of a module are combined incoherently by default (`--gain-combine incoherent`: comb powers
+added, independent of the image order). `--gain-combine coherent` converts each image to electrons
+with its own curve, aligns the images' teeth and pools all pixels into one comb, which reaches higher
+charge; it is not the default because on the Am-241 lines (AMtest EXT4, 2026-10-26) it split the two
+gain periods by 0.6 % (on Fe-55 it was as good or slightly better).
 On the 2025-08-27 Image 5s the per-image and pooled curves gave the same front-side K-alpha to
 within a few eV whenever an image's own comb was usable.
 

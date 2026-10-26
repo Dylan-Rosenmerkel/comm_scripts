@@ -277,12 +277,13 @@ what it does, per image (gain_dc_split.py --per-ext, always on):
   copied unchanged. Each curve also gets <name>_nonlinearity.png in gain_vs_charge/:
   measured charge minus peak number against measured charge, A(n)/g(0) - n, with the
   curve's low-charge gain g(0) as reference (points from the measured local gains, the
-  model, and a quadratic fit). Several images of a module are combined coherently by default
-  (--gain-combine coherent): each image is measured and converted to electrons with its own
-  curve, so the comb teeth of all images line up and their pixels can be pooled into one comb;
-  this reaches higher charge than one image and does not depend on the image order.
-  --gain-combine incoherent adds each image's comb power instead (the earlier method; comb search
-  started at the mean low-charge gain of the images, so also independent of the image order). The comb
+  model, and a quadratic fit). Several images of a module are combined incoherently by default
+  (--gain-combine incoherent): each image's comb power is added (comb search started at the mean
+  low-charge gain of the images, so independent of the image order).
+  --gain-combine coherent converts each image to electrons with its own curve first, so the comb
+  teeth of all images line up and their pixels can be pooled into one comb; this reaches higher
+  charge, but on the Am-241 lines (AMtest EXT4, 2026-10-26) it split the two gain periods by 0.6 %,
+  so it is not the default (on Fe-55 it was as good or slightly better). The comb
   is measured with the run's --autoconfig-args (geometry, gain prior and range), as the JSONs.
   --gain-model interpolated (default) | broken | linear: the form of g(n): monotone
   interpolation through the measured points, two straight lines with a fitted knot, or
@@ -406,10 +407,10 @@ def build_parser(full=False):
     ap.add_argument("--gain-model", choices=("interpolated", "broken", "linear"), default="interpolated",
                     help="with --gain-correction: form of g(n): interpolated (default; monotone interpolation "
                          "through the measured points), broken (two straight lines, fitted knot) or linear")
-    ap.add_argument("--gain-combine", choices=("coherent", "incoherent"), default="coherent",
+    ap.add_argument("--gain-combine", choices=("coherent", "incoherent"), default="incoherent",
                     help="with --gain-correction: how several images of a module are combined for the module curve: "
-                         "coherent (default; each image converted with its own curve, then all pixels pooled - "
-                         "independent of the image order) or incoherent (comb powers added; also order-independent)")
+                         "incoherent (default; comb powers added - independent of the image order) or coherent "
+                         "(each image converted with its own curve, then all pixels pooled; reaches higher charge)")
     ap.add_argument("--gain-anchor", choices=("comb", "fit"), default="comb",
                     help="with --gain-correction: convert with the comb's g(n) including its low-charge gain "
                          "(comb, default), or keep each image's fitted gain and correct only the charge "
