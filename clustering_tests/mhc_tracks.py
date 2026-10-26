@@ -52,20 +52,32 @@ def methods(Q, valid, sw, bg):
     }
 
 
-def inject_eval(Q, valid, sw, rng, per_kind=8, meth=methods):
+def inject_eval(Q, valid, sw, rng, per_kind=8, meth=methods, footprint_check=None):
+    """as wide_test.inject_eval: footprint_check (default; INJECT_FOOTPRINT=0 for the earlier centre-only check)
+    places an object only where its whole footprint (+2 px) avoids real events"""
+    import inject_utils as IU
+    fc = IU.FOOTPRINT_CHECK if footprint_check is None else footprint_check
     thr = 8.0 if sw < 2 else 60.0
     busy = ndimage.binary_dilation(Q > thr, iterations=12) | ~ndimage.binary_erosion(valid, iterations=40)
     ys, xs = np.nonzero(~busy)
-    pos = []
+    pos, sims = [], []
     for i in rng.permutation(ys.size):
         y, x = ys[i], xs[i]
         if all((y - a) ** 2 + (x - b) ** 2 > 75 ** 2 for a, b in pos):
+            if fc:
+                kind = KINDS[len(pos) % len(KINDS)]
+                sm = sim(rng, kind, y + rng.uniform(-.5, .5), x + rng.uniform(-.5, .5))
+                iy, ix = np.round(sm[0]).astype(int), np.round(sm[1]).astype(int)
+                inb = (iy >= 2) & (iy < Q.shape[0] - 2) & (ix >= 2) & (ix < Q.shape[1] - 2)
+                if not inb.all() or IU.footprint_busy(busy, iy, ix):
+                    continue
+                sims.append(sm)
             pos.append((y, x))
         if len(pos) >= per_kind * len(KINDS): break
     Qi = Q.copy(); objs = []
     for j, (y0, x0) in enumerate(pos):
         kind = KINDS[j % len(KINDS)]
-        y, x, info = sim(rng, kind, y0 + rng.uniform(-.5, .5), x0 + rng.uniform(-.5, .5))
+        y, x, info = sims[j] if fc else sim(rng, kind, y0 + rng.uniform(-.5, .5), x0 + rng.uniform(-.5, .5))
         iy, ix = np.round(y).astype(int), np.round(x).astype(int)
         ok = (iy >= 0) & (iy < Q.shape[0]) & (ix >= 0) & (ix < Q.shape[1])
         np.add.at(Qi, (iy[ok], ix[ok]), 1.0)

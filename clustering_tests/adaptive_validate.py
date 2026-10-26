@@ -19,7 +19,9 @@ METHODS = os.environ.get("METHODS", "MHC,adaptive").split(",")
 def factory(Q, valid, bg, sw=None):
     """name -> callable for the methods to validate (env METHODS)"""
     import gmx as GX
-    f = {"MHC": lambda: MH.mhc(Q, valid, bg),
+    f = {"WADERs": lambda: CM.wader(Q, sw, 10, 30)[0],              # WADERs-like hysteresis (as mhc_tracks)
+         "MFD+G": lambda: [dict(c) for c in AM.mf_detect(Q, valid, bg)[0]],
+         "MHC": lambda: MH.mhc(Q, valid, bg),
          "adaptive": lambda: AD.adaptive_cluster(Q, valid, bg, sigma_crowd=sw),
          "adaptive+GMX": lambda: AD.adaptive_cluster(Q, valid, bg, sigma_crowd=sw, engine="gmx"),
          "GMX": lambda: GX.general_cluster(Q, valid, bg)}

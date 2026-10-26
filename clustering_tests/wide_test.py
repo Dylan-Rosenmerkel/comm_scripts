@@ -102,19 +102,35 @@ def sim(rng, kind, y0, x0):
 KINDS = ["fe55"] * 3 + ["muon", "worm", "pair4"]
 
 
-def inject_eval(Q, valid, sw, rng, n_obj=24, sep=40):
+from inject_utils import FOOTPRINT_CHECK, footprint_busy  # noqa: E402
+
+
+def inject_eval(Q, valid, sw, rng, n_obj=24, sep=40, footprint_check=None):
+    """inject n_obj objects (KINDS in turn) into quiet places of Q and score every method on them.
+    footprint_check (default since 2026-10-25, env INJECT_FOOTPRINT=0 for the earlier behaviour): an object is placed
+    only where its whole footprint (+2 px) avoids real events; before, only its centre was checked, so a 15-35 px
+    track could cross a real event and every method 'failed' on it."""
+    fc = FOOTPRINT_CHECK if footprint_check is None else footprint_check
     busy = ndimage.binary_dilation(Q > 8.0, iterations=6) | ~ndimage.binary_erosion(valid, iterations=20)
     ys, xs = np.nonzero(~busy)
-    pos = []
+    pos, sims = [], []
     for i in rng.permutation(ys.size)[:200000]:
         y, x = ys[i], xs[i]
         if all((y - a) ** 2 + (x - b) ** 2 > sep ** 2 for a, b in pos):
+            if fc:
+                kind = KINDS[len(pos) % len(KINDS)]
+                sm = sim(rng, kind, y + rng.uniform(-.5, .5), x + rng.uniform(-.5, .5))
+                iy, ix = np.round(sm[0]).astype(int), np.round(sm[1]).astype(int)
+                inb = (iy >= 2) & (iy < Q.shape[0] - 2) & (ix >= 2) & (ix < Q.shape[1] - 2)
+                if not inb.all() or footprint_busy(busy, iy, ix):
+                    continue
+                sims.append(sm)
             pos.append((y, x))
         if len(pos) >= n_obj: break
     Qi = Q.copy(); objs = []
     for j, (y0, x0) in enumerate(pos):
         kind = KINDS[j % len(KINDS)]
-        y, x, E, c = sim(rng, kind, y0 + rng.uniform(-.5, .5), x0 + rng.uniform(-.5, .5))
+        y, x, E, c = sims[j] if fc else sim(rng, kind, y0 + rng.uniform(-.5, .5), x0 + rng.uniform(-.5, .5))
         iy, ix = np.round(y).astype(int), np.round(x).astype(int)
         ok = (iy >= 0) & (iy < Q.shape[0]) & (ix >= 0) & (ix < Q.shape[1])
         np.add.at(Qi, (iy[ok], ix[ok]), 1.0)
