@@ -170,24 +170,35 @@ def detection_bg(Qc, valid, bg, half=30, lam_grid=np.geomspace(1e-6, 0.9, 400), 
     return AM.Background(bg.o, lam, bg.s2, bg.mask, bg.rows)
 
 
-def hot_columns_as_dark(Q, valid, bg, nsig=5.0, min_excess=0.05, n_min=20):
+def hot_columns_as_dark(Q, valid, bg, nsig=5.0, min_excess=0.05, n_min=20, ref_cols=21, max_frac=0.1):
     """B1 (audit): hot columns as extra dark charge. Per column, the excess of (Q - bg.mean) over the active pixels
-    is a clipped mean (iterative 5-sigma clip of the cluster pixels; no cluster mask, which hid bright columns); a
-    significant excess d is added to the column's dark charge (lam += d, so mean and variance, the Poisson checks and
-    the few-electron finder all follow) instead of being subtracted as a constant. Returns (new background, flags)."""
+    is a clipped mean (one 5-sigma clip around the column median; no cluster mask, which hid bright columns). A hot
+    column is a single column: its excess d is measured against the median excess of the ref_cols neighbouring
+    columns (event charge and charge sheets are smooth across columns), and a significant d is added to the column's
+    dark charge (lam += d, so mean and variance, the Poisson checks and the few-electron finder all follow) instead of
+    being subtracted as a constant. When more than max_frac of the columns would be flagged the image has no hot
+    columns but a charge sheet: nothing is flagged. (The first version iterated the clip with a threshold that grew
+    with the excess; on the crowded Am-241 CCD it flagged 2400 of 3348 columns with ~17 e-/pix and pulled every
+    energy down by 0.5 %.) Returns (new background, flags)."""
     R = np.where(valid, Q - bg.mean, np.nan)
-    v0 = np.nanmedian(np.where(valid, bg.var, np.nan), axis=0)
-    ex = np.nanmedian(R, axis=0)
-    for _ in range(3):
-        thr = ex + 5 * np.sqrt(np.maximum(v0 + np.maximum(ex, 0), 1e-6))
-        keep = np.isfinite(R) & (R < thr[None, :])
-        n = keep.sum(0)
-        ex = np.where(n > 0, np.where(keep, R, 0).sum(0) / np.maximum(n, 1), 0.0)
-    err = np.sqrt((v0 + np.maximum(ex, 0)) / np.maximum(n, 1))
-    hot = (n > n_min) & (ex > nsig * err) & (ex > min_excess)
+    cols = valid.sum(0) > n_min
+    v0 = np.nanmedian(np.where(valid, bg.var, np.nan)[:, cols], axis=0)
+    med = np.nanmedian(R[:, cols], axis=0)
+    thr = med + nsig * np.sqrt(np.maximum(v0 + np.maximum(med, 0), 1e-6))
+    keep = np.isfinite(R[:, cols]) & (R[:, cols] < thr[None, :])
+    n = keep.sum(0)
+    ex_c = np.where(keep, R[:, cols], 0).sum(0) / np.maximum(n, 1)
+    ref = ndimage.median_filter(ex_c, ref_cols, mode="nearest")
+    d_c = ex_c - ref
+    err = np.sqrt((v0 + np.maximum(ex_c, 0)) / np.maximum(n, 1))
+    hot_c = (n > n_min) & (d_c > nsig * err) & (d_c > min_excess)
+    hot = np.zeros(Q.shape[1], bool); d = np.zeros(Q.shape[1])
+    if hot_c.sum() > max_frac * cols.sum():
+        return bg, hot
+    hot[cols] = hot_c; d[cols] = d_c
     if not hot.any():
         return bg, hot
-    lam = bg.lam.copy(); lam[:, hot] += ex[hot][None, :]
+    lam = bg.lam.copy(); lam[:, hot] += d[hot][None, :]
     return AM.Background(bg.o, lam, bg.s2, bg.mask, bg.rows), hot
 
 
