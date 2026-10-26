@@ -207,5 +207,56 @@ class PhysicsAuditFixes(unittest.TestCase):
         self.assertEqual(MH.classify_ext(20 * 0.9, sh, 60), "extended")
 
 
+class ExactPixelModel(unittest.TestCase):
+    """phase 2: exact pixel integrals of the cloud Gaussians (gmx.PIX_EXACT, docs/aGMX 'Phase 2')"""
+    @classmethod
+    def setUpClass(cls):
+        import gmx as GX
+        cls.GX = GX
+        cls.shape = (200, 1500)
+        cls.valid = np.zeros(cls.shape, bool); cls.valid[3:-3, 3:-3] = True
+
+    blank = PhysicsAuditFixes.blank
+
+    def test_pixel_variance_inversion(self):
+        GX = self.GX
+        for s2 in (0.04, 0.25, 1.0):
+            for mu in (0.0, 0.3, 0.5):
+                k = np.arange(-30, 31); p = GX._ndtr((k + .5 - mu) / np.sqrt(s2)) - GX._ndtr((k - .5 - mu) / np.sqrt(s2))
+                m = (p * k).sum(); v = (p * (k - m) ** 2).sum()
+                self.assertAlmostEqual(float(GX.pix_s2_from_var(np.array([v]), np.array([mu]))[0]), s2, delta=0.02 * s2 + 1e-3)
+                self.assertAlmostEqual(float(GX.pix_mu_from_mean(np.array([m]), np.array([s2]))[0]), mu, delta=0.02)
+
+    def test_numba_matches_numpy(self):
+        GX = self.GX
+        if not GX.PIX_EXACT or not hasattr(GX, "em_numba"):
+            self.skipTest("exact pixel model off or numba not installed")
+        rng = np.random.default_rng(8); Q = self.blank(0.01, 0.15, 8)
+        for j in range(25):
+            s = (0.2, 0.5, 1.3)[j % 3]
+            np.add.at(Q, (np.round(100 + rng.normal(0, s, 1580)).astype(int), np.round(40 + 55 * j + rng.normal(0, s, 1580)).astype(int)), 1.0)
+        E = {}
+        for nb in (True, False):
+            old, GX.EM_NUMBA = GX.EM_NUMBA, nb
+            try:
+                E[nb] = np.sort([c["E"] for c in GX.general_cluster(Q, self.valid)])
+            finally:
+                GX.EM_NUMBA = old
+        self.assertEqual(E[True].size, E[False].size)
+        self.assertLess(np.abs(E[True] - E[False]).max(), 1e-9)
+
+    def test_sharp_width_is_unbiased(self):
+        """a sharp (sigma 0.25 px) X-ray: exact-pixel EM width within ~10 % (the -1/12 moment is ~16 % low, noise-dominated)"""
+        if not self.GX.PIX_EXACT:
+            self.skipTest("exact pixel model off")
+        rng = np.random.default_rng(9)
+        Q = self.blank(0.01, 0.16, 9); pos = [(100 + rng.uniform(-40, 40), 60 + 70 * j + rng.uniform(0, 1)) for j in range(20)]
+        for y0, x0 in pos:
+            np.add.at(Q, (np.floor(y0 + rng.normal(0, .25, 1580) + .5).astype(int), np.floor(x0 + rng.normal(0, .25, 1580) + .5).astype(int)), 1.0)
+        cl = self.GX.general_cluster(Q, self.valid)
+        w = [near(cl, y, x, 2)[0]["sxy"] for y, x in pos]
+        self.assertLess(abs(np.median(w) / .25 - 1), 0.12)
+
+
 if __name__ == "__main__":
     unittest.main()

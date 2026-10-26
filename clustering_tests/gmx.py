@@ -41,6 +41,80 @@ import mhc as MH
 E_PER_E = AM.E_PER_E
 EIGHT = np.ones((3, 3), bool)
 PIX = 1.0 / 12.0
+# phase 2 (2026-10): the model value of a cloud in a pixel is the exact integral of its Gaussian over the 1x1 pixel
+# (product of two error-function differences) for clouds with |correlation| < PIX_RHO, and the M-step inverts the
+# pixelised mean and variance (tables below) instead of subtracting 1/12; strongly correlated (track) clouds keep the
+# Gaussian-at-centre approximation with the 1/12 term. AGMX_PIX_EXACT=0 restores the approximation everywhere.
+PIX_EXACT = os.environ.get("AGMX_PIX_EXACT", "1") != "0"
+PIX_RHO = 0.5
+SHARP_FIT = 0.4           # single clouds with an exact-pixel EM width below this report it (moment below)
+from scipy.special import ndtr as _ndtr
+
+
+def _pixvar_table(nd=26, ns=300):
+    """variance of the pixelised 1-D Gaussian (pixel integrals, pixel centres at integers) vs the physical sigma^2 and
+    the sub-pixel offset of the centre (0..0.5), made monotonic in sigma^2 for the inversion"""
+    d = np.linspace(0, 0.5, nd); s2 = np.geomspace(1e-3, 30.0, ns)
+    k = np.arange(-40, 41)[None, None, :]
+    sg = np.sqrt(s2)[None, :, None]; dd = d[:, None, None]
+    p = _ndtr((k + 0.5 - dd) / sg) - _ndtr((k - 0.5 - dd) / sg)
+    m = (p * k).sum(-1, keepdims=True)
+    return d, s2, np.maximum.accumulate((p * (k - m) ** 2).sum(-1), axis=1)
+
+
+def _pixmean_table(nd=101, ns=120):
+    """mean of the pixelised 1-D Gaussian vs sigma^2 and the centre offset (-0.5..0.5)"""
+    d = np.linspace(-0.5, 0.5, nd); s2 = np.geomspace(1e-3, 30.0, ns)
+    k = np.arange(-40, 41)[None, None, :]
+    sg = np.sqrt(s2)[:, None, None]; dd = d[None, :, None]
+    p = _ndtr((k + 0.5 - dd) / sg) - _ndtr((k - 0.5 - dd) / sg)
+    return d, s2, np.maximum.accumulate((p * k).sum(-1), axis=1)
+
+
+_PV = None
+_PM = None
+
+
+def pix_mu_from_mean(m_abs, s2):
+    """centre whose pixelised mean (pixel-integrated Gaussian of variance s2) equals the observed mean m_abs"""
+    global _PM
+    if _PM is None:
+        _PM = _pixmean_table()
+    d, s2g, Mt = _PM
+    c = np.round(m_abs); f = m_abs - c
+    i = np.clip(np.searchsorted(s2g, s2), 0, s2g.size - 1)
+    out = np.empty(np.shape(m_abs))
+    for r in np.unique(i):
+        sel = i == r
+        out[sel] = np.interp(f[sel], Mt[r], d)
+    return c + out
+
+
+def pix_s2_from_var(var, mu, left=None):
+    """physical sigma^2 whose pixelised variance at centre offset frac(mu) equals var (per axis); below the table
+    (sigma^2 < 1e-3) -> left (default the table's first value)"""
+    global _PV
+    if _PV is None:
+        _PV = _pixvar_table()
+    d, s2, V = _PV
+    off = np.abs(mu - np.round(mu))
+    i = np.clip(np.round(off / 0.5 * (d.size - 1)).astype(int), 0, d.size - 1)
+    out = np.empty(np.shape(var))
+    for r in np.unique(i):
+        sel = i == r
+        out[sel] = np.interp(var[sel], V[r], s2, left=s2[0] if left is None else left, right=s2[-1])
+    return out
+
+
+def _exact_mstep(mix, mu, syy, sxx, s_min2, s_max2):
+    """consistent M-step for the exact-pixel clouds: syy/sxx are the pixel moments minus PIX, mu the pixel means"""
+    rho = mix.S[:, 2] / np.sqrt(np.maximum(mix.S[:, 0] * mix.S[:, 1], 1e-12))
+    xe = np.abs(rho) < PIX_RHO
+    if xe.any():
+        syy[xe] = pix_s2_from_var(syy[xe] + PIX, mix.mu[xe, 0]); sxx[xe] = pix_s2_from_var(sxx[xe] + PIX, mix.mu[xe, 1])
+        mu[xe] = np.c_[pix_mu_from_mean(mu[xe, 0], np.clip(syy[xe], s_min2, s_max2)),
+                       pix_mu_from_mean(mu[xe, 1], np.clip(sxx[xe], s_min2, s_max2))]
+    return mu, syy, sxx
 
 
 # ------------------------------------------------------------------------------------------------ background
@@ -208,6 +282,14 @@ def evaluate(mix, shape, valid, rmax=16, qmax=16.0, r_min2=4.0):
         q = ia[ks][:, None] * dy * dy + ic[ks][:, None] * dx * dx + 2 * ib[ks][:, None] * dy * dx
         inside &= (q <= qmax) | (dy * dy + dx * dx <= r_min2)      # footprint: 4 sigma, at least 2 px
         g = norm[ks][:, None] * np.exp(-0.5 * q)
+        if PIX_EXACT:
+            # exact pixel integral of the physical Gaussian (product of the 1-D integrals) for uncorrelated clouds
+            syy, sxx = mix.S[ks, 0], mix.S[ks, 1]
+            ex = np.abs(mix.S[ks, 2] / np.sqrt(np.maximum(syy * sxx, 1e-12))) < PIX_RHO
+            if ex.any():
+                sy = np.sqrt(np.maximum(syy, 1e-4))[:, None]; sx = np.sqrt(np.maximum(sxx, 1e-4))[:, None]
+                ge = mix.A[ks][:, None] * (_ndtr((dy + 0.5) / sy) - _ndtr((dy - 0.5) / sy)) * (_ndtr((dx + 0.5) / sx) - _ndtr((dx - 0.5) / sx))
+                g = np.where(ex[:, None], ge, g)
         kk = np.broadcast_to(ks[:, None], py.shape)
         I.append((pyc * W + pxc)[inside]); K.append(kk[inside]); G.append(g[inside]); DY.append(dy[inside]); DX.append(dx[inside])
     if not I:
@@ -240,6 +322,8 @@ def em(mix, Rp, eps, valid, n_iter=30, s_min2=0.02, s_max2=25.0, fix_shape=False
             syy = np.bincount(K, wr * ey * ey, n) / np.maximum(Wk, 1e-12) - PIX
             sxx = np.bincount(K, wr * ex * ex, n) / np.maximum(Wk, 1e-12) - PIX
             sxy = np.bincount(K, wr * ey * ex, n) / np.maximum(Wk, 1e-12)
+            if PIX_EXACT:
+                mu, syy, sxx = _exact_mstep(mix, mu, syy, sxx, s_min2, s_max2)
             if iso:
                 syy = sxx = 0.5 * (syy + sxx); sxy = np.zeros_like(syy)
             syy = np.clip(syy, s_min2, s_max2); sxx = np.clip(sxx, s_min2, s_max2)
@@ -264,14 +348,22 @@ def em(mix, Rp, eps, valid, n_iter=30, s_min2=0.02, s_max2=25.0, fix_shape=False
 # AGMX_NUMBA=0 in the environment selects the pure-numpy em().
 EM_NUMBA = os.environ.get("AGMX_NUMBA", "1") != "0"
 try:
+    import math
     import numba as _nb
 
+    @_nb.njit(inline="always", cache=True)
+    def _pixg(prm, k, dy, dx, q):
+        if prm[k, 7] > 0.0:          # exact pixel integral (erf), 1/sqrt(2) folded into prm[k, 8:10]
+            iy = prm[k, 8]; ix = prm[k, 9]
+            return prm[k, 10] * (math.erf((dy + 0.5) * iy) - math.erf((dy - 0.5) * iy)) * (math.erf((dx + 0.5) * ix) - math.erf((dx - 0.5) * ix))
+        return prm[k, 3] * np.exp(-0.5 * q)
+
     @_nb.njit(cache=True, fastmath=False)
-    def _em_pass(A, muy, mux, syy, sxx, sxy, Rpf, epsf, validf, H, W, qmax, rmax, r_min2):
+    def _em_pass(A, muy, mux, syy, sxx, sxy, Rpf, epsf, validf, H, W, qmax, rmax, r_min2, exact, rho_max):
         n = A.size
         M = np.zeros(H * W)
         Wk = np.zeros(n); Sy = np.zeros(n); Sx = np.zeros(n); Syy = np.zeros(n); Sxx = np.zeros(n); Sxy = np.zeros(n)
-        prm = np.empty((n, 8))
+        prm = np.zeros((n, 11))
         for k in range(n):
             a = syy[k] + 1.0 / 12.0; c = sxx[k] + 1.0 / 12.0; b = sxy[k]
             tr = 0.5 * (a + c); dd = np.sqrt(max(0.25 * (a - c) ** 2 + b * b, 0.0))
@@ -281,6 +373,10 @@ try:
             prm[k, 0] = c / det; prm[k, 1] = a / det; prm[k, 2] = -b / det
             prm[k, 3] = A[k] / (2 * np.pi * np.sqrt(det)); prm[k, 4] = r
             prm[k, 5] = np.round(muy[k]); prm[k, 6] = np.round(mux[k])
+            if exact and abs(b) < rho_max * np.sqrt(max(syy[k] * sxx[k], 1e-12)):
+                prm[k, 7] = 1.0
+                prm[k, 8] = 1.0 / (np.sqrt(2.0) * np.sqrt(max(syy[k], 1e-4))); prm[k, 9] = 1.0 / (np.sqrt(2.0) * np.sqrt(max(sxx[k], 1e-4)))
+                prm[k, 10] = 0.25 * A[k]
         for k in range(n):
             ia, ic, ib, nm, r, cy, cx = prm[k, 0], prm[k, 1], prm[k, 2], prm[k, 3], int(prm[k, 4]), int(prm[k, 5]), int(prm[k, 6])
             for oy in range(-r, r + 1):
@@ -295,7 +391,7 @@ try:
                     dx = px - mux[k]
                     q = ia * dy * dy + ic * dx * dx + 2 * ib * dy * dx
                     if q <= qmax or dy * dy + dx * dx <= r_min2:
-                        M[i] += nm * np.exp(-0.5 * q)
+                        M[i] += _pixg(prm, k, dy, dx, q)
         for k in range(n):
             ia, ic, ib, nm, r, cy, cx = prm[k, 0], prm[k, 1], prm[k, 2], prm[k, 3], int(prm[k, 4]), int(prm[k, 5]), int(prm[k, 6])
             w0 = 0.0; s1y = 0.0; s1x = 0.0; s2y = 0.0; s2x = 0.0; s2xy = 0.0
@@ -311,7 +407,7 @@ try:
                     dx = px - mux[k]
                     q = ia * dy * dy + ic * dx * dx + 2 * ib * dy * dx
                     if q <= qmax or dy * dy + dx * dx <= r_min2:
-                        g = nm * np.exp(-0.5 * q)
+                        g = _pixg(prm, k, dy, dx, q)
                         wr = g / (M[i] + epsf[i]) * Rpf[i]
                         w0 += wr; s1y += wr * dy; s1x += wr * dx; s2y += wr * dy * dy; s2x += wr * dx * dx; s2xy += wr * dy * dx
             Wk[k] = w0; Sy[k] = s1y; Sx[k] = s1x; Syy[k] = s2y; Sxx[k] = s2x; Sxy[k] = s2xy
@@ -325,7 +421,7 @@ try:
                 break
             Wk, Sy, Sx, Syy, Sxx, Sxy = _em_pass(mix.A, np.ascontiguousarray(mix.mu[:, 0]), np.ascontiguousarray(mix.mu[:, 1]),
                                                 np.ascontiguousarray(mix.S[:, 0]), np.ascontiguousarray(mix.S[:, 1]), np.ascontiguousarray(mix.S[:, 2]),
-                                                rf, ef, vf, H, W, 16.0, 16.0, 4.0)
+                                                rf, ef, vf, H, W, 16.0, 16.0, 4.0, PIX_EXACT, PIX_RHO)
             ok = Wk > 1e-3
             Wd = np.maximum(Wk, 1e-12)
             my = Sy / Wd; mx = Sx / Wd
@@ -335,6 +431,8 @@ try:
                 syy = Syy / Wd - my * my - PIX
                 sxx = Sxx / Wd - mx * mx - PIX
                 sxy = Sxy / Wd - my * mx
+                if PIX_EXACT:
+                    mu, syy, sxx = _exact_mstep(mix, mu, syy, sxx, s_min2, s_max2)
                 if iso:
                     syy = sxx = 0.5 * (syy + sxx); sxy = np.zeros_like(syy)
                 syy = np.clip(syy, s_min2, s_max2); sxx = np.clip(sxx, s_min2, s_max2)
@@ -373,7 +471,7 @@ def significance(mix, Rp, V, valid):
 
 
 # ------------------------------------------------------------------------------------------------ merging
-def merge_graph(mix, r_merge=0.5, w_ratio=1.6, elong=1.4, cos_min=0.8, nt=17):
+def merge_graph(mix, r_merge=0.5, w_ratio=1.6, elong=1.4, cos_min=0.8, nt=17, f_bridge=0.1):
     n = len(mix)
     if n < 2:
         return np.arange(n)
@@ -417,6 +515,19 @@ def merge_graph(mix, r_merge=0.5, w_ratio=1.6, elong=1.4, cos_min=0.8, nt=17):
     f_n0 = np.where(narrow_i, f[:, 0], f[:, -1]); f_n1 = np.where(narrow_i, f[:, 1], f[:, -2])
     narrow_is_mode = f_n0 > f_n1
     m = (ridge > r_merge) & ((wr < w_ratio) | track | ~narrow_is_mode)
+    if PIX_EXACT and m.any():
+        # phase 2: a faint cloud (< f_bridge of the amplitude of its brightest merge partner, e.g. a 5-e- tail
+        # fragment fitted as a thin 'track') joins only that partner's cluster: it cannot bridge an X-ray to the big
+        # deposit next to it
+        ii, jj = i[m], j[m]
+        best = np.full(n, -1); bA = np.zeros(n)
+        for u, v in ((ii, jj), (jj, ii)):
+            o = np.argsort(mix.A[v], kind="stable")
+            u_, v_ = u[o], v[o]
+            best[u_] = v_; bA[u_] = mix.A[v_]                 # last write = brightest partner
+        faint = mix.A < f_bridge * bA
+        keep = (~faint[ii] | (best[ii] == jj)) & (~faint[jj] | (best[jj] == ii))
+        mi = np.nonzero(m)[0]; m = m.copy(); m[mi[~keep]] = False
     G = sparse.coo_matrix((np.ones(m.sum()), (i[m], j[m])), shape=(n, n))
     return connected_components(G, directed=False)[1]
 
@@ -536,7 +647,7 @@ def _aggregate(I, K, G, M, lab, H, W):
 def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, nsig_res=5.0, n_iter=30, sig_min=4.0,
                     r_merge=0.5, w_ratio=1.6, hotcol=True, p_count=1e-5, count_E_max=100, grow=3, return_info=False,
                     count_mode="pix", count_fakes=0.08,
-                    residual_pass=True, eps_k=1.0, arbitrate=True, link_alpha=0.01, island_max=4000, bic_margin=30.0, f_sat=0.01, seed_mode="scalespace",
+                    residual_pass=True, eps_k=1.0, arbitrate=True, link_alpha=0.01, island_max=4000, bic_margin=None, f_sat=0.01, seed_mode="scalespace",
                     sat_e_max=1.0, ped_ring=(5.0, 8.0), ped_q=25, return_pixels=False):
     bg = get_bg(Q, valid, bg)
     H, W = Q.shape
@@ -609,6 +720,8 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
         M = np.bincount(I, G, H * W)
         if arbitrate:
             island = (Qc > M2.link_threshold(bg, link_alpha)) & valid
+            if bic_margin is None:
+                bic_margin = 100.0 if PIX_EXACT else 30.0     # exact pixel model: free clouds fit sharp X-rays better (sim-calibrated, docs/aGMX phase 2)
             lab, dec = island_arbitration(lab, mix, R, V, M.reshape(H, W), island, valid, eps, island_max=island_max, margin=bic_margin)
             info["decisions"] = dec
         rf = R.ravel()
@@ -720,6 +833,10 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
             # 18 % for 200-e- clusters at 1 e-/pix); the second moment of the cluster's shared charge is unbiased to
             # ~1 % for Fe-55 (2-6 % high for 200 e- at 1 e-/pix) -> it is the reported width (depth estimator)
             sx = float(sxy_m[k]) if PHYS_FIX else sx_fit
+            # phase 2: below ~0.4 px the moment is dominated by the noise and dark charge of the footprint (0.27 for a
+            # 0.2-px X-ray) while the exact-pixel EM width is unbiased to a few % -> sharp single clouds report the fit
+            if PIX_EXACT and ncomp[k] == 1 and sx_fit < SHARP_FIT:
+                sx = sx_fit
             e = float(E[k])
             c = dict(E=e * E_PER_E, y=float(cy[k]), x=float(cx[k]), sxy=sx, sxy_fit=sx_fit, sxy_mom=float(sxy_m[k]), n_comp=int(ncomp[k]),
                      sig=float(e / np.sqrt(max(varE[k], 1e-9))), edge=bool(edge[k]), blend=float(blend[k]),
