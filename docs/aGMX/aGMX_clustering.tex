@@ -22,15 +22,17 @@
 \title{\textbf{A\_GMX: adaptive Gaussian-mixture clustering\\for skipper-CCD images}\\[4pt]
 \large what every step does, the mathematics behind it, and how it performs against WADERs}
 \author{comm\_scripts clustering study}
-\date{23--25 October 2026}
+\date{code of 27 October 2026}
 
 \begin{document}
 \maketitle
 
-\noindent\small\sloppy Code: \code{clustering\_tests/adaptive.py} (\code{adaptive\_cluster(..., engine="gmx")}) and
-\code{clustering\_tests/gmx.py} (\code{general\_cluster}). Figures are produced by \code{make\_agmx\_figures.py} (every
-algorithm step, run on a real image) and \code{make\_agmx\_perf.py} (performance). All numbers are recomputed from the saved
-results in \path{~/Documents/comm_scripts_data/session_2026-10-23_clustering/clustering_2026-10-25/}.\normalsize
+\noindent\small\sloppy Code: \code{clustering\_tests/adaptive.py} (\code{adaptive\_cluster(..., engine="gmx")}),
+\code{clustering\_tests/gmx.py} (\code{general\_cluster}), \code{clustering\_tests/agent\_methods.py} (background),
+\code{clustering\_tests/fe\_candidates.py} (few-electron candidate catalogue); in the pipeline \code{run\_AGMX} or
+\code{run\_WADERs --clusterer agmx}. The step figures are produced on a real image by \code{make\_agmx\_figures.py}
+(\code{AGMX\_FIG\_OUT=figures\_current MUON\_PHYS=1}); the performance figures by \code{make\_agmx\_perf.py}. A short
+version of this document is \code{aGMX\_compact.pdf}.\normalsize
 
 \tableofcontents
 \clearpage
@@ -40,48 +42,53 @@ results in \path{~/Documents/comm_scripts_data/session_2026-10-23_clustering/clu
 
 \paragraph{What it is.} \AGMX{} clusters a calibrated skipper-CCD image (pixel values in electrons) without deciding pixel by
 pixel ``in or out''. It describes the image as \textbf{empty background + a sum of Gaussian charge clouds}, fits all clouds at
-once, shares every pixel's charge among the clouds in proportion to what each predicts there, and then groups clouds into
-physical deposits with two tests: a geometric one (is there a dip between two clouds?) and a statistical one (is this region
-several round X-rays, or one irregular deposit?). A single switch in front of it hands images whose background is \emph{not}
-dark current + read noise to WADERs-like hysteresis clustering.
+once with the exact pixel integral of each cloud, shares every pixel's charge among the clouds in proportion to what each
+predicts there, and then groups clouds into physical deposits with two tests: a geometric one (is there a dip between two
+clouds?) and a statistical one (is this region several round X-rays, or one irregular deposit?). A switch in front of it hands
+images whose background is \emph{not} dark current + read noise to WADERs-like hysteresis clustering. On electron-counting
+CCDs a few-electron finder with a calibrated false-alarm rate runs as well, and a candidate catalogue for rare-event
+searches is written after it.
 
 \paragraph{Why.} WADERs' fixed thresholds (10 and 30 times the pedestal sigma) cut the tails of diffuse clusters (energies up
-to 8\,\% low on average, 26\,\% on the worst CCD), merge X-rays closer than $\sim$6\,px, cannot see few-electron events, and on
-a crowded CCD every threshold is a compromise between merging and cutting.
+to 8\,\% low on average, 26\,\% on the worst CCD; on the back side of noisy images 3--6\,\%), merge X-rays closer than
+$\sim$6\,px, cannot see few-electron events, and on a crowded CCD every threshold is a compromise between merging and cutting.
 
-\paragraph{How it does} (details in section~\ref{sec:perf}):
+\paragraph{How it does} (section~\ref{sec:perf}; the column ``code'' gives the code version of each number):
 
 \begin{table}[H]\centering\small
-\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}X cc}
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}X ccc}
 \toprule
- & WADERs & \AGMX \\
+ & WADERs & \AGMX & code \\
 \midrule
-Fe-55 energy of injected clusters, width $0.3\to1.8$\,px (median of 8 CCDs) & $0.997\to0.921$ & $1.000\to1.000$ \\
-worst CCD at width 1.8\,px & 0.737 & 0.994 \\
-real Fe-55 K$\alpha$ (front side): mean / spread over 8 CCDs & 0.9928 / 1.32\,\% & 0.9969 / 0.23\,\% \\
-two diffuse Fe-55 clusters 5\,px apart resolved & 0.00 & 0.93 \\
-wide test, 878 image-CCDs: Fe-55 / muon / worm / 4-px pair success & 0.86 / 0.59 / 0.74 / 0.11 & 0.93 / 0.64 / 0.79 / 0.88 \\
-Fe-55 energy resolution (rms of $E/E_\mathrm{true}$), wide test & 0.52\,\% & 0.19\,\% \\
-crowded Am-241 CCD (29 images): Np L$\beta$ / L$\gamma$ / $\gamma$\,26.3 / Ag K significance & 15.5 / 16.0 / 14.8 / 12.9\,$\sigma$ & 20.8 / 19.2 / 19.9 / 18.1\,$\sigma$ \\
-crowded CCD energy scale $k$ (1 = right) & 0.984 & 1.002 \\
-few-electron events, 0.001\,\el/pix: 3-\el{} found / fakes per Mpix & 0.00 / 0 & 0.81 / 0 \\
-few-electron events, 0.01\,\el/pix: 5-\el{} found / fakes per Mpix & 0.11 / 0 & 0.93 / 0 \\
-run time per image-CCD (median) & 0.01\,s & 0.7\,s \\
+crowded Am-241 CCD (29 images): energy scale $k$ (1 = right) & 0.984 & 1.0006 & 27 Oct \\
+crowded CCD: Np L$\beta$ / L$\gamma$ / $\gamma$\,26.3 / Ag K significance [$\sigma$] & 15.5 / 16.0 / 14.8 / 12.9 & 22.4 / 20.6 / 21.1 / 18.3 & 27 Oct \\
+crowded CCD: deviance/ndf of the constrained fit & 1.74 & 2.59 & 27 Oct \\
+Fe-55 back side: K$\alpha$ back $-$ front (DM25, with g(n)) & $-2.9\,\%$ & $-0.06\,\%$ & 27 Oct \\
+Fe-55 back-side K$\alpha$ width (DM25) & 138\,eV & 70\,eV & 27 Oct \\
+sharp X-ray 3\,px from a diffuse one (simulation): found / energy within 5\,\% & --- & 0.99 / 0.97 & 27 Oct \\
+Fe-55 energy of injected clusters, width $0.3\to1.8$\,px (median of 8 CCDs) & $0.997\to0.921$ & $1.000\to1.000$ & 25 Oct \\
+wide test, 878 image-CCDs: Fe-55 / muon / worm / 4-px pair success & 0.86 / 0.59 / 0.74 / 0.11 & 0.93 / 0.64 / 0.79 / 0.88 & 25 Oct \\
+Fe-55 energy resolution (rms of $E/E_\mathrm{true}$), wide test & 0.52\,\% & 0.19\,\% & 25 Oct \\
+few-electron events at $10^{-3}$\,\el/pix: 3-\el{} found (fakes per 1.7\,Mpix) & 0.00 & 0.85 (0.07) & 27 Oct \\
+run time per image-CCD (median) & 0.01\,s & 0.9\,s (Fe-55), 62\,s (Am-241) & 27 Oct \\
 \bottomrule
 \end{tabularx}
 \end{table}
+\noindent The tests marked ``25 Oct'' were run before the background, hot-column and pixel-model changes of 25--27 October;
+on an 80-image-CCD subset the current code changes the real front-side Fe-55 K$\alpha$ by $-0.2$\,eV and resolves more
+pairs, so these numbers are expected to hold or improve; a full rerun is pending.
 
-\paragraph{Recommendation} (section~\ref{sec:supersede}). \AGMX{} supersedes MHC, the hybrids and the adaptive-MHC variant as
-the general clusterer. WADERs stays the pipeline reference (and is what \AGMX{} itself uses on ``unmodelled'' images); plain
-MFD+G stays the fastest choice when only isolated X-rays matter (Fe-55 calibration).
+\paragraph{Recommendation} (section~\ref{sec:supersede}). \AGMX{} is the general clusterer. WADERs stays the pipeline
+reference (and is what \AGMX{} itself uses on ``unmodelled'' images); MFD+G stays the fastest choice when only isolated
+X-rays matter.
 
 \begin{figure}[H]\centering
-\includegraphics[width=\textwidth]{figures/fig00_flowchart.png}
+\includegraphics[width=\textwidth]{figures_current/fig00_flowchart.png}
 \caption{The steps of \AGMX{} (the numbers refer to the sections below).}
 \end{figure}
 
 \begin{figure}[H]\centering
-\includegraphics[width=\textwidth]{figures/fig01_overview.png}
+\includegraphics[width=\textwidth]{figures_current/fig01_overview.png}
 \caption{A real low-background CCD image (Am-241, EXT1, 0.12\,\el{} read noise) with eleven known deposits injected (top).
 WADERs (middle) merges the 4-px pair into one 12-keV cluster and the sharp X-ray sitting on a diffuse one into one 24-keV
 cluster. \AGMX{} (bottom) separates both and labels the muon, the worm and the X-rays. Numbers: energies in keV.}
@@ -101,12 +108,14 @@ Q_p = o_p + n_p + \epsilon_p + D_p, \qquad n_p\sim\mathrm{Poisson}(\lambda_p),\q
 \item $\epsilon_p$: read noise, Gaussian with width $s_p$ (0.1--0.3\,\el{} on skipper CCDs),
 \item $D_p$: charge from particle deposits --- what we want.
 \end{itemize}
-A deposit of charge $A$ (electrons) whose charge cloud has covariance $\Sigma$ (diffusion in the silicon: $\sim$0.3\,px on the
-front side, up to $\sim$2\,px on the back side) puts on average
+A deposit of charge $A$ (electrons) whose charge cloud has covariance $\Sigma$ (diffusion in the silicon: $\sim$0.1--0.3\,px
+on the front side, up to $\sim$1.5\,px on the back side) puts on average
 \begin{equation}
 D_p = A\int_{\text{pixel }p}\N(\mathbf u;\bm\mu,\Sigma)\,d^2u
 \end{equation}
-electrons in pixel $p$. Energy = charge $\times$ 3.74\,eV/\el.
+electrons in pixel $p$. Energy = charge $\times$ 3.74\,eV/\el. When the module's gain-versus-charge curve $g(n)$ is
+available, the image is converted ADU $\to$ electrons with it \emph{before} \AGMX{} runs (\code{src/agmx\_root.py}), so
+shared pixels are split after the nonlinearity is removed.
 
 \begin{table}[H]\centering\small
 \begin{adjustbox}{max width=\linewidth}
@@ -129,61 +138,74 @@ $M_p=\sum_k g_k(p)$ & model of the deposit charge in pixel $p$ \\
 %======================================================================================================
 \section{Step 0 --- the background model}\label{sec:bg}
 
-Before looking for deposits, \AGMX{} describes the empty image (\code{agent\_methods.background\_map}). For every row, the
-pixels away from clusters are fitted with the \textbf{Poisson $\otimes$ Gaussian comb}
+Before looking for deposits, \AGMX{} describes the empty image (\code{agent\_methods.background\_map}). The background is
+estimated on the pixels that are not part of deposits, and which pixels those are is found iteratively:
+
+\paragraph{Pass 1: a crude mask.} With the median and the robust spread (MAD) of all active pixels, every pixel above
+median $+\max(4\,\el, 5\,\mathrm{MAD})$ is masked and the mask is grown by 5\,px. Most pixels hold 0 or 1 electron, so this
+needs no background model; it only has to catch the obvious deposits.
+
+\paragraph{Row fits.} For every row, the unmasked pixels are fitted with the \textbf{Poisson $\otimes$ Gaussian comb}
 \begin{equation}
 P(Q)=\sum_{n=0}^{\infty}\frac{\lambda^n e^{-\lambda}}{n!}\,\N\!\left(Q;\,o+n,\,s^2\right),
 \end{equation}
-i.e.\ integer electrons smeared by read noise (figure~\ref{fig:bg}, bottom). The row values of $o$, $\lambda$, $s$ are smoothed
-along the rows and in column blocks; pixels belonging to clusters are masked by a Poisson-tail test and the fit is iterated.
+integer electrons smeared by read noise (figure~\ref{fig:bg}, bottom). The fast fit uses the comb phase
+$z=\langle e^{2\pi iQ}\rangle$: the integer Poisson part drops out, so $o=\arg z/2\pi$ and $s=\sqrt{-\ln|z|/2\pi^2}$; $\lambda$ is a
+truncated-Poisson fit of the rounded counts $n\le K$ ($K$ a high Poisson quantile, $\ge3$), which ignores leftover cluster
+pixels. A row counts as resolved only if $|z|$ exceeds $\max(e^{-2\pi^2 0.45^2},\,4/\sqrt N)$, i.e.\ above the floor
+$\sqrt{\pi/4N}$ that $N$ pixels of pure Gaussian noise give. Rounding counts noise above $+0.5$\,\el{} as an electron, so on
+these rows $\lambda\leftarrow(\lambda-p)/(1-2p)$ with $p=\Phi^c(0.5/s)$.
+
+\paragraph{Rows without a visible comb.} Where deposits cover most of a row (a charge sheet on a crowded CCD) the comb
+cannot be measured; when at least 5\,\% of the rows (and 10 rows) are resolved, such rows take $o$, $\lambda$, $s$ from the
+nearest resolved rows (the read noise belongs to the amplifier). Only when almost no row is resolved is a pooled comb
+likelihood fitted over groups of 16 rows.
+
+\paragraph{Smoothing.} $\lambda$ and $s^2$ are smoothed along the rows (local-linear, $\pm15$ rows), $o$ is kept per row,
+and a 2-D correction from the mean residual in $60\times128$-px cells is added to $\lambda$ (floor $10^{-6}$\,\el/pix).
+
+\paragraph{Pass 2: the calibrated mask.} With this background, a pixel belongs to a deposit when the $3\times3$ box around it
+or the pixel alone is unlikely from dark charge and noise (Poisson tail probabilities below $3\times10^{-5}$ and $10^{-5}$;
+Poisson, not Gaussian, so the mask does not explode at low dark charge), grown by 4\,px; the row fits are repeated with it.
+This mask is used only for the background; the cluster finding below starts from scratch.
+
 This gives per-pixel maps $o_p$, $\lambda_p$, $s_p$ (figure~\ref{fig:bg}, top), hence
 \begin{equation}
 \mathrm{mean}_p=o_p+\lambda_p,\qquad V_p=\lambda_p+s_p^2,\qquad R_p=Q_p-\mathrm{mean}_p .
 \end{equation}
 
-\paragraph{Hot columns.} A column whose empty pixels are on average above the model by more than $5\times$ the error of that
-mean (and by more than 0.05\,\el) gets that excess subtracted: $R_p\leftarrow R_p-\Delta_{\mathrm{col}(p)}$.
+\paragraph{Read noise.} $\sigma_\mathrm{read}=1.4826\times$ the MAD of the pixels with $|Q|<0.5$\,\el; that estimate cannot
+exceed $0.37$\,\el{} (a uniform spread), so above 0.3\,\el{} the robust spread of all active pixels is used.
+
+\paragraph{Hot columns.} Per column, the mean of $Q-o-\lambda$ after one $5\sigma$ clip around the column median is compared
+with the median of the $\pm10$ neighbouring columns. A column whose excess $d$ is $>5\times$ its error and $>0.05$\,\el{}
+gets $\lambda\leftarrow\lambda+d$, so the mean, the variance and the Poisson tests all include it. If more than 10\,\% of the
+columns would be flagged the image has a charge sheet, not hot columns, and nothing is flagged.
 
 \begin{figure}[H]\centering
-\includegraphics[width=\textwidth]{figures/fig02_background.png}
-\caption{Top: the fitted offset, dark-charge and read-noise maps of the test image (dark charge grows along the readout).
-Bottom: pixels away from clusters (black) and the Poisson $\otimes$ Gaussian model (red): the peaks at 0, 1, 2\,\el{} are the
-integer electrons.}\label{fig:bg}
+\includegraphics[width=\textwidth]{figures_current/fig02_background.png}
+\caption{Top: the fitted offset, dark-charge and read-noise maps of the test image. Bottom: pixels away from clusters (black)
+and the comb model (red; drawn with the image's median $\lambda$ and $s$ --- the fit itself is per row, which is why the data's
+2- and 3-\el{} peaks lie above a single-$\lambda$ curve).}\label{fig:bg}
 \end{figure}
 
 %======================================================================================================
 \section{Step A --- the adaptive switch}\label{sec:switch}
 
-The background model can fail: on some images (here the PD06/DM12 Am-241 frames) the pixels scatter far more than dark charge
-+ read noise allow --- the fitted $s$ is 1.5--3\,\el{} while the zero-electron peak is 0.37\,\el{} wide --- and every
-model-based method then measures energies 5--10\,\% high. \AGMX{} therefore compares two estimates of the noise:
-\begin{itemize}
-\item \textbf{read noise from the zero peak:} $\sigma_\mathrm{read}=1.4826\cdot\mathrm{median}\,|Q-\mathrm{median}(Q)|$ over the
-pixels with $|Q|<0.5$\,\el{} (the median absolute deviation scaled to a Gaussian sigma; robust against pixels with charge);
-\item \textbf{fitted spread:} $s=\mathrm{median}_p\,s_p$.
-\end{itemize}
+The background model can fail: on some images (the PD06/DM12 Am-241 frames) the pixels scatter far more than dark charge +
+read noise allow, and every model-based method then measures energies 5--10\,\% high. An image is \textbf{unmodelled} when
 \begin{equation}
-\boxed{\;s\ge0.5\,\el\ \text{ and }\ s\ge3\,\sigma_\mathrm{read}\ \Longrightarrow\ \text{``unmodelled''}\;}
+\boxed{\;\big(s\ge0.5\,\el\ \text{ and }\ s\ge3\,\sigma_\mathrm{read}\big)\ \text{ or }\ \sigma_\mathrm{read}\ge1\,\el\;}
 \end{equation}
+with $s$ the median fitted noise. The second condition catches images that are not electron-counting at all (with a few
+\el{} of noise per pixel the sum over a GMX footprint collects $\sqrt{N_\mathrm{pix}}$ times the noise).
 
-\paragraph{Unmodelled $\to$} hysteresis clustering on the image itself (not on $R$, because the model's offset is not trusted
-either): pixels with $Q_p>\max(10\sigma_\mathrm{read},\,k-0.5)$ that touch (8 neighbours) form a cluster, kept if one pixel
-exceeds $\max(30\sigma_\mathrm{read},\,9.5)$\,\el; $k$ is the smallest integer with $P(\mathrm{Poisson}(\lambda)\ge k)\le0.10$;
-energy = $\sum Q_p$ over the cluster. This is WADERs with the thresholds bounded below by the dark-charge statistics.
+\paragraph{Unmodelled $\to$} hysteresis clustering on the image itself (the model's offset is not trusted either): with
+$\sigma_z$ the MAD of the zero-electron peak, pixels above $\max(10\sigma_z,\,4.5\,\el)$ that touch (8 neighbours) form a
+cluster, kept if one pixel exceeds $\max(30\sigma_z,\,9.5\,\el)$; energy $=\sum Q_p$.
 
-\paragraph{Otherwise $\to$} GMX on the whole image (steps 1--8). In the wide test only the 27 PD06/DM12 image-CCDs of 878 were
-``unmodelled'' (figure~\ref{fig:switch}).
-
-\AGMX{} also reports for every cluster the \textbf{event occupancy} of its $31\times31$-px neighbourhood: the fraction of pixels
-above $\max\!\left(1.5,\,4\sigma_\mathrm{read},\,k_{10^{-3}}(\lambda_p)-0.5\right)$, i.e.\ holding \emph{event} charge rather
-than dark charge ($\ge0.3\to$ labelled ``crowded''). It is information only; GMX needs no crowded/sparse split
-(section~\ref{sec:heart} explains why).
-
-\begin{figure}[H]\centering
-\includegraphics[width=0.7\textwidth]{figures/fig21_adaptive_switch.png}
-\caption{Fitted background spread $s$ against the read noise $\sigma_\mathrm{read}$ for all 878 image-CCDs. Above the dashed
-line the background is not dark current + read noise (``unmodelled''): only the PD06/DM12 Am-241 images.}\label{fig:switch}
-\end{figure}
+\paragraph{Otherwise $\to$} GMX on the whole image (steps 1--8). Every cluster also reports the \textbf{event occupancy} of its
+$31\times31$-px neighbourhood (fraction of pixels holding event charge; $\ge0.3\to$ ``crowded''); it is information only.
 
 %======================================================================================================
 \section{Step 1 --- where are the deposits?}
@@ -195,14 +217,14 @@ on the centre of pixel $c$, that falls in each pixel $p=(i,j)$ --- the exact pix
 \begin{equation}
 h_w(p-c)=f(i-c_y)\,f(j-c_x),\qquad f(u)=\tfrac12\Big[\mathrm{erf}\Big(\tfrac{u+\frac12}{\sqrt2\,w}\Big)-\mathrm{erf}\Big(\tfrac{u-\frac12}{\sqrt2\,w}\Big)\Big],
 \end{equation}
-evaluated on a footprint of $\pm\lceil4w+1\rceil$\,px (\code{agent\_methods.\_f1d}). With these weights,
+on a footprint of $\pm\lceil4w+1\rceil$\,px (\code{agent\_methods.\_f1d}). With these weights,
 \begin{equation}
 S_w(c)=\sum_p h_w(p-c)\,R_p,\qquad \mathrm{Var}[S_w(c)]=\sum_p h_w(p-c)^2V_p,\qquad
 \boxed{T_w(c)=\frac{\sum_p h_w(p-c)\,R_p}{\sqrt{\sum_p h_w(p-c)^2\,V_p}}}
 \end{equation}
 $T_w$ is the significance (in Gaussian sigmas) of a blob of width $w$ at $c$. Summing many pixels with the right weights makes a
 deposit far more significant than any single pixel: a 5.9-keV X-ray spread over 20 pixels is invisible to a per-pixel
-$10\sigma$ threshold in its tails but has $T\gg100$. Both sums are separable Gaussian convolutions (\code{gmx.\_sep\_conv}),
+$10\sigma$ threshold in its tails but has $T\gg100$. Both sums are separable convolutions (\code{gmx.\_sep\_conv}),
 computed for four widths $w\in\{0.5,1,1.5,2.5\}$\,px (sharp front-side X-rays to diffuse back-side ones and blobs).
 
 \paragraph{Normalisation and optimality.} The overall scale of $h_w$ cancels in $T_w$. Because the denominator is the exact
@@ -212,19 +234,19 @@ signal-to-noise for a known shape; Turin 1960). Where $V_p$ varies across the fo
 gradients) the optimal filter would also weight each pixel by $1/V_p$,
 $T^{\mathrm{opt}}_w=\sum_p h_w R_p/V_p\,\big/\sqrt{\sum_p h_w^2/V_p}$; the unweighted numerator used here loses a little
 sensitivity there but keeps the false-alarm rate correct. At very low dark charge the noise is Poisson rather than Gaussian,
-and the optimal Poisson template statistic is $\sum_p n_p\ln(1+h_wA/B_p)$ ($n_p$ the counts, $A$ the deposit charge, $B_p$ the background; Ofek \and the optimal Poisson template statistic is $\sum_p R_p\ln(1+h_wA/B_p)$ (Ofek \& Zackay 2018) Zackay 2018); this is why every seed must
-also pass the exact Poisson box test below. The template sits on the pixel centre only (no sub-pixel offset): the EM fit of
-step~2 finds the centre.
+and the optimal Poisson template statistic is $\sum_p n_p\ln(1+h_wA/B_p)$ ($n_p$ the counts, $A$ the deposit charge, $B_p$ the
+background; Ofek \& Zackay 2018); this is why every seed must also pass the exact Poisson box test below. The template sits on
+the pixel centre only (no sub-pixel offset): the EM fit of step~2 finds the centre.
 
 \subsection{Scale-space seeds}
-Seeds are local maxima ($5\times5$ neighbourhood) with $T_w>5$. The scales are visited \textbf{finest first}; a maximum at a
-coarser scale is kept only if no finer-scale seed lies within $\max(2,1.5w)$\,px; within a scale, seeds closer than that are
-suppressed (greedy, strongest first). Why: two X-rays 4--5\,px apart give two maxima at $w=0.5$ but one merged maximum in the
-middle at $w=2.5$; finest-first keeps the two (scale-space detection, Lindeberg 1994). A lone diffuse X-ray has no fine-scale
-maximum (its peak is too flat), so its coarse-scale seed survives.
+Seeds are local maxima ($5\times5$, over valid pixels only) with $T_w>5$. The scales are visited \textbf{finest first}; a
+maximum at a coarser scale is kept only if no finer-scale seed lies within $\max(2,1.5w)$\,px; within a scale, seeds closer
+than that are suppressed (greedy, strongest first). Why: two X-rays 4--5\,px apart give two maxima at $w=0.5$ but one merged
+maximum in the middle at $w=2.5$; finest-first keeps the two (scale-space detection, Lindeberg 1994). A lone diffuse X-ray has
+no fine-scale maximum (its peak is too flat), so its coarse-scale seed survives.
 
 \begin{figure}[H]\centering
-\includegraphics[width=0.95\textwidth]{figures/fig03_matched_filter_seeds.png}
+\includegraphics[width=0.95\textwidth]{figures_current/fig03_matched_filter_seeds.png}
 \caption{$T_w$ at the four widths (clipped at 60) with the local maxima (+) and the seeds kept (circles). Bottom: all seeds on
 $R$, coloured by the scale they were taken at. The 4-px pair and the sharp X-ray on the diffuse one get two seeds each; the
 muon and the worm get several.}
@@ -233,40 +255,45 @@ muon and the worm get several.}
 \subsection{The Poisson check}
 $T_w$ treats the noise as Gaussian, but dark charge is integer and Poisson: at low $\lambda$ a lone box of 3 electrons is
 ``$6\sigma$'' in Gaussian terms but has probability $\sim10^{-4}$ (figure~\ref{fig:poisson}). Every seed must therefore also
-pass an \textbf{exact counting test} on the $3\times3$ and the $5\times5$ box around it (the idea of Li \& Ma 1983 in
+pass an \textbf{exact counting test} on the $3\times3$ or the $5\times5$ box around it (the idea of Li \& Ma 1983 in
 $\gamma$-ray astronomy): with $S=\sum_\mathrm{box}(Q_p-o_p)$, $\Lambda=\sum_\mathrm{box}\lambda_p$,
 $\sigma_\mathrm{box}=\sqrt{\sum_\mathrm{box}s_p^2}$,
 \begin{equation}
-P\!\left(\mathrm{Poisson}(\Lambda)\ \ge\ \lfloor S-2\sigma_\mathrm{box}+0.5\rfloor\right)<\Phi^c(5)=2.9\times10^{-7}
+P\!\left(\mathrm{Poisson}(\Lambda)\ \ge\ \lfloor S-2\sigma_\mathrm{box}+0.5\rfloor\right)<\Phi^c(5)=2.9\times10^{-7}.
 \end{equation}
-(for either box). The $-2\sigma_\mathrm{box}$ term protects against read noise pushing a box up by a fraction of an electron.
+The $-2\sigma_\mathrm{box}$ term protects against read noise pushing a box up by a fraction of an electron. On
+electron-counting CCDs $\lambda$ here is the detection dark charge of step~7.
 
 \begin{figure}[H]\centering
-\includegraphics[width=0.95\textwidth]{figures/fig04_poisson_check.png}
+\includegraphics[width=0.9\textwidth]{figures_current/fig04_poisson_check.png}
 \caption{Tail probability of the $3\times3$-box charge from dark current alone: exact Poisson (solid) versus the Gaussian
 approximation (dashed). At low dark charge the Gaussian approximation is far too optimistic; the seed has to be below the
 horizontal line in the exact calculation.}\label{fig:poisson}
 \end{figure}
 
 Each surviving seed starts a round cloud: $\bm\mu$ = the seed pixel, $\Sigma=w^2\mathbf 1$ ($w$ = scale of the seed) and
-$A_0=R_\mathrm{peak}\cdot2\pi(w^2+\tfrac1{12})$ (the charge of a Gaussian with that peak height).
+$A_0=\max\!\big(R_\mathrm{peak}\cdot2\pi(w^2+\tfrac1{12}),\,1\big)$ (the charge of a Gaussian with that peak height).
 
 %======================================================================================================
 \section{Step 2 --- fitting all deposits at once}
 
 \subsection{The model}
 \begin{equation}
-M_p=\sum_{k=1}^{K}g_k(p),\qquad g_k(p)=A_k\,\N\!\left(\mathbf x_p;\ \bm\mu_k,\ \Sigma_k+\tfrac1{12}\mathbf 1\right).
+M_p=\sum_{k=1}^{K}g_k(p).
 \end{equation}
 Each cloud has its own charge $A_k$, centre $\bm\mu_k$ and \textbf{full} covariance
 $\Sigma_k=\begin{pmatrix}\sigma_{yy}&\sigma_{xy}\\ \sigma_{xy}&\sigma_{xx}\end{pmatrix}$, so it can be round (an X-ray) or
-elliptical and tilted (a piece of a track). The $+\tfrac1{12}$ is the variance of a uniform distribution on a pixel: evaluating
-a Gaussian at the pixel centre with its variance increased by $\tfrac1{12}$ approximates the pixel integral (good for
-$\sigma\gtrsim0.3$\,px; for very sharp clusters the model's peak is too high --- figure~\ref{fig:resp} shows it --- but the
-energies do not use the model's peak, see section~\ref{sec:energy}). \textbf{Since phase~2 (section~\ref{sec:phase2})
-uncorrelated clouds ($|\rho|<0.5$, every X-ray) use the exact pixel integral of their Gaussian (error functions) with a
-matching M-step; only strongly correlated track pieces keep the $+\tfrac1{12}$ approximation.} Each cloud is evaluated only within its $4\sigma$ ellipse
-(at least 2\,px, at most 16\,px), as sparse arrays.
+elliptical and tilted (a piece of a track). For a cloud with correlation $|\rho|=|\sigma_{xy}|/\sqrt{\sigma_{yy}\sigma_{xx}}<0.5$
+(every X-ray) the model value is the \textbf{exact integral of the Gaussian over the pixel}:
+\begin{equation}
+g_k(p)=A_k\Big[\Phi\big(\tfrac{i+\frac12-\mu_{y}}{\sigma_{y}}\big)-\Phi\big(\tfrac{i-\frac12-\mu_{y}}{\sigma_{y}}\big)\Big]
+\Big[\Phi\big(\tfrac{j+\frac12-\mu_{x}}{\sigma_{x}}\big)-\Phi\big(\tfrac{j-\frac12-\mu_{x}}{\sigma_{x}}\big)\Big].
+\end{equation}
+This matters for sharp clusters: a 0.2-px cloud puts almost all its charge in one or two pixels, and a Gaussian evaluated at
+the pixel centre would predict a peak that is too high and tails that are too low. Strongly correlated clouds (pieces of tilted
+tracks, broad along the track) use $A_k\,\N(\mathbf x_p;\bm\mu_k,\Sigma_k+\tfrac1{12}\mathbf 1)$, the Gaussian at the pixel centre
+with the variance of a uniform pixel added. Each cloud is evaluated only within its $4\sigma$ ellipse (at least 2\,px, at most
+16\,px), as sparse arrays.
 
 \subsection{What is maximised}
 Treat the deposit charge as \textbf{counts} with mean $M_p+\varepsilon_p$, where $\varepsilon_p=\sqrt{V_p}$ is a fixed
@@ -277,14 +304,11 @@ Treat the deposit charge as \textbf{counts} with mean $M_p+\varepsilon_p$, where
 Maximising it over $\{A_k,\bm\mu_k,\Sigma_k\}$ is a missing-data problem: if we knew which cloud each electron came from, each
 cloud could be fitted alone. \textbf{Expectation--maximisation} (Dempster, Laird \& Rubin 1977; for Poisson images Shepp \&
 Vardi 1982, Richardson 1972, Lucy 1974) alternates two steps. For the amplitudes with the shapes held fixed, the update
-$A_k\leftarrow\sum_p r_{pk}R_p^+$ is the classic ML-EM (Richardson--Lucy) step and never decreases $\ln L$ (it assumes each
-cloud's profile sums to 1 over its footprint, true to $<0.1\,\%$ for a $4\sigma$ footprint); the centre and covariance updates
-are the weighted-moment M-step of a Gaussian mixture. With the safeguards below (clipping, step limit) monotonic convergence is
-not guaranteed in general. Measured on the test image: after 30 iterations individual clouds inside a deposit still trade
-charge (30 more iterations change a cloud's $A$ by a median 1.5\,\%), but the \textbf{cluster energies}, which share the
-measured charge, are stable: 60 instead of 30 iterations changes X-ray cluster energies by $<0.004\,\%$ (99th percentile) and
-the median of all clusters above 0.5\,keV by $10^{-6}$; 2.6\,\% of clusters (extended or overlapping ones) change by more than
-1\,\%.
+$A_k\leftarrow\sum_p r_{pk}R_p^+$ is the classic ML-EM (Richardson--Lucy) step and never decreases $\ln L$; the centre and
+covariance updates are the weighted-moment M-step of a Gaussian mixture. With the safeguards below monotonic convergence is
+not guaranteed in general, but the \textbf{cluster energies}, which share the measured charge, are stable: 60 instead of 30
+iterations changes X-ray cluster energies by $<0.004\,\%$ (99th percentile). Running EM to convergence (centre steps
+$<0.01$\,px) was tested on the crowded CCD and gave no consistent gain, so a fixed number of iterations is used.
 
 \subsection{E-step: who owns each pixel?}
 \begin{equation}
@@ -296,45 +320,46 @@ share $\varepsilon_p/(M_p+\varepsilon_p)$ is $\approx1$ far from every cloud, so
 (figure~\ref{fig:resp}, right, dotted).
 
 \subsection{M-step: update each cloud from its share}
-With weights $w_{pk}=r_{pk}R_p^+$ (the charge of pixel $p$ attributed to cloud $k$):
-\begin{equation}
-A_k=\sum_p w_{pk},\qquad \bm\mu_k=\frac{\sum_p w_{pk}\,\mathbf x_p}{A_k},\qquad
-\Sigma_k=\frac{\sum_p w_{pk}(\mathbf x_p-\bm\mu_k)(\mathbf x_p-\bm\mu_k)^\top}{A_k}-\tfrac1{12}\mathbf 1 .
-\end{equation}
-The charge of a cloud is the sum of its shares; its centre and covariance are the weighted moments of its shares (the
-$-\tfrac1{12}$ removes the pixel size again). Safeguards: variances clipped to $[0.02,25]$\,px$^2$, correlation
-$|\sigma_{xy}|\le0.95\sqrt{\sigma_{yy}\sigma_{xx}}$, a centre moves at most 1.5\,px per iteration, clouds with
-$A_k<10^{-3}$\,\el{} are removed. 30 iterations.
+With weights $w_{pk}=r_{pk}R_p^+$ (the charge of pixel $p$ attributed to cloud $k$), $A_k=\sum_pw_{pk}$, and the centre and
+covariance follow from the weighted moments of the cloud's share. Because the model is the pixel-integrated Gaussian, those
+moments are the mean and variance of the \emph{pixelised} Gaussian, which depend on $\sigma$ and on the sub-pixel position of
+the centre (a 0.2-px cloud centred on a pixel has variance 0.01\,px$^2$, centred on a pixel edge 0.25\,px$^2$). For the
+$|\rho|<0.5$ clouds the per-axis mean and variance are therefore inverted through tables of the pixelised Gaussian
+(computed once); for the correlated clouds $\tfrac1{12}$ is subtracted from the moment variances. Safeguards: variances
+clipped to $[0.02,25]$\,px$^2$, correlation $|\sigma_{xy}|\le0.95\sqrt{\sigma_{yy}\sigma_{xx}}$, a centre moves at most 1.5\,px
+per iteration, clouds with $A_k<10^{-3}$\,\el{} are removed. 30 iterations. The iteration is compiled (numba); the numpy version
+(\code{AGMX\_NUMBA=0}) gives identical results.
 
 \subsection{Why this is the heart of \AGMX}\label{sec:heart}
 \textbf{No threshold decides which pixel belongs to which cluster.} Where two deposits overlap, each pixel's charge is split in
-proportion to what each cloud predicts there. Three consequences:
+proportion to what each cloud predicts there --- this is the \emph{deblending}. Three consequences:
 \begin{enumerate}
 \item \textbf{No percolation.} In a crowded field, threshold-and-connect methods chain neighbours into one blob (or need such
 high thresholds that tails are cut). Sharing has no such failure mode: this is why \AGMX{} beats WADERs on the crowded Am-241 CCD.
 \item \textbf{No charge stealing.} A sharp X-ray on the shoulder of a diffuse one keeps only its own charge (figure~\ref{fig:resp}).
 \item \textbf{Tails are kept.} The faint tail of a diffuse cluster is explained by its Gaussian, not cut by a threshold: energies
-are unbiased at every width (figure~\ref{fig:fe55}).
+are unbiased at every width (figure~\ref{fig:fe55}) and the back side of Fe-55 sits at the front-side energy.
 \end{enumerate}
 
 \begin{figure}[H]\centering
-\includegraphics[width=\textwidth]{figures/fig12_threshold_vs_sharing.png}
+\includegraphics[width=0.85\textwidth]{figures_current/fig12_threshold_vs_sharing.png}
 \caption{The difference in one dimension. Left, threshold + connect: the tails of a diffuse cluster below the threshold are lost
-(93 of 100\,\el{} kept here) and two X-rays 4\,px apart are connected into one cluster. Right, fit + share: every electron is
-kept and the overlap region is split between the two clouds in proportion to their predicted charge.}
+and two X-rays 4\,px apart are connected into one cluster. Right, fit + share: every electron is kept and the overlap region is
+split between the two clouds in proportion to their predicted charge.}
 \end{figure}
 
 \begin{figure}[H]\centering
-\includegraphics[width=0.9\textwidth]{figures/fig05_em_evolution.png}
+\includegraphics[width=0.75\textwidth]{figures_current/fig05_em_evolution.png}
 \caption{EM on the 4-px pair (left) and the sharp X-ray on a diffuse one (right): $2\sigma$ ellipses and charges $A$ after 0, 1,
-3 and 30 iterations. The diffuse cloud grows to its true width, the sharp one shrinks onto its pixel, and the charges converge to
-the truth (1580 + 1580\,\el; 4746 + 1580\,\el).}
+3 and 30 iterations. The diffuse cloud grows to its width, the sharp one shrinks onto its pixel; final charges 1650 + 1537\,\el{}
+and 4787 + 1545\,\el{} (nominal 1580 + 1580 and 4746 + 1580; the injected numbers are Poisson draws).}
 \end{figure}
 
 \begin{figure}[H]\centering
-\includegraphics[width=\textwidth]{figures/fig06_responsibilities.png}
-\caption{Left: the row through the sharp X-ray on the diffuse one --- data (grey), the two clouds and their sum. Right:
-responsibilities; each pixel's charge is split between the two clouds, and far from both the noise share is $\sim$1.}\label{fig:resp}
+\includegraphics[width=\textwidth]{figures_current/fig06_responsibilities.png}
+\caption{Left: the row through the sharp X-ray on the diffuse one --- data (grey), the two clouds ($\sigma$ 0.30 and 1.98\,px)
+and their sum. Right: responsibilities; each pixel's charge is split between the two clouds, and far from both the noise share
+is $\sim$1.}\label{fig:resp}
 \end{figure}
 
 %======================================================================================================
@@ -342,8 +367,8 @@ responsibilities; each pixel's charge is split between the two clouds, and far f
 
 \paragraph{Residual pass.} A faint deposit right next to a bright one can be hidden at the seed stage. After EM, the matched
 filter is run on the residual $R-M$ with the model's own Poisson variance added, $V'_p=V_p+M_p$, at the two finest scales;
-local maxima ($3\times3$) with $T>5$ more than 1\,px from any cloud become new clouds, and EM runs 15 more iterations on all clouds
-(figure~\ref{fig:resid}).
+local maxima ($3\times3$) with $T>5$ that pass the Poisson check (counting CCDs) and lie more than 1\,px from any cloud become
+new clouds, and EM runs 15 more iterations on all clouds (figure~\ref{fig:resid}).
 
 \paragraph{Pruning.} The significance of cloud $k$ is its charge divided by the uncertainty of that charge. For a linear fit
 of $A_k$ with known profile $\pi_k(p)=g_k(p)/A_k$ and per-pixel variance $v_p$ (read noise + dark charge + the other clouds'
@@ -354,19 +379,19 @@ model, i.e.\ the variance if this cloud were absent), the Fisher information is 
 Clouds with $\mathrm{S/N}<4$ are dropped; EM runs 5 more iterations.
 
 \begin{figure}[H]\centering
-\includegraphics[width=\textwidth]{figures/fig07_residual_pruning.png}
+\includegraphics[width=\textwidth]{figures_current/fig07_residual_pruning.png}
 \caption{A 59.5-keV X-ray with a faint 1.5-keV X-ray 6\,px away: data, model after the first EM, residual (the faint one stands
-out; circle = residual seed), and the S/N of all clouds of the image with the pruning cut.}\label{fig:resid}
+out), and the S/N of all clouds of the image with the pruning cut (3908 of 4006 clouds kept).}\label{fig:resid}
 \end{figure}
 
 %======================================================================================================
 \section{Step 4 --- which clouds are one deposit?}
 
 One deposit can need several clouds (a track needs many; a non-Gaussian X-ray may need two). Clouds are grouped by testing
-every pair closer than $3.5(\bar\sigma_i+\bar\sigma_j)+1$\,px ($\bar\sigma$ = geometric-mean width).
+every pair closer than $3.5(\bar\sigma_i+\bar\sigma_j)+1$\,px ($\bar\sigma$ = geometric-mean width, at most 16\,px).
 
 \paragraph{Ridge (dip) test.} Walk the straight line between the two centres, $\mathbf x(t)=\bm\mu_i+t(\bm\mu_j-\bm\mu_i)$,
-$t\in[0,1]$, and evaluate the two-cloud density $f(t)=g_i(\mathbf x(t))+g_j(\mathbf x(t))$:
+$t\in[0,1]$, and evaluate the two-cloud density $f(t)=g_i(\mathbf x(t))+g_j(\mathbf x(t))$ at 17 points:
 \begin{equation}
 \rho_{ij}=\frac{\min_{t\in[0,1]}f(t)}{\min\big(f(0),f(1)\big)} .
 \end{equation}
@@ -380,13 +405,18 @@ for merging mixture components; Ray \& Lindsay 2005, Hennig 2010).
 \item a shoulder: the narrower cloud is not a local maximum of $f$ (it only shapes the flank of the broad one).
 \end{itemize}
 The case this protects: a \textbf{sharp X-ray on top of a diffuse one} is a maximum of its own with a very different width ---
-kept apart. Pairs that pass are linked; the connected components of the links are the clusters.
+kept apart.
+
+\paragraph{Fragments.} A cloud below 50\,\el{} \emph{and} below 10\,\% of the charge of its brightest merge partner (a few
+electrons in the tail of a large deposit, often fitted as a thin ``track'') links only to that partner. It can be part of a
+cluster but cannot connect two: without this rule such a fragment linked an X-ray to the big deposit next to it. Pairs that
+pass are linked; the connected components of the links are the clusters.
 
 \begin{figure}[H]\centering
-\includegraphics[width=\textwidth]{figures/fig08_ridge_test.png}
+\includegraphics[width=\textwidth]{figures_current/fig08_ridge_test.png}
 \caption{Two-cloud density along the line between centres. Left: two X-rays 4\,px apart, deep valley ($\rho=0.02$), kept apart.
-Middle: sharp X-ray on a diffuse one --- no deep valley ($\rho=0.41$) but the sharp one is a maximum of its own with a very
-different width, kept apart. Right: two clouds of the muon, $\rho=0.87$, merged.}
+Middle: sharp X-ray on a diffuse one --- $\rho=0.46<0.5$, kept apart (it is also a maximum of its own with a very different
+width). Right: two clouds of the muon, $\rho=0.73$, merged.}
 \end{figure}
 
 %======================================================================================================
@@ -411,20 +441,20 @@ per parameter ($n$ = pixels):
 \Delta\mathrm{BIC}=\big(\chi^2_\mathrm{xr}+4K\ln n\big)-\big(\chi^2_\mathrm{free}+6n_c\ln n\big).
 \end{equation}
 The $(0.05R)^2$ term tolerates the fact that real X-rays are not perfect Gaussians (5\,\% model error). If
-$\Delta\mathrm{BIC}>30$ --- the free-shape description is so much better that it is worth its extra parameters --- \textbf{the
-whole island becomes one deposit}. In crowded areas islands percolate beyond 4000\,px and the test switches itself off (there,
-sharing does the work).
+$\Delta\mathrm{BIC}>100$ --- the free-shape description is so much better that it is worth its extra parameters --- \textbf{the
+whole island becomes one deposit}. The margin of 100 is calibrated on simulated sharp-on-diffuse scenes with the exact pixel
+model. In crowded areas islands percolate beyond 4000\,px and the test switches itself off (there, sharing does the work).
 
 \begin{figure}[H]\centering
-\includegraphics[width=\textwidth]{figures/fig13_island_example.png}
-\caption{The island test on two islands of the test image. Top, the worm: 4 round Gaussians (one per cluster left by the ridge
-test) cannot follow the bent track ($\chi^2$ 8585, structured residual); 6 free-shape clouds can ($\chi^2$ 426);
-$\Delta\mathrm{BIC}=8041\to$ one deposit. Bottom, the 4-px pair: both descriptions fit equally well ($\chi^2$ 77), the round one
-has fewer parameters, $\Delta\mathrm{BIC}=-21\to$ two separate X-rays.}
+\includegraphics[width=\textwidth]{figures_current/fig13_island_example.png}
+\caption{The island test on two islands of the test image. Top, the worm: 5 round Gaussians cannot follow the bent track
+($\chi^2$ 3492, structured residual); 6 free-shape clouds can ($\chi^2$ 576); $\Delta\mathrm{BIC}=2824\to$ one deposit. Bottom,
+the 4-px pair: both descriptions fit equally well ($\chi^2$ 72 vs 75), the round one has fewer parameters,
+$\Delta\mathrm{BIC}=-25\to$ two separate X-rays.}
 \end{figure}
 
 \begin{figure}[H]\centering
-\includegraphics[width=\textwidth]{figures/fig09_island_bic.png}
+\includegraphics[width=\textwidth]{figures_current/fig09_island_bic.png}
 \caption{All islands of the test image: $\chi^2$ of the two hypotheses (left) and $\Delta\mathrm{BIC}$ (right). Red: one
 deposit (tracks, worms, irregular blobs); blue: separate X-rays.}
 \end{figure}
@@ -441,41 +471,62 @@ The \textbf{measured} charge $R_p$ is shared (not the model), so the energy does
 pixels are split, never counted twice.
 \begin{itemize}
 \item \textbf{Satellites.} A cluster with $E<1\,\%$ of a neighbour's energy \emph{and} $E<1$\,keV whose centre lies in that
-neighbour's domain or within $6\sigma$ (Mahalanobis) of one of its clouds is a tail fragment and is merged into it. (Until
-25 October there was no 1-keV limit, and a real X-ray next to a very large deposit could be swallowed by it; see
-section~\ref{sec:contam}.)
+neighbour's domain or within $6\sigma$ (Mahalanobis) of one of its clouds (within 20\,px) is a tail fragment and is merged into
+it. Real X-rays ($>1$\,keV) next to a very large deposit stay their own clusters.
 \item \textbf{Growth.} Pixels above the Poisson-tail threshold ($\alpha=0.01$) within 3\,px of a covered pixel and connected to it,
 but covered by no cloud (CTI trails along the readout), are added to the nearest cluster.
 \end{itemize}
 
-\paragraph{Width.} One-cloud clusters: $\sigma_{xy}=\sqrt{(\sigma_{yy}+\sigma_{xx})/2}$ of the fitted cloud; several clouds:
-second moment of the shared charge, $\sigma_{xy}^2=\tfrac12(\mathrm{var}_y+\mathrm{var}_x)-\tfrac1{12}$. Since the
-audit (D2) the second moment is reported for every cluster, and since phase~2 a single cloud with an exact-pixel EM width
-below 0.4\,px reports the EM width (section~\ref{sec:phase2}).
+\paragraph{Width.} $\sigma_{xy}^2=\tfrac12(\mathrm{var}_y+\mathrm{var}_x)-\tfrac1{12}$, the second moments of the cluster's shared
+charge (unbiased to $\sim$1\,\% for Fe-55 at $\sigma\ge0.4$\,px). Below that the moment is dominated by the noise and dark charge
+of the footprint, so a cluster made of one cloud whose EM width is below 0.4\,px reports the EM width instead:
+
+\begin{table}[H]\centering\footnotesize
+\begin{tabular}{lcccccc}
+\toprule
+true $\sigma$ [px] (single 5.9-keV X-rays, 0.15\,\el{} noise) & 0.2 & 0.3 & 0.4 & 0.6 & 1.0 & 1.5 \\
+\midrule
+reported $\sigma_{xy}$ & 0.250 & 0.304 & 0.401 & 0.600 & 0.997 & 1.505 \\
+$E_\mathrm{rec}/E_\mathrm{true}$ & 1.000 & 1.000 & 1.000 & 1.000 & 1.000 & 1.000 \\
+\bottomrule
+\end{tabular}
+\end{table}
+\noindent A 0.2-px cloud puts 99\,\% of its charge in one pixel when centred, so its width is barely measurable; either way it
+is far below the front/back cut at 1\,px.
 
 \paragraph{Significance.} $E_c\big/\sqrt{\sum_p\tilde r_{pc}^2V_p}$.
 
-\paragraph{Purity: blend.} How much of \emph{other} clusters' predicted charge lies under this cluster's profile, relative to
-its own:
+\paragraph{Quality flags} (they never change the energy; section~\ref{sec:flags} shows what they do):
+\begin{itemize}\itemsep1pt
+\item \textbf{blend} --- how much of \emph{other} clusters' predicted charge lies under this cluster's profile, relative to its own:
 \begin{equation}
-\boxed{\;\mathrm{blend}_c=\frac{\sum_p M_p^{(c)}M_p^{(\neg c)}}{\sum_p\big(M_p^{(c)}\big)^2}\;},\qquad
+\mathrm{blend}_c=\frac{\sum_p M_p^{(c)}M_p^{(\neg c)}}{\sum_p\big(M_p^{(c)}\big)^2},\qquad
 M_p^{(c)}=\tilde r_{pc}M_p,\quad M_p^{(\neg c)}=M_p-M_p^{(c)} .
 \end{equation}
-0 = isolated; 0.1 = 10\,\% of its profile is shared with neighbours. Cutting $\mathrm{blend}<0.02$ keeps clusters whose energy
-is not affected by sharing --- on the crowded CCD this is what turns Np L$\beta$ $15.5\sigma$ (WADERs) into $19.9\sigma$
-(figure~\ref{fig:crowded}). The same idea is SExtractor's deblending flag, but here it is a number. \textbf{Edge} flags clusters
-touching the 2-px border of the active area.
+0 = isolated; 0.1 = 10\,\% of its profile is shared with neighbours (SExtractor's deblending flag, but as a number);
+\item \textbf{ped} --- the local pedestal: the 25th percentile of $R$ in a ring 5--8\,px around the centre (a charge sheet under
+the cluster);
+\item \textbf{peakfrac} --- the share of the cluster's fitted charge in its largest cloud (merged neighbours give $<1$);
+\item \textbf{$\chi^2$} --- $\frac{1}{n_c}\sum_{p:\tilde r_{pc}>0.5}(R_p-M_p)^2/(V_p+M_p)$, the fit quality of its own model;
+\item \textbf{edge} --- touches the 2-px border of the active area; \textbf{saturated} --- a pixel at an ADC-limit plateau (the
+energy is then a lower limit).
+\end{itemize}
 
 \begin{figure}[H]\centering
-\includegraphics[width=\textwidth]{figures/fig10_ownership_blend.png}
-\caption{Top: which cluster owns most of each pixel's charge. Bottom: blend of each cluster (all $\approx0$ here except the
-sharp X-ray on the diffuse one, whose profile shares charge with its neighbour).}
+\includegraphics[width=\textwidth]{figures_current/fig10_ownership_blend.png}
+\caption{Top: which cluster owns most of each pixel's charge. Bottom: blend of each cluster (0 for isolated clusters; 0.088 /
+0.024 for the sharp X-ray on the diffuse one, whose profiles overlap).}
 \end{figure}
 
 %======================================================================================================
 \section{Step 7 --- few-electron events}
 
-On photon-counting CCDs (median $s<0.5$\,\el) two extra rules apply.
+On electron-counting CCDs (median $s<0.35$\,\el, where rounding to whole electrons is reliable) three extra rules apply.
+
+\paragraph{Detection dark charge.} The fitted $\lambda$ map fluctuates far below and above the truth where it is tiny (a fit cell
+holds only a few dark electrons). For every few-electron test the dark charge is therefore at least the one implied by the
+measured rate of \emph{isolated} single-electron pixels (no other counted pixel within 2\,px; real events come with neighbours),
+smoothed over $\pm30$ rows, with the rounding miscounts of the read noise included, plus the hot-column excess.
 
 \paragraph{Counting energies.} For clusters below 100\,\el, the analog sum adds the read noise of every pixel ($\sqrt N\,s$,
 0.5\,\el{} for 13 pixels at 0.15\,\el), so the charge is often off by one. Instead each pixel the cluster mostly owns
@@ -484,28 +535,69 @@ On photon-counting CCDs (median $s<0.5$\,\el) two extra rules apply.
 E_c^\mathrm{count}=\sum_{p:\ \tilde r_{pc}>0.5}\Big(\mathrm{round}(Q_p-o_p)-\lambda_p\Big).
 \end{equation}
 
-\paragraph{Counting finder.} Groups of at most 9 connected pixels with $\mathrm{round}(Q_p-o_p)\ge1$ not covered by any cluster
-are added as ``low-E'' events when their charge is unlikely from dark current alone:
+\paragraph{Counting finder.} An 8-connected group of at most 9 pixels with $\mathrm{round}(Q_p-o_p)\ge1$, not covered by any
+cluster, is scored by the probability of its observed counts under dark charge and read noise alone, with a trial factor for
+its shape:
 \begin{equation}
-P\Big(\mathrm{Poisson}\big(\textstyle\sum_{\text{group}+1\text{ ring}}\lambda_p\big)\ge S\Big)<10^{-5},\qquad
-S=\sum_\mathrm{group}\mathrm{round}(Q_p-o_p).
+T=-\sum_{i\in g}\ln P(n_i\,|\,\lambda_i,s_i)-\ln N_\mathrm{shapes}(m),\qquad
+P(n\,|\,\lambda,s)=\sum_k \mathrm{Pois}(k;\lambda)\Big[\Phi\big(\tfrac{n+\frac12-k}{s}\big)-\Phi\big(\tfrac{n-\frac12-k}{s}\big)\Big],
 \end{equation}
+with $N_\mathrm{shapes}(m)$ the number of 8-connected shapes of $m$ pixels. The group is kept as a ``low-E'' event when $T$
+exceeds the value exceeded by 0.08 groups per Mpix in 10--50 blank images simulated from the image's own background
+(fixed seed); the analytic bound $\ln(N_\mathrm{pix}/F)$ is used only when the blanks have too few groups.
 
 \begin{figure}[H]\centering
-\includegraphics[width=\textwidth]{figures/fig11_counting.png}
-\caption{A 5-electron event: analog pixel values, the same rounded to whole electrons, and why counting is exact while an
-analog sum over 13 pixels spreads by $\pm0.5$\,\el.}
+\includegraphics[width=\textwidth]{figures_current/fig11_counting.png}
+\caption{A 5-electron event: analog pixel values, the same rounded to whole electrons (the event's 8-connected group holds
+5\,\el; the 1\,\el{} in the corner is a separate dark-charge or noise pixel), and why counting is exact while an analog sum over
+13 pixels spreads by $\pm0.5$\,\el.}
 \end{figure}
 
 %======================================================================================================
 \section{Step 8 --- classes}
 
-Every cluster gets a label from its shape (the rules of MHC): \textbf{low-E} ($E<0.5$\,keV); \textbf{x-ray} / \textbf{x-ray
-diffuse} (one round cloud or extent $<6$\,px; diffuse if $\sigma_{xy}\ge1$\,px); \textbf{alpha} ($>1$\,MeV);
-\textbf{artifact-row / -column} ($\ge85\,\%$ of the charge in $\le2$ rows / columns and a run of $\ge8$\,px: serial-register
-streaks, hot columns); \textbf{muon} (long, straight skeleton: length $\ge10$\,px, scatter of the cloud centres about a line
-$<1$\,px and $<6\,\%$ of the length); \textbf{worm} (everything else extended). Labels are only checked on injected objects
-(alpha 0.94--1.00, x-ray 0.8, muon/worm swap $\sim$30\,\%).
+Every cluster gets a label from its shape: \textbf{low-E} ($E<0.5$\,keV); \textbf{x-ray} / \textbf{x-ray diffuse} (one round
+cloud or extent $<6$\,px; diffuse if $\sigma_{xy}\ge1$\,px); \textbf{alpha} ($>1$\,MeV); \textbf{artifact-row / -column} (thin,
+straight and aligned with a row or column: serial-register streaks, hot columns); \textbf{muon} (long, straight skeleton: length
+$\ge10$\,px, scatter of the cloud centres about a line $<1$\,px and $<6\,\%$ of the length, \emph{and} at least 2.5\,keV per
+projected pixel --- a minimum-ionising particle deposits $\sim$4\,keV per 15-\textmu m pixel; a straight track below that is
+``extended''); \textbf{worm} (everything else extended). Labels are only checked on injected objects (alpha 0.94--1.00, x-ray
+0.8, muon/worm swap $\sim$30\,\%).
+
+%======================================================================================================
+\section{After \AGMX: the few-electron candidate catalogue}\label{sec:fecand}
+
+A per-event decision at a fixed fake rate cannot do what a rare-event search needs at the lowest dark currents (a 2-\el{}
+single pixel from dark charge is indistinguishable from a real one). For electron-counting images (read noise $<0.35$\,\el)
+\code{run\_AGMX} and \code{run\_WADERs --clusterer agmx} therefore also write
+\code{fe\_candidates/<image>\_ext<n>\_fe\_candidates.csv} and \code{.json} (\code{clustering\_tests/fe\_candidates.py}), in the
+style of the low-background experiments (DAMIC-M, SENSEI):
+\begin{itemize}
+\item \textbf{candidates}: every group of touching pixels with 2--20 counted electrons ($\le9$ pixels): position, charge,
+pixels, local dark charge and read noise, the statistic $T$, $n_\mathrm{exp}$ = the expected number of dark-charge groups per
+image at least as unlikely in the clean area (simulated blanks of the image's own occupancy-based dark charge; analytic tail
+beyond them) and $p_\mathrm{image}=1-e^{-n_\mathrm{exp}}$;
+\item \textbf{mask flags} (nothing is removed): halo within $5\sqrt{E/\mathrm{keV}}$\,px (5--60\,px) of an \AGMX{} cluster,
+charge-transfer trails along its row and column ($E>1$\,keV, 50\,px), hot columns, the edge (5\,px), overlap with an \AGMX{}
+cluster; \code{clean} = no flag;
+\item \textbf{summary}: the isolated single-electron rate, the clean area, and per class (charge, pixels) the observed clean
+candidates and the number expected from dark charge alone.
+\end{itemize}
+
+\begin{table}[H]\centering\small
+\begin{tabular}{lccc}
+\toprule
+dark charge [\el/pix] & 2\,\el{} in 1\,px & 2\,\el{} in 2\,px & 3\,\el{} in 3\,px \\
+\midrule
+0.0005 & 5 / 5.2 & 58 / 48.2 & 0 / 0.1 \\
+0.001 & 14 / 12.7 & 120 / 114.8 & 0 / 0.7 \\
+0.003 & 89 / 93.4 & 731 / 734.0 & 11 / 13.4 \\
+\bottomrule
+\end{tabular}
+\caption*{Observed / expected clean candidates in 10 simulated blank images (1.7\,Mpix each). Injected 3-\el{} events are
+listed in 99\,\% of cases (median $n_\mathrm{exp}=0.008$ per image). The blanks are generated from the same pixel model the
+catalogue assumes, so this checks the bookkeeping, not real-detector backgrounds.}
+\end{table}
 
 %======================================================================================================
 \section{The worked example}
@@ -518,32 +610,131 @@ The test scene of figure~\ref{fig:overview}: truth versus both methods (energies
 \toprule
 deposit & truth & \AGMX & WADERs \\
 \midrule
-sharp Fe-55 & 6.06 & 6.06 x-ray & 6.06 \\
+sharp Fe-55 & 6.06 & 6.05 x-ray & 6.06 \\
 diffuse Fe-55 ($\sigma$ 1.6\,px) & 5.81 & 5.81 x-ray diffuse & 5.82 \\
-pair, 4\,px apart & 6.20 + 5.77 & \textbf{6.20 + 5.77} & 11.98 (merged) \\
-diffuse 17.75\,keV + sharp Fe-55 3\,px away & 18.07 + 5.82 & \textbf{18.46 + 5.46} (sum conserved) & 23.97 (merged) \\
+pair, 4\,px apart & 6.20 + 5.77 & \textbf{6.19 + 5.78} & 11.98 (merged) \\
+diffuse 17.75\,keV + sharp Fe-55 3\,px away & 18.07 + 5.82 & \textbf{18.13 + 5.78} (sum conserved) & 23.97 (merged) \\
 59.5\,keV + faint 1.5\,keV 6\,px away & 59.32 + 1.37 & 59.31 + 1.36 & 59.35 + 1.36 \\
-muon (40\,px) & 37.40 & 37.39 muon & 37.56 \\
-worm & 13.63 & 13.63 worm & 13.67 \\
-5-electron event & 0.019 & not found & not found \\
+muon (40\,px, minimum ionising) & 228.62 & 228.61 muon & 228.79 \\
+worm & 16.20 & 16.19 worm & 16.24 \\
+5-electron event & 0.019 & not found & 0.015 \\
 \bottomrule
 \end{tabular}
 \end{adjustbox}
 \end{table}
 
-The sharp-on-diffuse case is split, but 0.36\,keV of the sharp X-ray's charge is assigned to the diffuse one: the Gaussian
-model of a very sharp cluster is approximate (section 6.1) and the sharing inherits that. The 5-\el{} event sits on a CCD with
-$\sim$0.07\,\el/pix dark charge, where 5\,\el{} is at the detection limit (figure~\ref{fig:lowe}).
+The 5-\el{} event (4\,\el{} in one pixel) sits at $\sim$0.07\,\el/pix dark charge: a group this size is not significant at
+\AGMX's calibrated fake rate of 0.08 per Mpix there, while WADERs' 30$\sigma$ seed (3.6\,\el) catches it but has no
+fake-rate control (section~\ref{sec:lowe}).
 
 %======================================================================================================
-\section{Performance against WADERs and the other methods}\label{sec:perf}
+\section{Performance}\label{sec:perf}
 
-Five independent tests, all with the same injected objects for every method (same random seeds), plus real lines.
+All tests use the same injected objects for every method (same random seeds), plus real lines. The code version of each
+test is given in its heading.
 
-\subsection{The wide test: every image on the machine}
+\subsection{The crowded CCD: Am-241 10--30\,keV constrained fit (code of 27 October)}
+29 images, EXT4 (in one corner every pixel holds $>20$\,\el), Np L lines with fixed intensity ratios (L\'epy et al.\ 2008), one
+energy scale $k$; $Z$ = combined significance of the Np L lines and $\gamma$\,26.3.
+
+\begin{table}[H]\centering\small
+\begin{adjustbox}{max width=\linewidth}
+\begin{tabular}{lcccccccc}
+\toprule
+clustering (cut) & clusters & $k$ & dev/ndf & Np L$\alpha$ & L$\beta$ & L$\gamma$ & $\gamma$\,26.3 & Ag K \\
+\midrule
+WADERs ($\sigma_{xy}<0.7$) & 62\,665 & 0.9840 & 1.74 & 4.0 & 15.5 & 16.0 & 14.8 & 12.9 \\
+\textbf{\AGMX{} ($\sigma_{xy}<0.7$, blend $<0.02$)} & 73\,350 & \textbf{1.0006} & 2.59 & 5.0 & \textbf{22.4} & \textbf{20.6} & \textbf{21.1} & \textbf{18.3} \\
+\AGMX{} (+ ped $<10$) & 45\,464 & 0.9990 & 2.12 & 3.6 & 17.4 & 15.9 & 18.0 & 15.6 \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\end{table}
+\noindent Combined $Z$: WADERs 27.1, \AGMX{} 37.4 (29.9 with the pedestal cut). The lines are higher above the continuum and at
+the right energy. Not understood: the deviance per degree of freedom is higher than WADERs' (2.59 vs 1.74), i.e.\ the spectrum
+between the lines is described less well; it rose when the exact pixel model was introduced (1.75 before, on the same images).
+$\sigma_{xy}$ is a different width estimate from panaSKImg's, so the 0.7 cut is not the same selection for both.
+
+\begin{figure}[H]\centering
+\includegraphics[width=0.95\textwidth]{figures/figC1_crowded_current.png}
+\caption{The 10--30-keV spectra of the crowded CCD, WADERs vs \AGMX{} (blend $<0.02$): the same events, the lines about twice as
+high above the continuum.}\label{fig:crowded}
+\end{figure}
+
+\subsection{Fe-55 front and back side through the full pipeline (code of 27 October)}
+DM25 and DM09 (ACM 109), Image\_5, 3 images $\times$ 4 CCDs each, the full \code{run\_WADERs} chain with the $g(n)$ gain
+correction, composite-macro definitions (4.5--7\,keV; front $\sigma_{xy}<1$\,px, back $>1$):
+\begin{table}[H]\centering\small
+\begin{tabular}{lccc}
+\toprule
+ & WADERs nominal & WADERs + $g(n)$ & \AGMX{} + $g(n)$ \\
+\midrule
+DM25 (EXT2--4): K$\alpha$ back $-$ front & $-1.0\,\%$ & $-2.9\,\%$ & $\mathbf{-0.06\,\%}$ \\
+DM25: back-side K$\alpha$ width & 112\,eV & 138\,eV & \textbf{70\,eV} \\
+DM25: back-side rms of the composite profile 3--4\,px from the centre & 1.10--1.37\,px & 1.10--1.37\,px & 1.42--1.58\,px \\
+DM09 (EXT1,3,4): K$\alpha$ back $-$ front & $+1.6\,\%$ & $+0.1\,\%$ & $\mathbf{-0.09\,\%}$ \\
+DM09, noisy image (noise 0.30\,\el): back side & & $-5$ to $-6.5\,\%$ & $\mathbf{-0.2\,\%}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+\noindent WADERs' back-side loss is charge cut by its thresholds, which scale with the image noise (no loss on DM09's quiet
+images, 5--6.5\,\% on its noisy one, $\sim$3\,\% on DM25). Nominal WADERs looks better on DM25 only because two errors cancel:
+panaSKImg's single gain is below the low-charge gain there, so the low-charge pixels of back-side clusters read $\sim$3\,\% high.
+The widths in the \AGMX{} files include low-charge noise pixels of the footprint; the energies are the cleaner evidence.
+
+\subsection{Sharp X-rays next to diffuse ones (simulation, code of 27 October)}
+Skipper blanks (0.1\,\el/pix, 0.16\,\el{} noise), 5.9-keV X-rays, 777 scenes of each kind:
+\begin{table}[H]\centering\footnotesize
+\begin{tabular}{llcc}
+\toprule
+scene & cluster & found & $|E/E_\mathrm{true}-1|<5\,\%$ \\
+\midrule
+isolated sharp ($\sigma$ 0.15--0.35) & sharp & 1.000 & 1.000 \\
+sharp 3\,px from diffuse ($\sigma$ 1.2--1.6) & sharp / diffuse & 0.988 / 0.981 & 0.967 / 0.967 \\
+two sharp 3\,px apart & sharp & 0.940 & 0.862 \\
+isolated diffuse ($\sigma$ 1.0--1.6) & diffuse & 1.000 & 1.000 \\
+\bottomrule
+\end{tabular}
+\end{table}
+\noindent With a Gaussian evaluated at the pixel centre instead of the exact pixel integral, the sharp-on-diffuse case was found
+in 0.78 and within 5\,\% in only 0.35 of the scenes.
+
+\subsection{Few-electron events at low dark current (code of 26--27 October)}\label{sec:lowe}
+Simulated images (0.15\,\el{} read noise), 1800 events of 2--5\,\el{} (Gaussian $\sigma$ 0.2--0.6\,px), 30 blank images per dark
+charge; full \AGMX:
+\begin{table}[H]\centering\small
+\begin{tabular}{lccc}
+\toprule
+dark charge [\el/pix] & 3\,\el{} found & 4\,\el{} found & fakes per 1.7\,Mpix \\
+\midrule
+0.0001 & 0.96 & 1.00 & 0.30 \\
+0.0005 & 0.93 & 0.99 & 0.37 \\
+0.001 & 0.85 & 1.00 & 0.07 \\
+0.003 & 0.40 & 0.96 & 0.07 \\
+0.01 & 0.04 & 0.53 & 0.23 \\
+\bottomrule
+\end{tabular}
+\end{table}
+\noindent The remaining fakes at the lowest dark currents are mostly single pixels with 2\,\el{} (about 0.5 per image at
+$5\times10^{-4}$\,\el/pix from dark charge and rounding miscounts), indistinguishable from a real 2-\el{} event: that is what the
+candidate catalogue (section~\ref{sec:fecand}) is for. WADERs needs $\gtrsim10$\,\el{} at low dark charge.
+
+\begin{figure}[H]\centering
+\includegraphics[width=\textwidth]{figures/fig24_few_electron.png}
+\caption{Efficiency against event charge at three dark charges (code of 25 October, before the detection dark charge and the
+calibrated threshold; the table above is the current code).}
+\end{figure}
+
+\subsection{Real data: Fe-55 and Am-241 injections and K$\alpha$ (code of 27 October)}
+A subset of the wide test (every 12th Fe-55 image-CCD, every 6th Am-241; 80 image-CCDs), the current pixel model against the
+Gaussian-at-centre model: Fe-55 injected pairs 4\,px apart resolved 0.907 $\to$ 0.941, Am-241 0.607 $\to$ 0.655; real front-side
+K$\alpha$ changed by $-0.2$\,eV (median over image-CCDs); the $\chi^2$ flag of K$\alpha$ clusters median 6.46 $\to$ 1.31.
+
+\subsection{The wide test: every image on the machine (code of 25 October)}
 878 image-CCDs from 16 data sets (Fe-55 production modules DM01--DM28 and PD06--08; Am-241 AMTEst and PD06/DM12; the skip-noise
 study). Per image-CCD: 12 Fe-55 clusters ($\sigma$ 0.3--1.6\,px), 4 muons, 4 worms, 4 pairs 4\,px apart. Success = one cluster
-with energy within 5\,\% (pairs: both, within 10\,\%).
+with energy within 5\,\% (pairs: both, within 10\,\%). ``WADERs'' here is a hysteresis reimplementation with the WADERs
+thresholds.
 
 \begin{figure}[H]\centering
 \includegraphics[width=\textwidth]{figures/fig20_wide_vs_waders.png}
@@ -573,23 +764,7 @@ GMX & 0.916 & 0.19\,\% & 0.63 & 0.78 & 0.89 & 0.69 \\
 \end{table}
 %WIDE_TABLE_END
 
-\begin{table}[H]\centering\small
-\begin{adjustbox}{max width=\linewidth}
-\begin{tabular}{lcccc}
-\toprule
-condition (Fe-55 success / worm / pair) & WADERs & MHC & GMX & \AGMX \\
-\midrule
-Fe-55 data sets (705) & 0.88 / 0.78 / 0.11 & 0.96 / 0.81 / 0.87 & 0.95 / 0.83 / 0.91 & 0.95 / 0.83 / 0.91 \\
-noisy, background spread $\ge1$\,\el{} (27) & 0.87 / 0.66 / 0.08 & 0.61 / 0.45 / 0.81 & 0.49 / 0.36 / 0.65 & 0.86 / 0.70 / 0.15 \\
-dark charge $\ge1$\,\el/pix (152) & 0.55 / 0.45 / 0.07 & 0.83 / 0.64 / 0.88 & 0.80 / 0.67 / 0.88 & 0.87 / 0.74 / 0.79 \\
-event occupancy $\ge30\,\%$ (194) & 0.59 / 0.43 / 0.08 & 0.82 / 0.58 / 0.85 & 0.79 / 0.60 / 0.83 & 0.85 / 0.65 / 0.76 \\
-\bottomrule
-\end{tabular}
-\end{adjustbox}
-\caption*{Wide test by image condition (number of image-CCDs in brackets).}
-\end{table}
-
-\subsection{Fe-55: energy versus cluster width, pairs, real K$\alpha$}
+\subsection{Fe-55: energy versus cluster width, pairs, real K$\alpha$ (code of 25 October)}
 DM09/DM10 (EXT1, EXT4, images 0--1; 220 injected clusters per width and CCD; pairs of $\sigma$ 1.4-px clusters).
 
 \begin{figure}[H]\centering
@@ -614,7 +789,7 @@ MHC & 1.0001 (1.000) & 1.0002 (0.999) & 1.0001 (0.996) & 0.9998 (0.995) & 0.77 &
 \caption*{Median $E_\mathrm{rec}/E_\mathrm{true}$ (worst CCD in brackets) per cluster width; pairs resolved; real K$\alpha$.}
 \end{table}
 
-\subsection{Injected tracks, alphas and artifacts in real Am-241 images}
+\subsection{Injected tracks, alphas and artifacts in real Am-241 images (code of 25 October)}
 \begin{figure}[H]\centering
 \includegraphics[width=\textwidth]{figures/fig23_tracks.png}
 \caption{EXT1 (low background) and EXT3 (denser CCD): success per object type.}
@@ -633,180 +808,53 @@ MHC & 0.94 & 0.93 & 0.97 & 1.00 & 1.00 & 0.78 & 0.78 & 0.53 & 0.29 & 0.92 & 1.00
 \bottomrule
 \end{tabular}
 \end{adjustbox}
-\caption*{EXT1, 3 images $\times$ 3 seeds: success fraction per object type.}
+\caption*{EXT1, 3 images $\times$ 3 seeds: success fraction per object type. The injected muons were fainter than minimum
+ionising (0.94\,keV per pixel); the harness now has physical muons (\code{MUON\_PHYS=1}) for the next run.}
 \end{table}
-
-\subsection{Few-electron events}
-Simulated blank images (Poisson dark charge + 0.15\,\el{} noise, $2\times1.7$\,Mpix per dark-charge value), 800 events of
-1--20\,\el{} in 1--5 pixels injected; fakes counted on a second blank image with nothing injected.
-
-\begin{figure}[H]\centering
-\includegraphics[width=\textwidth]{figures/fig24_few_electron.png}
-\caption{Efficiency against event charge at three dark-charge levels; the legend gives the fake clusters of 2--5\,\el{} per
-Mpix. \AGMX{} (= GMX = MHC here) finds 81\,\% of 3-\el{} events at 0.001\,\el/pix and 93\,\% of 5-\el{} events at
-0.01\,\el/pix, with no fakes; at 0.05\,\el/pix it needs $\sim$7\,\el{} (and WADERs is slightly better at 5\,\el{} there: 0.11
-vs 0.04 --- the Poisson check is strict at that dark charge). WADERs needs $\gtrsim10$\,\el{} at low dark charge. Clustering of
-$\ge1$-\el{} pixels (DM-style) finds everything, but its 2--5-\el{} fakes from dark-current coincidences are 7 / 460 / 7800 per
-Mpix at 0.001 / 0.01 / 0.05\,\el/pix.}\label{fig:lowe}
-\end{figure}
-
-\subsection{The crowded CCD: Am-241 10--30\,keV constrained fit}
-29 images, EXT4 (in one corner every pixel holds $>20$\,\el), Np L lines with fixed intensity ratios (L\'epy et al.\ 2008), one
-energy scale $k$.
-
-\begin{table}[H]\centering\small
-\begin{adjustbox}{max width=\linewidth}
-\begin{tabular}{lcccccccc}
-\toprule
-clustering (cut) & clusters & $k$ & dev/ndf & Np L$\alpha$ & L$\beta$ & L$\gamma$ & $\gamma$\,26.3 & Ag K \\
-\midrule
-WADERs ($\sigma_{xy}<0.7$) & 62\,665 & 0.984 & 1.74 & 4.0 & 15.5 & 16.0 & 14.8 & 12.9 \\
-MFD+G ($\sigma_{xy}<0.7$) & 28\,811 & 1.003 & 1.14 & 2.1 & 8.2 & 9.1 & 8.0 & 8.5 \\
-MHC ($\sigma_{xy}<0.7$) & 27\,250 & 1.003 & 1.10 & 1.9 & 8.0 & 9.1 & 8.2 & 8.5 \\
-hybrid v1 ($\sigma_{xy}<0.7$) & 5\,270 & 0.999 & 1.31 & 0.7 & 4.4 & 5.2 & 5.6 & 3.5 \\
-hybrid v2 ($\sigma_{xy}<0.7$) & 23\,862 & 1.002 & 1.14 & 1.9 & 7.9 & 8.5 & 8.4 & 8.4 \\
-adaptive, MHC engine ($\sigma_{xy}<0.7$) & 60\,158 & 0.986 & 1.51 & 3.0 & 14.4 & 15.4 & 14.0 & 12.0 \\
-\AGMX{} ($\sigma_{xy}<0.7$) & 230\,633 & 0.996 & 3.34 & 1.6 & 8.5 & 13.9 & 17.1 & 9.1 \\
-\textbf{\AGMX{} ($\sigma_{xy}<0.7$, blend $<0.02$)} & 82\,073 & \textbf{1.002} & 1.93 & 3.7 & \textbf{20.8} & \textbf{19.2} & \textbf{19.9} & \textbf{18.1} \\
-\bottomrule
-\end{tabular}
-\end{adjustbox}
-\end{table}
-
-Combined Np L + 26.3-keV significance $Z$: WADERs 27.1, \AGMX{} with the blend cut 34.8. Without the blend cut \AGMX{} keeps
-about twice as many clusters, because since the satellite limit (section~\ref{sec:contam}) fragments above 1\,keV in the crowded
-corner stay separate clusters instead of being absorbed by their big neighbour; they are exactly what the blend cut removes, and
-without it the lines are weaker ($Z$ 23.7) and the scale low ($k=0.996$). Checks: the same result in the even and the odd images
-separately (combined $Z$ 24.1 and 24.7, $k$ 1.001 and 1.002); an equivalent isolation cut on WADERs clusters (nearest cluster
-$>$3--20\,px) makes WADERs \emph{worse} ($Z$ $27.1\to6.2$), so the gain is the sharing, not the cut; \AGMX{} beats WADERs for
-every blend cut from 0.005 to 0.3 ($Z$ 28.7--34.8; figure~\ref{fig:crowded}, right). Caveats: deviance/ndf 1.93 (vs 1.74) with
-structure at 25--28\,keV, and $\sigma_{xy}$ is a different width estimate from panaSKImg's fitted one (the 0.7 cut was not
-re-optimised).
-
-\begin{figure}[H]\centering
-\includegraphics[width=\textwidth]{figures/fig25_crowded.png}
-\caption{Left: 10--30-keV spectra of the crowded CCD, WADERs vs \AGMX{} with the blend cut --- the same events, about twice the
-peak height above the continuum. Right: combined Np L significance against the blend cut.}\label{fig:crowded}
-\end{figure}
-
-\begin{figure}[H]\centering
-\includegraphics[width=\textwidth]{figures/final_fit_adaptive_GMX.png}
-\caption{The constrained fit of the crowded CCD with \AGMX{} clusters ($\sigma_{xy}<0.7$, blend $<0.02$).}
-\end{figure}
-
-\begin{figure}[H]\centering
-\includegraphics[width=\textwidth]{figures/final_fit_WADERs.png}
-\caption{The same fit with the WADERs clusters ($\sigma_{xy}<0.7$; panaSKImg's fitted width), for comparison.}
-\end{figure}
 
 \subsection{Run time}
+Median per image-CCD: Fe-55 0.9\,s, Am-241 62\,s (code of 27 October; WADERs 0.01\,s). Crowded and high-dark-charge CCDs take
+minutes: many seeds and clouds, and the few-electron tests have far more candidate groups.
+
 \begin{figure}[H]\centering
 \includegraphics[width=0.7\textwidth]{figures/fig26_runtime.png}
-\caption{Run time per image-CCD against its size (one core; measured with 13 runs in parallel on 14 cores, so times are
-indicative). \AGMX: median 0.7\,s; $\sim$1\,s per Mpix on sparse images, minutes on the largest crowded CCDs.}
+\caption{Run time per image-CCD against its size (code of 25 October; one core, measured with 13 runs in parallel, so times are
+indicative).}
 \end{figure}
 
 %======================================================================================================
-\section{Contamination: the high-side tail and the quality flags (25 October)}\label{sec:contam}
+\section{Quality flags and the selection for X-ray lines}\label{sec:flags}
 
-On the crowded Am-241 CCD the 59.5\,keV line of \AGMX{} has a high-side tail and the lines sit slightly high
-($k=1.0014$; figure~\ref{fig:tail}). This section shows where it comes from, what was tried, and what changed in the code.
-
-\begin{figure}[H]\centering
-\includegraphics[width=0.75\textwidth]{figures/fig30_tail.png}
-\caption{The 59.5\,keV line of the crowded CCD (29 images): WADERs, \AGMX{} with the cuts of section~\ref{sec:perf}, and
-\AGMX{} with the new pedestal cut. Scaled to the peak.}\label{fig:tail}
-\end{figure}
-
-\subsection{Is the algorithm biased? No.}
-Clusters of 5.9, 17.75, 26.34 and 59.54\,keV were injected at \emph{random} positions (also next to real events) into
-real images. Away from real events \AGMX{} is unbiased at every energy (median $E_\mathrm{rec}/E_\mathrm{true}=0.9998$,
-spread 0.03\,\% at 59.5\,keV, no high tail), on the clean and the crowded CCD. Next to real events every method adds charge
-of the neighbour: median 1.033 (clean CCD) and 1.063 (crowded CCD) for \AGMX{}, similar for WADERs (figure~\ref{fig:inj}).
-
-\begin{figure}[H]\centering
-\includegraphics[width=\textwidth]{figures/fig31_injected_contamination.png}
-\caption{$E_\mathrm{rec}/E_\mathrm{true}$ of injected X-rays (17.75--59.5\,keV) away from and next to real events.}\label{fig:inj}
-\end{figure}
-
-\subsection{Where the excess comes from}
-Two mechanisms, both real charge of other deposits:
+On the crowded Am-241 CCD the 59.5\,keV line has a high-side tail. Injected X-rays (5.9--59.5\,keV) at random positions are
+unbiased away from real events (median $E_\mathrm{rec}/E_\mathrm{true}=0.9998$, spread 0.03\,\% at 59.5\,keV); next to real events
+every method, WADERs included, adds charge of the neighbour. Two mechanisms, both real charge of other deposits:
 \begin{enumerate}
-\item \textbf{A charge sheet under the cluster} (dominant on the crowded CCD). Many small overlapping deposits make a
-diffuse sheet of 20--200\,\el/pix. Sharing gives the part of the sheet under a cluster's footprint to the cluster; the cluster
-still looks clean (one cloud, good $\chi^2$, blend $\approx0$). The median charge in a ring 5--8\,px around 59.5-keV-like
-clusters is 24\,\el/pix for clusters at the peak but 116--218\,\el/pix for clusters at 60.5--66\,keV (figure~\ref{fig:ring}).
-WADERs mostly avoids it because it only sums core pixels above $\sim$80\,\el.
-\item \textbf{A neighbouring deposit merged into the cluster} (smaller effect on real data): such clusters have several clouds
-and a bad fit of their own model (median $\chi^2$ 15 vs 1; figure~\ref{fig:flags}).
+\item \textbf{a charge sheet under the cluster} (dominant on the crowded CCD): many small overlapping deposits make a diffuse
+sheet of 20--200\,\el/pix; sharing gives the part under a cluster's footprint to the cluster, which still looks clean. The median
+charge in a ring 5--8\,px around 59.5-keV-like clusters is 24\,\el/pix at the peak but 116--218\,\el/pix at 60.5--66\,keV;
+\item \textbf{a neighbouring deposit merged into the cluster}: such clusters have several clouds and a bad fit of their own model.
 \end{enumerate}
-
-\begin{figure}[H]\centering
-\includegraphics[width=0.75\textwidth]{figures/fig32_ring_level.png}
-\caption{Charge in a ring 5--8\,px around each 59.5-keV-like cluster against its energy: clusters above the line sit on a charge sheet.}\label{fig:ring}
-\end{figure}
-
-\begin{figure}[H]\centering
-\includegraphics[width=\textwidth]{figures/fig33_flags.png}
-\caption{Injected X-rays: peak fraction, $\chi^2$ of the cluster's own model and number of clouds for clean (within 1\,\%)
-and contaminated ($>+2\,\%$) clusters.}\label{fig:flags}
-\end{figure}
-
-\subsection{What does not work: re-measuring the energy}
-Growth off, pixel clipping at model $+3$--$4\sigma$, a local background from unexplained pixels, a core aperture (2 or
-3\,$\sigma$) with a model correction, a local pedestal from the ring (median or 25th percentile) subtracted over the
-footprint, and a joint fit of the cluster's shape + a flat level were all tested on the injections and the real lines. They
-either change nothing or add so much noise (the sheet is not uniform) that the lines broaden: e.g.\ subtracting the ring
-median removes the tail (0.60 $\to$ 0.22) but destroys the Np L fit ($Z$ 34 $\to$ 5, $k=0.965$).
-
-\subsection{What works: flags and a selection}
-Energies are left unchanged; every cluster now carries three quality flags (\code{gmx.general\_cluster}):
-\begin{gather}
-\mathrm{ped}_c=P_{25}\big\{R_p:\ 5\le|\mathbf x_p-\mathbf c|\le8\ \mathrm{px}\big\},\qquad
-\mathrm{peakfrac}_c=\frac{\max_{k\in c}A_k}{\sum_{k\in c}A_k},\\
-\chi^2_c=\frac{1}{n_c}\sum_{p:\ \tilde r_{pc}>0.5}\frac{(R_p-M_p)^2}{V_p+M_p},
-\end{gather}
-the local pedestal (25th percentile of the residual charge in the ring; robust against neighbours in the ring), the share of
-the cluster's fitted charge in its largest cloud, and the fit quality of its own model. On injected X-rays,
-$\mathrm{peakfrac}>0.95$ keeps 98\,\% of clean clusters and rejects 67\,\% of contaminated ones; on the real crowded CCD the
-pedestal is what matters (figure~\ref{fig:tradeoff}):
-
-\input{contam_table}   % generated by clustering_tests/am241_lines_flags.py fit
+Re-measuring the energy (clipping, local backgrounds, core apertures, a local pedestal subtracted over the footprint) either
+changes nothing or adds so much noise that the lines broaden. Energies are therefore left unchanged and the flags of step~6
+select clean clusters.
 
 \begin{figure}[H]\centering
 \includegraphics[width=0.7\textwidth]{figures/fig34_pedestal_tradeoff.png}
-\caption{Purity against statistics: the 59.5\,keV tail and the Np L significance for pedestal cuts of 20, 10, 5, 2\,\el/pix.}\label{fig:tradeoff}
+\caption{Purity against statistics: the 59.5\,keV tail and the Np L significance for pedestal cuts of 20, 10, 5, 2\,\el/pix
+(code of 25 October).}\label{fig:tradeoff}
 \end{figure}
 
-\paragraph{Satellites.} Satellite merging absorbed any cluster with $<1\,\%$ of a neighbour's energy, so a 5.9-keV X-ray next
-to a $>600$-keV deposit was swallowed (crowded CCD, injected: median $E_\mathrm{rec}/E_\mathrm{true}$ 8.7). Only fragments
-below 1\,keV are merged now (\code{sat\_e\_max}); the X-ray stays its own cluster (unit test
-\code{test\_xray\_next\_to\_big\_deposit\_not\_merged}), with an energy a few \% low when it sits on the big deposit's wing.
+\paragraph{Recommended selection for spectroscopy.} $\sigma_{xy}<0.7$ (Am-241) or $<1$ (front-side Fe-55), blend $<0.02$,
+ped $<10$\,\el/pix, not on the edge; add peakfrac $>0.95$ where merged neighbours matter (crowded fields; not for Fe-55, where it
+removes 28--41\,\% of the front-side K$\alpha$ clusters). On Fe-55 images, which have no charge sheet, the ped cut removes at
+most 0.1\,\% of the front-side K$\alpha$ clusters. The tables below (code of 25 October) give every Am-241 line fitted alone and
+the front-side Fe-55 K$\alpha$ of every data set, with and without the flags.
 
-\paragraph{Recommended selection for spectroscopy.} $\sigma_{xy}<0.7$ (or the front-side cut of the analysis), blend $<0.02$,
-ped $<10$\,\el/pix, not on the edge; add peakfrac $>0.95$ where merged neighbours matter (crowded fields; not for
-Fe-55, see below). The flags are outputs: nothing is
-removed by \code{general\_cluster} itself.
-
-\subsection{Effect on all X-ray lines and on Fe-55}
-Every Am-241 line fitted alone (Gaussian + linear background) on EXT1, EXT3 and EXT4 of the 29-image run, old and new code,
-with and without the flags (\code{am241\_lines\_flags.py}), and the front-side Fe-55 K$\alpha$ of every data set of the wide
-test (\code{wide\_agmx\_flags.py}, \code{summ\_wide\_flags.py}):
+\input{contam_table}   % generated by clustering_tests/am241_lines_flags.py fit
 \IfFileExists{lines_flags_table.tex}{\input{lines_flags_table}}{}
 \IfFileExists{fe55_flags_tables.tex}{\input{fe55_flags_tables}}{}
 
-In short (all with the audited code): the changes leave Fe-55 alone --- median K$\alpha$ of all clusters 5.7934 $\to$
-5.7947\,keV, per image-CCD the front-side K$\alpha$ is unchanged (median difference 0.0\,eV), and ped $<10$ removes at most
-0.1\,\% of the front-side K$\alpha$ clusters (Fe-55 images have no charge sheet). peakfrac $>0.95$ removes 28--41\,\% of them
-and moves K$\alpha$ up by 14\,eV, so it is \emph{not} for Fe-55. On Am-241, EXT1 and EXT3 are unchanged (the EXT1 59.5-keV
-offset, 0.9867, is the fitted-gain calibration and is the same for every clustering); on the crowded EXT4 the pedestal cut
-brings every line to its energy: $\gamma$\,26.3 1.0041 $\to$ 1.0007, $\gamma$\,59.5 1.0017 $\to$ 1.0006, constrained-fit
-$k$ 1.0016 $\to$ 0.9994, 59.5-keV tail 0.62 $\to$ 0.23. Injection success is unchanged within $\pm$0.01.
-
 %======================================================================================================
-\input{audit_2026-10}   % phase 1, physics audit, few-electron detection, candidate catalogue (25-26 October)
-\input{phase2_2026-10}  % phase 2: exact pixel integrals, convergence (26 October)
-
 \section{Does \AGMX{} supersede the other methods?}\label{sec:supersede}
 
 \textbf{Yes, as the general clusterer.} Against each alternative:
@@ -816,47 +864,33 @@ $k$ 1.0016 $\to$ 0.9994, 59.5-keV tail 0.62 $\to$ 0.23. Injection success is unc
 \toprule
 method & where it is still better than \AGMX & verdict \\
 \midrule
-MHC & Fe-55 data sets: Fe-55 success 0.964 vs 0.951 (energies equal); hot columns 0.78 vs 0.74; 4-px pairs on Am-241 sets 0.83 vs
-0.62 (\AGMX{} hands the noisy PD06 images to hysteresis) & \textbf{superseded.} \AGMX{} is better on crowded images (L$\beta$
-19.9 vs 8.0$\sigma$), noisy images (0.86 vs 0.61), high dark charge, worms, alphas, 3-px pairs (0.75 vs 0.29), diffuse 5-px
-pairs (0.93 vs 0.77) and energy resolution (0.19 vs 0.21\,\%), and is faster (2$\times$ on typical images, 3$\times$ on the
-Am-241 frames, $\sim$300$\times$ on the noisy PD06 frames). MHC's model-selection idea lives on in GMX's island test. Keep the
-code as a cross-check. \\
-hybrid v1 / v2 & nothing significant & \textbf{superseded} (they merge diffuse pairs and fail on crowded CCDs). \\
-adaptive (MHC engine) & nothing significant & \textbf{superseded}: same switch, weaker engine (ties WADERs on the crowded CCD
-instead of beating it). \\
-GMX alone & identical except on ``unmodelled'' images, where it fails (Fe-55 0.49) & \textbf{superseded} by \AGMX{} (GMX + the switch). \\
-MFD+G & isolated X-rays only: Fe-55 success 0.972 vs 0.951, 5$\times$ faster & \textbf{keep for Fe-55 gain calibration}
-(energies identical; only point-like X-rays matter). Not for tracks (muon 0.18). \\
-B auto & as fast as WADERs (100$\times$ faster than \AGMX); better than WADERs everywhere except the noisy PD06 images &
-\textbf{keep} as the cheap pipeline option (\code{--cluster-threshold-e auto}). \\
-WADERs & noisy ``unmodelled'' images (where \AGMX{} \emph{is} WADERs); speed; the established pipeline & \textbf{keep as the
-reference}; it is what \AGMX{} falls back to. \\
+MHC & Fe-55 data sets: Fe-55 success 0.964 vs 0.951 (energies equal); hot columns 0.78 vs 0.74 & \textbf{superseded.} \AGMX{} is
+better on crowded images, noisy images, high dark charge, worms, alphas, 3-px pairs (0.75 vs 0.29), diffuse 5-px pairs (0.93 vs
+0.77) and energy resolution. Keep the code as a cross-check. \\
+hybrid v1 / v2, adaptive (MHC engine), GMX alone & nothing significant & \textbf{superseded}. \\
+MFD+G & isolated X-rays only: Fe-55 success 0.972 vs 0.951, faster & \textbf{keep for fast Fe-55 gain calibration}. Not for
+tracks (muon 0.18). \\
+WADERs & noisy ``unmodelled'' images (where \AGMX{} \emph{is} WADERs-like); speed ($\sim$100$\times$); the established pipeline;
+the smoothness of the crowded-CCD spectrum between the lines & \textbf{keep as the reference}; it is what \AGMX{} falls back to. \\
 \bottomrule
 \end{tabularx}
 \end{table}
 
-\noindent\textbf{In one line:} use \AGMX{} for analysis (it is never much worse than the best method in any regime and is the
-best in most); use MFD+G when you only need the Fe-55 peak fast; keep WADERs / B for the standard pipeline until \AGMX{} is
-integrated and checked by eye on real tracks.
-
 %======================================================================================================
 \section{Limits and open items}
 \begin{itemize}
-\item \textbf{Very sharp clusters} (done in phase~2, section~\ref{sec:phase2}): the pixel-integration approximation
-($\Sigma+\tfrac1{12}$) over-predicted the peak for $\sigma\lesssim0.3$\,px, and a sharp X-ray next to a diffuse one was lost
-or mis-shared; the exact pixel integral fixes it (found 0.78\,$\to$\,0.99, within 5\,\% 0.35\,$\to$\,0.97) for +20\,\% time.
-Widths below $\approx0.25$\,px remain hard to measure (a centred 0.2-px X-ray is one pixel).
-\item \textbf{Unmodelled images} fall back to WADERs: close pairs are then not resolved (0.15). A background model for those
-images would let GMX run there.
-\item \textbf{EM depends on the seeds} (scale-space seeding is what makes close pairs work); no global optimum is guaranteed.
-\item \textbf{Island test} tolerates 5\,\% non-Gaussianity; only checked on injected objects and Fe-55. \textbf{Real Am-241
-tracks have not been inspected by eye.}
+\item \textbf{Crowded-CCD fit quality:} deviance/ndf 2.59 vs 1.74 (WADERs); not understood.
+\item \textbf{Background on crowded CCDs:} the fitted dark charge on the crowded CCD is 0.157\,\el/pix (0.093 with the background
+model of 24 October), which moves the 59.5-keV peak by about $+0.1$\,keV; which value is right is being tested.
+\item \textbf{Unmodelled images} fall back to hysteresis: close pairs are then not resolved; the pixel threshold of 4.5\,\el{}
+is a stop-gap.
+\item \textbf{Very sharp clusters:} widths below $\approx0.25$\,px are hard to measure.
+\item \textbf{EM depends on the seeds}; no global optimum is guaranteed. The island test tolerates 5\,\% non-Gaussianity and has
+only been checked on injected objects and Fe-55; real Am-241 tracks have not been inspected by eye.
 \item \textbf{Labels:} muon/worm swap $\sim$30\,\%; classes only validated on injections.
-\item \textbf{Crowded fit quality:} dev/ndf 1.93 with structure at 25--28\,keV; the $\sigma_{xy}$ cut is not re-optimised for
-\AGMX's width.
-\item \textbf{Speed:} median 0.7\,s, but minutes on the largest crowded CCDs (WADERs: $<1$\,s).
-\item Not integrated in \code{run\_WADERs} (would be an optional flag; needs approval).
+\item \textbf{Speed:} minutes on crowded and high-dark-charge CCDs.
+\item \textbf{Validation:} the wide, Fe-55-width and track tests are from the code of 25 October; injections use Gaussian clouds,
+which is \AGMX's own model; the few-electron blanks are generated from the pixel model the finder assumes.
 \end{itemize}
 
 %======================================================================================================
@@ -868,93 +902,76 @@ tracks have not been inspected by eye.}
 \toprule
 parameter & default & where & meaning \\
 \midrule
-\code{excess\_ratio} & 3 & adaptive & unmodelled if $s\ge3\sigma_\mathrm{read}$ (and $\ge0.5$\,\el) \\
+\code{excess\_ratio}, \code{noise\_max} & 3, 1\,\el & adaptive & unmodelled if $s\ge3\sigma_\mathrm{read}$ and $\ge0.5$\,\el, or $\sigma_\mathrm{read}\ge1$\,\el \\
 \code{occ\_thr}, \code{box} & 0.3, 31\,px & adaptive & ``crowded'' label (information) \\
 \code{scales} & 0.5, 1, 1.5, 2.5\,px & GMX & matched-filter widths \\
 \code{nsig} & 5 & GMX & seed significance (+ Poisson check at the same tail) \\
 \code{n\_iter} & 30 (+15 residual, +5 pruning) & GMX & EM iterations \\
 \code{nsig\_res} & 5 & GMX & residual-pass seeds \\
 \code{sig\_min} & 4 & GMX & prune clouds with S/N below \\
-\code{r\_merge} & 0.5 & GMX & ridge ratio for merging \\
-\code{w\_ratio} & 1.6 & GMX & width ratio (sharp-on-diffuse protection) \\
-\code{link\_alpha}, \code{island\_max}, \code{bic\_margin} & 0.01, 4000\,px, 30 & GMX & island test \\
+\code{r\_merge}, \code{w\_ratio} & 0.5, 1.6 & GMX & ridge ratio, width ratio for merging \\
+\code{f\_bridge}, \code{a\_faint} & 0.1, 50\,\el & GMX & fragments link only to their brightest partner \\
+\code{link\_alpha}, \code{island\_max}, \code{bic\_margin} & 0.01, 4000\,px, 100 & GMX & island test \\
 \code{f\_sat}, \code{sat\_e\_max} & 0.01, 1\,keV & GMX & satellite absorption (only fragments $<1$\,keV) \\
 \code{ped\_ring}, \code{ped\_q} & (5, 8)\,px, 25 & GMX & local pedestal flag (ring, percentile) \\
 \code{grow} & 3\,px & GMX & CTI-trail growth \\
-\code{p\_count}, \code{count\_E\_max} & $10^{-5}$, 100\,\el & GMX & few-electron finder, counting energies \\
+\code{count\_fakes}, \code{count\_E\_max} & 0.08 per Mpix, 100\,\el & GMX & few-electron finder, counting energies \\
 \bottomrule
 \end{tabular}
 \end{adjustbox}
 \end{table}
 
+\paragraph{Switches} (environment): \code{AGMX\_PIX\_EXACT=0} (Gaussian-at-centre model, island margin 30, no fragment rule),
+\code{AGMX\_PHYS\_FIXES=0} (the background, hot-column, counting, width and class rules of before 25 October),
+\code{AGMX\_NUMBA=0} (numpy EM), \code{AGMX\_FE\_CANDIDATES=0} (no candidate catalogue).
+
 \begin{lstlisting}[language=Python]
 import sys; sys.path.insert(0, "comm_scripts/clustering_tests")
 import adaptive as AD
 clusters = AD.adaptive_cluster(Q_electrons, valid_mask, engine="gmx")
-# each cluster: E [keV], y, x, sxy [px], cls, blend, sig, n_comp, edge, ped [e-/pix], peakfrac, chi2,
+# each cluster: E [keV], y, x, sxy [px], cls, blend, sig, n_comp, edge, ped [e-/pix], peakfrac, chi2, saturated,
 #               regime ('sparse' / 'crowded' / 'unmodelled'), occ
-# spectroscopy selection (section on contamination):
 good = [c for c in clusters if c.get("blend", 0) < 0.02 and not c.get("edge")
         and not c.get("ped", 0) >= 10          # not sitting on a charge sheet (crowded fields)
-        and c.get("peakfrac", 1) > 0.95]       # not merged with a neighbouring deposit
+        and c.get("peakfrac", 1) > 0.95]       # not merged with a neighbouring deposit (not for Fe-55)
 \end{lstlisting}
 
 Test scripts (all in \code{clustering\_tests/}, README there): \code{wide\_test.py} + \code{wide\_run.py adaptive+GMX} (all images),
 \code{adaptive\_validate.py} (tracks, few-electron, Fe-55, crowded), \code{make\_agmx\_figures.py}, \code{make\_agmx\_perf.py}.
-Unit tests: \code{python -m unittest tests.test\_clustering\_methods tests.test\_agmx\_root}.
+Unit tests: \code{python -m unittest discover -s tests}.
 
 \subsection{Running \AGMX{} on WADERs data: cluster files in the WADERs format}\label{sec:running}
-\AGMX{} is part of the \code{run\_WADERs} chain as an option, and can be run on a finished run:
 \begin{lstlisting}
 run_WADERs images.txt --gain-correction --clusterer agmx --composite   # A_GMX files, composite on them
 run_WADERs images.txt --gain-correction --clusterer both --composite   # also composite_agmx/ next to composite/
-run_AGMX WADERs_analysis_<run> [-j 4] [--per-image] [--no-gaincorr]   # a run that is already finished
+run_AGMX WADERs_analysis_<run> [-j 4] [--per-image] [--no-gaincorr] [--no-fe-candidates]   # a finished run
 \end{lstlisting}
 It runs on the calibrated image panaSKImg saves for every CCD (\code{<image>\_EXT<n>\_waders.fits.bz2}). With the gain
-correction, the image is first converted ADU $\to$ \el{} with the same $g(n)$ curves and anchor as
-\code{root\_gaincorr/}; a CCD without a reliable curve keeps its fitted gain, as there. The output is
-\code{root\_agmx/} and \code{root\_agmx\_gaincorr/}: one \code{panaSKImg\_clustersRec\_<image>\_ext<n>.root} per CCD,
-written by \code{src/agmx\_root.py}. Every \AGMX{} cluster (its pixels and the charge it takes from each, which sums
-to $E$) becomes a pysimdamicm \code{Cluster} object, the ClusterFinder's own class, so all branches (positions,
-\code{wSTD}, \code{fSTD}, PCA, track end points, seed, \code{closest\_cls\_*}, \code{Energy\_PS/AVG}, \dots) are
-computed by panaSKImg's code. \code{info} and \code{process\_config} are copied from the CCD's panaSKImg file, and
-the extra branches \code{agmx\_cls}, \code{agmx\_blend}, \code{agmx\_ped}, \code{agmx\_peakfrac}, \code{agmx\_chi2},
-\code{agmx\_sig}, \code{agmx\_regime} and a \code{TNamed agmx\_config} are added. MakeComposite and every other
-reader of WADERs files read them unchanged.
+correction, the image is first converted ADU $\to$ \el{} with the same $g(n)$ curves and anchor as \code{root\_gaincorr/}; a CCD
+without a reliable curve keeps its fitted gain, as there. The output is \code{root\_agmx/} and \code{root\_agmx\_gaincorr/}: one
+\code{panaSKImg\_clustersRec\_<image>\_ext<n>.root} per CCD, written by \code{src/agmx\_root.py}. Every \AGMX{} cluster (its pixels
+and the charge it takes from each, which sums to $E$) becomes a pysimdamicm \code{Cluster} object, the ClusterFinder's own
+class, so all branches (positions, \code{wSTD}, \code{fSTD}, PCA, track end points, seed, \code{closest\_cls\_*},
+\code{Energy\_PS/AVG}, \dots) are computed by panaSKImg's code. \code{info} and \code{process\_config} are copied from the
+CCD's panaSKImg file, and the extra branches \code{agmx\_cls}, \code{agmx\_blend}, \code{agmx\_ped}, \code{agmx\_peakfrac},
+\code{agmx\_chi2}, \code{agmx\_sig}, \code{agmx\_regime} and a \code{TNamed agmx\_config} are added. MakeComposite and every
+other reader of WADERs files read them unchanged. For electron-counting CCDs the candidate catalogue goes to
+\code{fe\_candidates/}.
 
-\paragraph{Check.} \code{clustering\_tests/agmx\_root\_check.py} writes the clusters of real panaSKImg files (EXT1,
-EXT3 and EXT4 of an Am-241 image: 1652, 7686 and 5452 clusters) through the writer and compares every branch.
-They are identical except in numerically degenerate cases, where panaSKImg's own result depends on the last bits of
-its inputs:
-\begin{itemize}
-  \item Gaussian fits (\code{fSTD}) of profiles 1--3 bins wide;
-  \item the sign of a PCA eigenvector ($\theta$ versus $\theta\pm\pi$);
-  \item PCA of 1--2 pixel clusters;
-  \item \code{closest\_cls\_*} when the nearest cluster lies in the same row or column, because panaSKImg excludes
-        ``itself'' with \code{PosX != ... and PosY != ...}.
-\end{itemize}
-With the default \code{--clusterer waders} the pipeline output is identical to before (\code{utils/compare\_runs.py}).
-A flag value of $-999$ in the files means ``not computed'' (e.g.\ \code{agmx\_chi2} of a cluster the mixture did not
-fit). Every cluster carries the flags: clusters from the few-electron finder and the hysteresis branch get
-\code{edge} and \code{ped} like the others, \code{blend} $=0$ and \code{peakfrac} $=1$ (no charge is shared).
-
-\paragraph{Fixes of 25 October (audit).} (1) The peak search ignored masked pixels only after the local-maximum
-test, so the matched-filter significance just outside the mask (variance 0 there) could hide a peak on the first or
-last valid row or column: such an X-ray came out as a flag-less few-electron cluster. The local maximum is now taken
-over valid pixels only, and the X-ray is a normal cluster with \code{edge} set. (2) The Poisson check of residual
-few-electron seeds removed the dark charge twice; with it removed once, a simulation at $\lambda=0.5$\,\el/pix finds
-20 instead of 14 of 60 injected 15\,\el{} events, with no clusters on pure-noise images either way. Both change only
-events touching the mask and high-dark-current CCDs. All performance numbers of this document were re-run with the fixed
-code (wide test, Fe-55, tracks, few-electron and crowded-CCD validations; results in \code{*\_v3} folders of the data
-directory). Against the earlier numbers: wide-test Fe-55 success 0.925 $\to$ 0.927, 4-px pairs 0.87 $\to$ 0.88, Am-241 data
-sets 0.819 $\to$ 0.824; on the denser CCD EXT3 hot columns 0.28 $\to$ 0.21 and 6-px pairs 1.00 $\to$ 0.98; few-electron
-efficiencies and fakes unchanged; crowded CCD with the blend cut $Z$ 34.3 $\to$ 34.8 ($k$ 1.0014 $\to$ 1.0016).
+\paragraph{Check.} \code{clustering\_tests/agmx\_root\_check.py} writes the clusters of real panaSKImg files (EXT1, EXT3 and
+EXT4 of an Am-241 image: 1652, 7686 and 5452 clusters) through the writer and compares every branch. They are identical except
+in numerically degenerate cases, where panaSKImg's own result depends on the last bits of its inputs (Gaussian fits of profiles
+1--3 bins wide, the sign of a PCA eigenvector, PCA of 1--2 pixel clusters, \code{closest\_cls\_*} when the nearest cluster lies
+in the same row or column). With the default \code{--clusterer waders} the pipeline output is identical to before. A flag value
+of $-999$ in the files means ``not computed'' (e.g.\ \code{agmx\_chi2} of a cluster the mixture did not fit); clusters from the
+few-electron finder and the hysteresis branch get \code{edge} and \code{ped} like the others, \code{blend} $=0$ and
+\code{peakfrac} $=1$.
 
 %======================================================================================================
 \appendix
 \section{All performance tables}\label{app:tables}
-Generated by \code{clustering\_tests/make\_agmx\_perf.py} from the saved results (same tests as section~\ref{sec:perf}; all
-methods; "ok" = one cluster with energy within 5\,\%, pairs: both resolved).
+Generated by \code{clustering\_tests/make\_agmx\_perf.py} from the saved results (code of 25 October; same tests as
+section~\ref{sec:perf}; all methods; ``ok'' = one cluster with energy within 5\,\%, pairs: both resolved).
 \input{perf_tables}
 
 %======================================================================================================
@@ -968,7 +985,7 @@ J.\ R.\ Stat.\ Soc.\ B 39, 1 --- EM.
 \item P.\,B.\ Stetson (1987), PASP 99, 191 --- DAOPHOT, crowded-field photometry by simultaneous PSF fitting.
 \item D.\ Lang, D.\,W.\ Hogg, D.\ Mykytyn (2016), \emph{The Tractor}, ASCL 1604.008; P.\ Melchior et al.\ (2018),
 \emph{Scarlet}, Astron.\ Comput.\ 24, 129 --- model-based deblending.
-\item E.\ Bertin, S.\ Arnouts (1996), A\&AS 117, 393 --- SExtractor (detection thresholds, deblending flags).
+\item E.\ Bertin, S.\ Arnouts (1996), A\&AS 117, 393 --- SExtractor (masked mesh backgrounds, deblending flags).
 \item S.\ Ray, B.\,G.\ Lindsay (2005), Ann.\ Stat.\ 33, 2042; C.\ Hennig (2010), Adv.\ Data Anal.\ Classif.\ 4, 3 --- merging
 mixture components by modality / ridgeline.
 \item G.\ Schwarz (1978), Ann.\ Stat.\ 6, 461 --- BIC.
@@ -977,6 +994,8 @@ mixture components by modality / ridgeline.
 \item E.\,O.\ Ofek, B.\ Zackay (2018), AJ 155, 169, arXiv:1709.01524 --- optimal matched filter for low-count Poisson noise.
 \item G.\,L.\ Turin (1960), IRE Trans.\ Inf.\ Theory 6, 311 --- the matched filter; P.\ Serra et al.\ (2015), MNRAS 448, 1922
 (SoFiA); P.\ Carvalho et al.\ (2009), MNRAS 393, 681 (PowellSnakes) --- matched-filter source finding.
+\item SENSEI (L.\ Barak et al.\ 2020), PRL 125, 171802; DAMIC-M (K.\ Aggarwal et al.\ 2025), arXiv:2503.14617 --- few-electron
+candidate selection, masks and backgrounds.
 \item M.-C.\ L\'epy et al.\ (2008), Appl.\ Radiat.\ Isot.\ 66, 715 --- Np L-line energies and intensities (the constrained
 Am-241 fit).
 \end{itemize}
