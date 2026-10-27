@@ -137,10 +137,13 @@ Strongly correlated clouds (pieces of tilted tracks) use $A_k\,\N(\mathbf x_p;\b
 A cloud is evaluated within its $4\sigma$ ellipse (radius 2--16\,px).
 \item \textbf{E-step:} $r_{pk}=g_k(p)/(M_p+\varepsilon_p)$, with the ``unexplained'' level $\varepsilon_p=\sqrt{V_p}$,
 so noise pixels far from every cloud belong to none.
-\item \textbf{M-step:} with $w_{pk}=r_{pk}R^+_p$, $A_k=\sum_pw_{pk}$, and the weighted mean and covariance of the
-pixel positions. For $|\rho|<0.5$ clouds the per-axis mean and variance are inverted through tables of the
-pixelised Gaussian (they depend on $\sigma$ and the sub-pixel position). Otherwise $\tfrac1{12}$ is subtracted from
-the variances.
+\item \textbf{M-step:} with $w_{pk}=r_{pk}R^+_p$ (cloud $k$'s share of pixel $p$, at integer coordinates $(i_p,j_p)$):
+$A_k=\sum_pw_{pk}$; share moments $\bar y_k=\sum_pw_{pk}i_p/A_k$, $v^{yy}_k=\sum_pw_{pk}(i_p-\bar y_k)^2/A_k$ (likewise $x$ and
+$v^{xy}_k$). These are moments of the \emph{pixelised} cloud, so for $|\rho|<0.5$ they are inverted per axis through the
+pixelised-Gaussian functions $\mathcal M(\delta,\sigma^2)=\sum_ii\,\pi_i$ and $\mathcal V(\sigma^2,\delta)=\sum_i(i-\mathcal M)^2\pi_i$
+($\pi_i$ the pixel integrals): $\sigma_{yy}=\mathcal V^{-1}(v^{yy}\,|\,\mathrm{frac}(\mu_y^\mathrm{old}))$, then
+$\mu_y=\lfloor\bar y\rceil+\mathcal M^{-1}(\bar y-\lfloor\bar y\rceil\,|\,\sigma_{yy})$ (tabulated once, linear interpolation);
+$\sigma_{xy}=v^{xy}$. For $|\rho|\ge0.5$: $\bm\mu=(\bar y,\bar x)$, $\Sigma=v-\tfrac1{12}\mathbf 1$ on the diagonal.
 \item \textbf{Safeguards:} variances in $[0.02,25]$\,px$^2$, $|\sigma_{xy}|\le0.95\sqrt{\sigma_{yy}\sigma_{xx}}$,
 centre step $\le1.5$\,px per iteration; clouds with $A<10^{-3}$\,\el{} are removed. 30 iterations, fixed (running
 to convergence gave no consistent gain). Compiled with numba; \code{AGMX\_NUMBA=0} gives the identical numpy

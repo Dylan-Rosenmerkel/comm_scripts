@@ -320,15 +320,69 @@ share $\varepsilon_p/(M_p+\varepsilon_p)$ is $\approx1$ far from every cloud, so
 (figure~\ref{fig:resp}, right, dotted).
 
 \subsection{M-step: update each cloud from its share}
-With weights $w_{pk}=r_{pk}R_p^+$ (the charge of pixel $p$ attributed to cloud $k$), $A_k=\sum_pw_{pk}$, and the centre and
-covariance follow from the weighted moments of the cloud's share. Because the model is the pixel-integrated Gaussian, those
-moments are the mean and variance of the \emph{pixelised} Gaussian, which depend on $\sigma$ and on the sub-pixel position of
-the centre (a 0.2-px cloud centred on a pixel has variance 0.01\,px$^2$, centred on a pixel edge 0.25\,px$^2$). For the
-$|\rho|<0.5$ clouds the per-axis mean and variance are therefore inverted through tables of the pixelised Gaussian
-(computed once); for the correlated clouds $\tfrac1{12}$ is subtracted from the moment variances. Safeguards: variances
-clipped to $[0.02,25]$\,px$^2$, correlation $|\sigma_{xy}|\le0.95\sqrt{\sigma_{yy}\sigma_{xx}}$, a centre moves at most 1.5\,px
-per iteration, clouds with $A_k<10^{-3}$\,\el{} are removed. 30 iterations. The iteration is compiled (numba); the numpy version
-(\code{AGMX\_NUMBA=0}) gives identical results.
+The E-step gives every cloud a share of every pixel in its footprint, $w_{pk}=r_{pk}R_p^+$ (the charge of pixel $p$ attributed to
+cloud $k$). The M-step re-estimates each cloud from its own share alone, in four steps. Pixel $p$ sits at integer coordinates
+$\mathbf x_p=(i_p,j_p)$ (pixel centres).
+
+\paragraph{1. Charge.} The cloud's charge is the total charge it was given:
+\begin{equation}
+A_k=\sum_p w_{pk}.
+\end{equation}
+
+\paragraph{2. Moments of the share.} The charge-weighted mean position and the charge-weighted (co)variances of the pixels of the
+share are
+\begin{equation}
+\bar y_k=\frac{1}{A_k}\sum_p w_{pk}\,i_p,\qquad \bar x_k=\frac{1}{A_k}\sum_p w_{pk}\,j_p,
+\end{equation}
+\begin{equation}
+v^{yy}_k=\frac{1}{A_k}\sum_p w_{pk}(i_p-\bar y_k)^2,\qquad
+v^{xx}_k=\frac{1}{A_k}\sum_p w_{pk}(j_p-\bar x_k)^2,\qquad
+v^{xy}_k=\frac{1}{A_k}\sum_p w_{pk}(i_p-\bar y_k)(j_p-\bar x_k).
+\end{equation}
+These are the moments of a \emph{pixelised} cloud (charge collected in whole pixels), not yet the moments of the physical charge
+cloud: pixelisation shifts the mean towards the nearest pixel centre and changes the variance, by an amount that depends on the
+cloud's width and on where its centre sits inside the pixel.
+
+\paragraph{3. From the pixelised moments to the physical cloud.} For an uncorrelated cloud ($|\rho|<0.5$, the exact pixel model
+of step~2) the two axes separate. Along one axis, a Gaussian of variance $\sigma^2$ centred at offset $\delta$ from a pixel centre
+puts the fraction
+\begin{equation}
+\pi_i(\sigma^2,\delta)=\Phi\Big(\frac{i+\frac12-\delta}{\sigma}\Big)-\Phi\Big(\frac{i-\frac12-\delta}{\sigma}\Big)
+\end{equation}
+of its charge in pixel $i$. Its pixelised mean and variance are
+\begin{equation}
+\mathcal M(\delta,\sigma^2)=\sum_i i\,\pi_i,\qquad \mathcal V(\sigma^2,\delta)=\sum_i\big(i-\mathcal M\big)^2\pi_i .
+\end{equation}
+Two examples show why this matters: a $\sigma=0.2$\,px cloud has $\mathcal V=0.01$\,px$^2$ when centred on a pixel ($\delta=0$)
+but $0.25$\,px$^2$ when centred on a pixel edge ($\delta=0.5$, the charge splits between two pixels); and its pixelised mean is
+pulled towards the pixel centre. The M-step inverts these functions, per axis:
+\begin{equation}
+\sigma_{yy,k}=\mathcal V^{-1}\big(v^{yy}_k\,\big|\,\delta=\mathrm{frac}(\mu_{y,k}^\mathrm{old})\big),\qquad
+\mu_{y,k}=\lfloor\bar y_k\rceil+\mathcal M^{-1}\big(\bar y_k-\lfloor\bar y_k\rceil\,\big|\,\sigma_{yy,k}\big),
+\end{equation}
+and the same for $x$ ($\lfloor\cdot\rceil$: the nearest integer; $\mathrm{frac}$: the distance of the previous centre from its
+nearest pixel centre, 0--0.5). The variance is inverted at the previous centre's sub-pixel offset, then the mean at the new
+variance. $\mathcal V$ and $\mathcal M$ are tabulated once (\code{gmx.\_pixvar\_table}: 26 offsets $\delta\in[0,0.5]$ $\times$ 300
+values $\sigma^2\in[10^{-3},30]$\,px$^2$ on a log grid; \code{\_pixmean\_table}: 101 offsets $\in[-0.5,0.5]$ $\times$ 120 values),
+summing $\pi_i$ over $i=-40\dots40$, made monotonic in $\sigma^2$, and inverted by linear interpolation. The covariance term
+$\sigma_{xy,k}=v^{xy}_k$ is kept: the exact product model of step~2 does not use it, but it decides whether the cloud is
+correlated ($|\rho|$) and enters the merging tests of step~4.
+
+For a strongly correlated cloud ($|\rho|\ge0.5$, a piece of a tilted track, modelled as a Gaussian at the pixel centre with the
+variance of a uniform pixel added) the inversion is simply
+\begin{equation}
+\bm\mu_k=(\bar y_k,\bar x_k),\qquad
+\Sigma_k=\begin{pmatrix}v^{yy}_k-\tfrac1{12}&v^{xy}_k\\ v^{xy}_k&v^{xx}_k-\tfrac1{12}\end{pmatrix}.
+\end{equation}
+
+\paragraph{4. Safeguards.} Variances are clipped to $[0.02,25]$\,px$^2$ and the correlation to
+$|\sigma_{xy}|\le0.95\sqrt{\sigma_{yy}\sigma_{xx}}$ (the covariance stays positive definite); a centre moves at most 1.5\,px per
+iteration (larger steps are shortened along their direction), which stops a cloud from jumping onto a neighbour; clouds with
+$A_k<10^{-3}$\,\el{} are removed. The moments are taken over the cloud's footprint ($4\sigma$ ellipse, at least 2\,px), so the
+far tails beyond it are ignored; for a Gaussian that is $<0.1\,\%$ of the charge.
+
+E- and M-step are repeated 30 times. The iteration is compiled (numba); the numpy version (\code{AGMX\_NUMBA=0}) gives identical
+results.
 
 \subsection{Why this is the heart of \AGMX}\label{sec:heart}
 \textbf{No threshold decides which pixel belongs to which cluster.} Where two deposits overlap, each pixel's charge is split in
