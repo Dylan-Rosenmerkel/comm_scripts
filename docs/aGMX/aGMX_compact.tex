@@ -99,8 +99,14 @@ $31\times31$-px neighbourhood (``crowded'' if $\ge0.3$); this is information onl
 
 \subsection*{1. Seeds}
 \begin{itemize}
-\item \textbf{Matched filter} at widths $w\in\{0.5,1,1.5,2.5\}$\,px, with $h_w$ the pixel-integrated unit Gaussian:
-$T_w(c)=\sum_p h_w(p-c)R_p\big/\sqrt{\sum_p h_w(p-c)^2V_p}$.
+\item \textbf{Matched filter} at widths $w\in\{0.5,1,1.5,2.5\}$\,px:
+$T_w(c)=\sum_p h_w(p-c)R_p\big/\sqrt{\sum_p h_w(p-c)^2V_p}$. The weights $h_w$ are the exact pixel integrals of a
+unit-charge Gaussian of width $w$ centred on the pixel centre, $h_w=f(i-c_y)f(j-c_x)$ with
+$f(u)=\tfrac12[\mathrm{erf}((u+\tfrac12)/\sqrt2w)-\mathrm{erf}((u-\tfrac12)/\sqrt2w)]$, on $\pm\lceil4w+1\rceil$\,px. $T_w$ is a
+correctly normalised significance in Gaussian sigmas. It is the optimal linear detector only for uniform noise; where $V_p$ varies
+the optimal filter would also weight by $1/V_p$ (small loss of sensitivity at hot columns and gradients, no change in the
+false-alarm rate), and at very low dark charge the Poisson-optimal filter of Ofek \& Zackay (2018) would be slightly better ---
+hence the exact Poisson check below.
 \item \textbf{Seeds} are local maxima ($5\times5$) with $T_w>5$, taken finest scale first. A coarser maximum is kept
 only if no finer seed lies within $\max(2,1.5w)$\,px.
 \item \textbf{Poisson check} (each seed): on the $3\times3$ or the $5\times5$ box, with $S=\sum(Q-o)$,

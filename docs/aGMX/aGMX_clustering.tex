@@ -189,9 +189,13 @@ line the background is not dark current + read noise (``unmodelled''): only the 
 \section{Step 1 --- where are the deposits?}
 
 \subsection{The matched filter}
-To decide whether there is a blob of width $w$ centred at pixel $c$, the best \emph{linear} statistic (largest signal-to-noise
-for a known shape in independent Gaussian noise) is the \textbf{matched filter}: a weighted sum of the residuals with the
-expected shape as weights. With $h_w(p-c)$ the pixel-integrated unit Gaussian of width $w$,
+To decide whether there is a blob of width $w$ centred at pixel $c$, a \textbf{matched filter} is used: a weighted sum of the
+residuals with the expected shape as weights. The weights are the fraction of a unit-charge Gaussian cloud of width $w$, centred
+on the centre of pixel $c$, that falls in each pixel $p=(i,j)$ --- the exact pixel integral, separable into $y$ and $x$:
+\begin{equation}
+h_w(p-c)=f(i-c_y)\,f(j-c_x),\qquad f(u)=\tfrac12\Big[\mathrm{erf}\Big(\tfrac{u+\frac12}{\sqrt2\,w}\Big)-\mathrm{erf}\Big(\tfrac{u-\frac12}{\sqrt2\,w}\Big)\Big],
+\end{equation}
+evaluated on a footprint of $\pm\lceil4w+1\rceil$\,px (\code{agent\_methods.\_f1d}). With these weights,
 \begin{equation}
 S_w(c)=\sum_p h_w(p-c)\,R_p,\qquad \mathrm{Var}[S_w(c)]=\sum_p h_w(p-c)^2V_p,\qquad
 \boxed{T_w(c)=\frac{\sum_p h_w(p-c)\,R_p}{\sqrt{\sum_p h_w(p-c)^2\,V_p}}}
@@ -200,6 +204,17 @@ $T_w$ is the significance (in Gaussian sigmas) of a blob of width $w$ at $c$. Su
 deposit far more significant than any single pixel: a 5.9-keV X-ray spread over 20 pixels is invisible to a per-pixel
 $10\sigma$ threshold in its tails but has $T\gg100$. Both sums are separable Gaussian convolutions (\code{gmx.\_sep\_conv}),
 computed for four widths $w\in\{0.5,1,1.5,2.5\}$\,px (sharp front-side X-rays to diffuse back-side ones and blobs).
+
+\paragraph{Normalisation and optimality.} The overall scale of $h_w$ cancels in $T_w$. Because the denominator is the exact
+standard deviation of the numerator for an empty region, $T_w$ is a correctly normalised significance even where the noise
+varies from pixel to pixel. For noise that is the same in every pixel the filter is the optimal linear detector (largest
+signal-to-noise for a known shape; Turin 1960). Where $V_p$ varies across the footprint (hot columns, steep dark-charge
+gradients) the optimal filter would also weight each pixel by $1/V_p$,
+$T^{\mathrm{opt}}_w=\sum_p h_w R_p/V_p\,\big/\sqrt{\sum_p h_w^2/V_p}$; the unweighted numerator used here loses a little
+sensitivity there but keeps the false-alarm rate correct. At very low dark charge the noise is Poisson rather than Gaussian,
+and the optimal Poisson template statistic is $\sum_p n_p\ln(1+h_wA/B_p)$ ($n_p$ the counts, $A$ the deposit charge, $B_p$ the background; Ofek \and the optimal Poisson template statistic is $\sum_p R_p\ln(1+h_wA/B_p)$ (Ofek \& Zackay 2018) Zackay 2018); this is why every seed must
+also pass the exact Poisson box test below. The template sits on the pixel centre only (no sub-pixel offset): the EM fit of
+step~2 finds the centre.
 
 \subsection{Scale-space seeds}
 Seeds are local maxima ($5\times5$ neighbourhood) with $T_w>5$. The scales are visited \textbf{finest first}; a maximum at a
@@ -959,6 +974,7 @@ mixture components by modality / ridgeline.
 \item G.\ Schwarz (1978), Ann.\ Stat.\ 6, 461 --- BIC.
 \item T.\ Lindeberg (1994), \emph{Scale-Space Theory in Computer Vision}, Kluwer --- scale-space detection.
 \item T.-P.\ Li, Y.-Q.\ Ma (1983), ApJ 272, 317 --- significance of counting excesses.
+\item E.\,O.\ Ofek, B.\ Zackay (2018), AJ 155, 169, arXiv:1709.01524 --- optimal matched filter for low-count Poisson noise.
 \item G.\,L.\ Turin (1960), IRE Trans.\ Inf.\ Theory 6, 311 --- the matched filter; P.\ Serra et al.\ (2015), MNRAS 448, 1922
 (SoFiA); P.\ Carvalho et al.\ (2009), MNRAS 393, 681 (PowellSnakes) --- matched-filter source finding.
 \item M.-C.\ L\'epy et al.\ (2008), Appl.\ Radiat.\ Isot.\ 66, 715 --- Np L-line energies and intensities (the constrained
