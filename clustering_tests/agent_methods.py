@@ -26,13 +26,20 @@ Methods (each documented with its formula and source):
                            style), seeded by h-maxima (morphological reconstruction)
   pipeline                 1 -> 3 (or 2) -> 4 (or 5) -> 6 for flagged clusters
 
-Energies are returned in keV with CM.E_PER_E = 3.74e-3 keV/e-, cluster dicts with keys E, y, x, sxy (+ extras).
+Energies are returned in keV with E_PER_E = epsilon(T) x 1e-3 keV/e- (src/pair_energy.py: 3.7486 eV at the default 130 K,
+$COMM_TEMPERATURE_K / run_WADERs --temperature for another temperature), cluster dicts with keys E, y, x, sxy (+ extras).
 """
 import os
+import sys
 import numpy as np
 from scipy import ndimage, optimize, special, stats
+try:
+    from pair_energy import pair_energy_eV
+except ImportError:                                 # clustering_tests used without src/ on the path
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
+    from pair_energy import pair_energy_eV
 
-E_PER_E = 3.74e-3
+E_PER_E = pair_energy_eV() * 1e-3   # keV per electron: epsilon(T) (src/pair_energy.py), 3.7486 eV at the default 130 K
 EIGHT = np.ones((3, 3), bool)
 SQ2 = np.sqrt(2.0)
 

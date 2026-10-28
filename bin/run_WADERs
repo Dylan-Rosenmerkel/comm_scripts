@@ -285,6 +285,10 @@ what it does, per image (gain_dc_split.py --per-ext, always on):
   charge, but on the Am-241 lines (AMtest EXT4, 2026-10-26) it split the two gain periods by 0.6 %,
   so it is not the default (on Fe-55 it was as good or slightly better). The comb
   is measured with the run's --autoconfig-args (geometry, gain prior and range), as the JSONs.
+  --temperature K: energy per electron-hole pair epsilon(T) = 3.752 eV x (1 - 1.31e-4/K (T - 123 K))
+  (Rodrigues et al. 2021, skipper CCD at 5.9 keV and 123 K; slope Lowe & Sareen 2007), default 130 K
+  -> 3.7486 eV (src/pair_energy.py; $COMM_TEMPERATURE_K also works). Used for the gain-corrected
+  energies (root_gaincorr*/) and A_GMX; panaSKImg's own cluster files (root/) keep its fixed 3.74 eV.
   --gain-memory auto: before the comb is measured, remove the horizontal readout memory: the video
   signal of a pixel keeps ~3e-4 of the pixel read just before it (kL 1.6-3.8e-4 on the AMtest and
   DM24-26 CCDs), which inside clusters adds ~0.3 e- per 1000 e- and blurs the comb at high charge.
@@ -437,6 +441,9 @@ def build_parser(full=False):
     ap.add_argument("--agmx-crowded", choices=("auto", "on", "off"), default=os.environ.get("AGMX_CROWDED", "off"),
                     help="with --clusterer agmx/both: A_GMX crowded mode (clustering_tests/crowded.py). auto: on "
                          "for CCDs whose core fill is >= 0.10 (dense tracks, e.g. L2 surface runs, Am-241); on; off (default, for now)")
+    ap.add_argument("--temperature", type=float, default=None, metavar="K",
+                    help="CCD operating temperature for the energy per electron epsilon(T) used for gain-corrected and A_GMX "
+                         "energies (default: $COMM_TEMPERATURE_K or 130 K -> 3.7486 eV; details: -h -v)")
     ap.add_argument("--composite", action="store_true",
                     help="after panaSKImg, run MakeComposite_Fe55_Clusters_Extensions.cc on the cluster files, "
                          "once per image type and module (output in composite/; details: -h -v)")
@@ -1090,6 +1097,8 @@ def main():
     run_name, images, out, modules = check_request(args)
     ensure_environment(args.env)          # may re-run this script inside the conda environment and exit
     os.environ["AGMX_CROWDED"] = args.agmx_crowded   # read by clustering_tests/adaptive.py (A_GMX workers)
+    if args.temperature is not None:                 # read by src/pair_energy.py (gain_vs_charge, A_GMX) at import
+        os.environ["COMM_TEMPERATURE_K"] = str(args.temperature)
     run = Run(args=args, run_name=run_name, images=images, out=out, modules=modules)
     load_pipeline_modules(run)
     prepare_output(run)

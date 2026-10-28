@@ -15,10 +15,17 @@ Methods (each returns a list of clusters with energy [keV], sigma_xy [pix], cent
   gfit     : fit of the diffusion model to a box around the cluster: b + N * (pixel-integrated 2D Gaussian),
              weighted least squares (variance = noise^2 + b + model); energy = N
 """
+import os
+import sys
 import numpy as np
 from scipy import ndimage, optimize, special
+try:
+    from pair_energy import pair_energy_eV
+except ImportError:                                 # clustering_tests used without src/ on the path
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
+    from pair_energy import pair_energy_eV
 
-E_PER_E = 3.74e-3          # keV per electron
+E_PER_E = pair_energy_eV() * 1e-3   # keV per electron: epsilon(T) (src/pair_energy.py), 3.7486 eV at the default 130 K
 
 
 def lam_at(lam, ys):
