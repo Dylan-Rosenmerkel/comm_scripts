@@ -48,9 +48,12 @@ def core_fill(Q, valid, bg, core_e=CORE_E, smooth=1.0):
 
 
 # ------------------------------------------------------------------------------------------------ background
-def regional_background(Q, valid, bg, rb=10, cb=64, s_max=0.45, f_neg=0.005, d_min=0.3, n_sig=5.0, k_alpha=0.1):
+def regional_background(Q, valid, bg, rb=10, cb=64, s_max=0.45, lam_min=3.0, f_neg=0.005, d_min=0.3, n_sig=5.0, k_alpha=0.1):
     """targeted override of AM.background_map where it is demonstrably wrong; returns (bg, report).
-      0. electron-counting images only (median read noise < s_max), else bg unchanged
+      0. only where the row fit can fail this way: electron-counting images (median read noise < s_max) with a high
+         dark charge (median lam >= lam_min e-/pix: L2 surface images 8-11), where the whole-electron pedestal of a
+         row is ambiguous. Elsewhere bg is returned unchanged: on Am-241 (lam 0.2-2.4) the dense X-rays fool both
+         tests (EXT3: 40-70 % of the cells changed, energies -0.2 %, 59.5 keV events lost; EXT4: 429 'bad' rows)
       1. pedestal per row: rows with > f_neg of their pixels below o - 0.5 - 3 s are bad; their whole-electron pedestal
          is replaced by the good rows' consensus (the fractional part is kept); without >= 10 good rows, the lowest
          populated level of the bad rows (10th percentile)
@@ -59,8 +62,9 @@ def regional_background(Q, valid, bg, rb=10, cb=64, s_max=0.45, f_neg=0.005, d_m
          estimate itself. Overrides are interpolated between cell centres."""
     H, W = Q.shape
     s = float(np.median(bg.s[valid]))
-    rep = dict(applied=False, s=s, bad_rows=0, cells_changed=0, ncells=0)
-    if s >= s_max:
+    lam_med = float(np.median(bg.lam[valid]))
+    rep = dict(applied=False, s=s, lam=lam_med, bad_rows=0, cells_changed=0, ncells=0)
+    if s >= s_max or lam_med < lam_min:
         return bg, rep
     o = bg.o[:, 0].copy(); frac = o - np.round(o)
     sr = np.sqrt(np.maximum(bg.s2[:, 0], 1e-6))
@@ -344,12 +348,13 @@ def _pca(ys, xs, w):
     return np.array([cy, cx]), u, t.min(), t.max(), np.sqrt(max(ev[0], 0))
 
 
-def link_tracks(cl, ang=4.0, gap=15.0, gap_long=25.0, off=2.5, min_len=12.0, min_part=5.0, max_w_over_l=0.12, max_w_long=0.2):
+def link_tracks(cl, ang=4.0, gap=15.0, gap_long=25.0, off=2.5, min_len=12.0, min_part=12.0, max_w_over_l=0.12, max_w_long=0.2):
     """join straight fragments of one track (clusters with '_pix'; union-find over all qualifying pairs). With the
     longer piece L (>= min_len px) and the shorter S (>= min_part px): S's endpoints within max(off, 1.5 + 0.01 len(L))
     px of L's axis; axes parallel within ang deg when S >= min_len; nearest endpoints < gap px apart (< gap_long when
     both >= 30 px and the offset < 2 px); both straight (width / length < max_w_over_l, < max_w_long from 50 px).
-    Returns (clusters, number of links)"""
+    min_part = 12 px: shorter pieces (photo-electron tracks of 59.5 keV gammas, X-rays) are never joined to a track
+    (with 5 px, Am-241 EXT3 lost 4 % of its 59.5 keV events). Returns (clusters, number of links)"""
     T = []
     for k, c in enumerate(cl):
         if "_pix" not in c or c.get("regime") == "serial": continue

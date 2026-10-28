@@ -140,17 +140,31 @@ class SerialStreak(unittest.TestCase):
 
 
 class BackgroundOverride(unittest.TestCase):
-    def test_noop_when_the_row_fit_is_right(self):
-        rng = np.random.default_rng(13)
+    def test_never_worse_than_the_row_fit(self):
+        # uniform 6 e-/pix: the row fit occasionally takes a pedestal 1 e- too high (the ambiguity the override is for);
+        # the override may correct such rows (it need not find all of them) but must never move a pedestal away from
+        # the truth (0) nor make the background mean worse
+        for seed in (13, 21):
+            rng = np.random.default_rng(seed)
+            Q = noise(rng, (120, 256), lam=6.0)
+            valid = np.ones(Q.shape, bool); bg = AM.background_map(Q, valid)
+            bg2, rep = CR.regional_background(Q, valid, bg)
+            self.assertTrue(np.all(np.abs(bg2.o[:, 0]) <= np.abs(bg.o[:, 0]) + 0.05))     # no row moves away from 0
+            self.assertLessEqual(np.abs(bg2.mean - 6.0).mean(), np.abs(bg.mean - 6.0).mean() + 0.02)
+
+    def test_low_dark_charge_is_left_alone(self):
+        rng = np.random.default_rng(15)                                 # Am-241-like: lam 2 e-/pix < lam_min
         Q = noise(rng, (120, 256), lam=2.0)
         valid = np.ones(Q.shape, bool); bg = AM.background_map(Q, valid)
-        bg2, rep = CR.regional_background(Q, valid, bg)
-        self.assertIs(bg2, bg)
+        o = bg.o.copy(); o[40:50] += 3.0
+        bad = AM.Background(o, np.maximum(bg.mean - o, AM.LAM_FLOOR), bg.s2, bg.mask, bg.rows)
+        bg2, rep = CR.regional_background(Q, valid, bad)
+        self.assertIs(bg2, bad)
         self.assertFalse(rep["applied"])
 
     def test_wrong_pedestal_rows_are_restored(self):
-        rng = np.random.default_rng(14)
-        Q = noise(rng, (120, 256), lam=2.0)
+        rng = np.random.default_rng(14)                                 # L2-like: lam 6 e-/pix
+        Q = noise(rng, (120, 256), lam=6.0)
         valid = np.ones(Q.shape, bool); bg = AM.background_map(Q, valid)
         o = bg.o.copy(); o[40:50] += 3.0                              # ten rows with a pedestal 3 e- too high
         bad = AM.Background(o, np.maximum(bg.mean - o, AM.LAM_FLOOR), bg.s2, bg.mask, bg.rows)
@@ -158,7 +172,7 @@ class BackgroundOverride(unittest.TestCase):
         self.assertTrue(rep["applied"])
         self.assertGreaterEqual(rep["bad_rows"], 10)
         self.assertLess(np.abs(bg2.o[40:50, 0] - bg.o[40:50, 0]).max(), 0.5)
-        self.assertLess(abs(np.median(bg2.lam[40:50]) - 2.0), 0.3)
+        self.assertLess(abs(np.median(bg2.lam[40:50]) - 6.0), 0.5)
 
 
 class AgmxRootRecord(unittest.TestCase):
