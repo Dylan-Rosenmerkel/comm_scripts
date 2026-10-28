@@ -1,0 +1,129 @@
+\documentclass[10pt]{article}
+\usepackage[a4paper,margin=1.5cm,landscape]{geometry}
+\usepackage{amsmath,graphicx,booktabs,xcolor,enumitem,array,caption,float}
+\usepackage[hidelinks]{hyperref}
+\setlist{itemsep=2pt,topsep=3pt,leftmargin=1.3em}
+\captionsetup{font=small,labelfont=bf}
+\newcommand{\el}{e$^-$}
+\title{\vspace{-1.2cm}\textbf{A\_GMX on crowded CCDs: straight-track (muon) finder with iterative charge sharing}}
+\author{scratch study (agmx\_crowd), L2 ACM101 + lower-background regression}
+\date{28 October 2026}
+\begin{document}
+\maketitle\vspace{-0.6cm}
+
+\section*{Summary}
+\begin{itemize}
+\item \textbf{The method.} Before A\_GMX runs, a straight-track finder locates long straight tracks. It runs a Hough transform per tile on the centre lines of bright pixels, then follows each line across crossings. It keeps a track only if the charge along its axis is continuous. Inside each track's tube, an iterative (EM) step decides how much of each pixel's charge belongs to the muon and how much to tracks that cross or touch it. The muon is modelled as $A(t)\,G(d;\sigma(t))$. The other tracks are modelled from the residual just outside the tube, filled into the tube by Laplace interpolation. The muon gets $R\,m/(m+o)$; the remainder stays in the image for A\_GMX.
+\item \textbf{The effect on L2.} The package splits injected 40--400\,px muons into 4.1 pieces on average. The final finder (``v3'') cuts that to 2.3, and the median completeness rises from 0.45 to 0.83. The largest real cluster drops from 6--10.5k to 4.9--6.6k\,px, and each of these is now one genuine long muon. Crossing tracks stay whole: the earlier cap rule cut them and left $\sim$450 crumb clusters per image; v3 leaves 21--35, as without the finder.
+\item \textbf{The muon energy.} In the median the muon's charge is right to $+1.6$\,\% with the iterative sharing. Taking the whole tube gives $+53$\,\%, and the cap rule $+11$\,\%. Pixel by pixel, $\sim$30\,\% of the muon charge is still misassigned (15\,\% taken from others, 14\,\% given away). Oracle tests show the estimate of the \emph{other} tracks' charge is the limit.
+\item \textbf{Fe-55 on L2 does not move.} K$\alpha$ shifts by $\le 3$\,eV and widths are unchanged or 1--3\,eV narrower. The finder costs 5--8\,\% of the clean Fe-55 events, because X-rays that sit on a muon's path go to the muon.
+\item \textbf{Recommendation: switch the finder on only for crowded images.} On low-background production CCDs it mostly finds straight pieces of short electron tracks. The fraction of bright (``core'') pixels separates the cases cleanly: L2 27--31\,\%, Am-241 43--47\,\%, production 1.5--2\,\%. The proposed trigger is core fill $>10$\,\%.
+\end{itemize}
+
+\begin{center}\small
+\begin{tabular}{@{}l l l@{}}
+\toprule
+version & what it does & outcome \\ \midrule
+A\_GMX current & per-row background, GMX & 130--190k\,px blobs on L2 EXT1 (background pedestal errors) \\
+package & regional background (v3), crossing split, serial streaks, track linking & blobs gone; long muons cut into $\sim$4 pieces; 6--10k\,px star-shaped clusters \\
+finder v1 & probabilistic Hough on the core, walk, tube & on L2 finds 8\,\% of injected muons (700 spurious segments in a 28\,\%-filled core) \\
+finder v2 (cap) & tiled Hough on the skeleton, ridge walk, crossings allowed, cap rule & finds 96\,\%; leaves $\sim$450 crumbs/image and cuts crossing tracks \\
+\textbf{finder v3 (final)} & v2 + EM charge sharing + axis-continuity cut & crossing tracks whole; muon energy $+1.6$\,\%; Am-241 false lines 166 $\to$ 13 \\
+tried, dropped & GMX clouds as the model of the other tracks & worse (0.35 vs 0.30 misassigned), +50\,s/image \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\newpage
+\section*{1. Full-CCD comparison (L2 image 9 EXT1)}
+\begin{figure}[H]\centering
+\includegraphics[width=\textwidth,height=0.83\textheight,keepaspectratio]{full_img9_ext1.png}
+\caption{Top to bottom: image; WADERs default; WADERs with auto thresholds; A\_GMX current; package; package + finder v2 (cap rule); package + finder v3 (EM sharing, final). Red: the largest cluster. Yellow: serial-register streaks.}
+\end{figure}
+
+\newpage
+\section*{1b. Full-CCD comparison (L2 image 10 EXT4)}
+\begin{figure}[H]\centering
+\includegraphics[width=\textwidth,height=0.83\textheight,keepaspectratio]{full_img10_ext4.png}
+\caption{Same panels for image 10 EXT4. The full maps of 9 EXT4 and 10 EXT1 are in the same folder (\texttt{full\_img9\_ext4.png}, \texttt{full\_img10\_ext1.png}).}
+\end{figure}
+
+\newpage
+\section*{2. Close-ups of every method}
+\begin{figure}[H]\centering
+\includegraphics[width=\textwidth,height=0.8\textheight,keepaspectratio]{zoom_1.png}
+\caption{Rows: the EXT1 ``blob'' (a vertical muon crossed by $\sim$10 tracks), a long diagonal muon, a crowded region on EXT4. Columns: image, WADERs default, WADERs auto, A\_GMX current, package, + v2, + v3. Panel titles give the number of clusters in the cut-out and the largest one.}
+\end{figure}
+\newpage
+\begin{figure}[H]\centering
+\includegraphics[width=\textwidth,height=0.8\textheight,keepaspectratio]{zoom_2.png}
+\caption{Image 10: two crowded regions and the area around the package's largest cluster (8.5k\,px, red), which is gone with the finder.}
+\end{figure}
+
+\newpage
+\section*{3. Charge sharing where tracks cross}
+\begin{figure}[H]\centering
+\includegraphics[width=\textwidth]{crossing_a.png}\\[2pt]
+\includegraphics[width=\textwidth]{crossing_b.png}
+\caption{Columns: charge above background; the muon share and what is left for A\_GMX with the cap rule (v2); the same with the iterative EM sharing (v3). The cap rule cuts every crossing track along the tube, which produced the crumbs. With EM the crossing tracks stay continuous through the muon.}
+\end{figure}
+
+\noindent\textbf{How the EM step works, and why not more.} The split was tested pixel by pixel against the injected truth on image 9 EXT4:
+\begin{center}\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+other-track model & muon energy (median) & foreign taken & own given away & misassigned \\ \midrule
+none (whole tube) & $+53$\,\% & 65\,\% & 0.4\,\% & 66\,\% \\
+cap rule (v2) & $+11$\,\% & 28\,\% & 5\,\% & 32\,\% \\
+\textbf{EM, Laplace fill (v3)} & $\mathbf{+1.6}$\,\% & 17\,\% & 14\,\% & 30\,\% \\
+EM, directional fill & $-7$\,\% & 14\,\% & 23\,\% & 33\,\% \\
+GMX clouds as the other model & $+2.6$\,\% & 16\,\% & 13\,\% & 35\,\% \\ \midrule
+oracle: true other charge & $-1.0$\,\% & 5\,\% & 5\,\% & 9\,\% \\
+oracle: true muon & $-0.3$\,\% & 10\,\% & 8\,\% & 17\,\% \\
+\bottomrule
+\end{tabular}
+\end{center}
+The muon model is good: with the true other-track charge only 9\,\% is misassigned. What limits the split is the estimate of the \emph{other} tracks under the tube. Using A\_GMX itself for that (GMX run on the image minus the muon model) did not help, because GMX describes a crossing track as a chain of small clouds, and the clouds inside the tube cannot be told from the muon's own knots.
+
+\newpage
+\section*{4. Injection test (200 muons in L2 images, full clustering)}
+\begin{figure}[H]\centering
+\includegraphics[width=\textwidth]{inj_bars.png}\\
+\includegraphics[width=0.62\textwidth]{inj_vs_length.png}
+\caption{25 muons per image (projected length 40--400\,px, Landau knots, depth-dependent diffusion 0.2 to 0.8--1.6\,px), images 9/10 EXT1/EXT4, 2 seeds each. ``Correct'' requires $\ge$90\,\% of the muon in one cluster and $\le$10\,\% foreign charge. In a CCD where a 300\,px line crosses $\sim$15 tracks, few muons pass that. ``v2 no sharing'' has the highest completeness only because it also takes the crossing tracks (65\,\% foreign).}
+\end{figure}
+\newpage
+\begin{figure}[H]\centering
+\includegraphics[width=0.78\textwidth,height=0.88\textheight,keepaspectratio]{inj_examples.png}
+\caption{The six longest injected muons of image 9 EXT4 (seed 1). Column 1: the image, injected pixels in cyan. Columns 2--4: clusters for the package, v2 and v3; white outlines mark clusters holding $\ge$5\,\% of the muon.}
+\end{figure}
+
+\newpage
+\section*{5. Fe-55 on L2 (both images, front side)}
+\begin{figure}[H]\centering
+\includegraphics[width=0.92\textwidth,height=0.8\textheight,keepaspectratio]{fe55_l2.png}
+\caption{Rows: A\_GMX current, package, package + finder v3. Grey: all clusters; orange: blend $<0.02$, ped $<10$, $\sigma_{xy}<1$; blue: also X-ray class, isolated $>6$\,px, $0.15<\sigma_{xy}<0.55$, column $<2300$.}
+\end{figure}
+\begin{center}\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+clean selection & EXT1 K$\alpha$ / $\sigma$ / N & EXT2 & EXT4 \\ \midrule
+A\_GMX current & 5.779 / 228\,eV / 490 & 5.889 / 137 / 799 & 5.909 / 102 / 903 \\
+package & 5.877 / 82 / 772 & 5.888 / 81 / 1011 & 5.892 / 87 / 1050 \\
+package + finder v3 & 5.878 / 82 / 728 & 5.887 / 79 / 961 & 5.889 / 84 / 962 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\newpage
+\section*{6. Lower-background images}
+%LOWBG%
+
+\section*{7. Open items}
+\begin{itemize}
+\item \textbf{False positives on electron tracks.} Straight 50--90\,px stretches of curly electron tracks still pass, which is the main reason for the trigger. A test that rejects a line when the charge continues past its end along a curve should remove most of them.
+\item \textbf{Muon--muon crossings.} The second muon cannot take back pixels already given to the first, so it loses those (the oracle run shows this limit is a few \%).
+\item \textbf{Fe-55 X-rays on a muon's path} go to the muon (5--8\,\% of the clean Fe-55 events on L2). A compact-blob test inside the tube (an X-ray is round, a knot is elongated along the axis) could return them.
+\item \textbf{Nothing is in comm\_scripts yet.} The finder (\texttt{muons3.py}), the trigger and the package changes all need a proposal and your approval before they go into \texttt{adaptive.py}.
+\end{itemize}
+\end{document}
