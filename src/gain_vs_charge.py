@@ -63,7 +63,8 @@ from the same folder for the geometry and the low-charge gain.
 
 Main entry points: measure(images, exts) -> {ext: result}; plot() and plot_nonlinearity()
 draw it; apply(model_json, rootfiles, outdir) corrects cluster files; E_PER_E is the
-eV-per-electron constant shared with panaSKImg.
+eV per electron of the corrected energies, epsilon(T) from pair_energy.py (3.7486 eV at the default 130 K);
+panaSKImg's own energies use PANASKIMG_EV = 3.74 eV.
 
 How to read this file:
   model        g(n) and its integral A(n) for the three forms, ADU -> electrons (A^-1),
@@ -88,7 +89,9 @@ import numpy as np
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
 
-E_PER_E = 3.74          # eV per electron used by panaSKImg (pysimdamicm units.e2eV)
+from pair_energy import PANASKIMG_EV, pair_energy_eV, temperature_K
+E_PER_E = pair_energy_eV()   # eV per electron for the corrected energies: epsilon(T), 3.7486 eV at the default 130 K
+                             # (pair_energy.py); panaSKImg's own energies use PANASKIMG_EV = 3.74 eV
 BLOCK = 25              # rows per block for the clean-row test
 # Edges [e-] of the charge windows in which the local comb spacing is measured: roughly
 # geometric, so every window holds enough pixels while the curve is sampled densely at low
@@ -212,7 +215,7 @@ def load_model(source, ext):
 
 
 def electrons_with_anchor(adu, model, gain_fit, anchor="comb"):
-    """Electrons of pixels with the given ADU (the image's ADU = keV / E_PER_E x gain_fit): anchor 'comb' uses the
+    """Electrons of pixels with the given ADU (the image's ADU = keV / PANASKIMG_EV x gain_fit): anchor 'comb' uses the
     comb's g(n) throughout; 'fit' keeps the image's fitted gain at low charge (same curve shape, g(0) = gain_fit)."""
     adu = np.asarray(adu, float)
     if anchor == "fit":
@@ -935,10 +938,10 @@ def plot(results, path, title):
 # =============================================================================
 # correction of cluster files
 # =============================================================================
-def apply(model_json, rootfiles, outdir, verbose=True, anchor="comb"):
+def apply(model_json, rootfiles, outdir, verbose=True, anchor="comb", temperature=None):
     """Recompute pixels_E and Energy of panaSKImg cluster files with g(n).
 
-    panaSKImg: pixel energy [keV] = ADU / g_fit * 3.74e-3 (g_fit = info ext<N>_gainext),
+    panaSKImg: pixel energy [keV] = ADU / g_fit * 3.74e-3 (g_fit = info ext<N>_gainext; PANASKIMG_EV),
     Energy = sum of pixels_E. Corrected: ADU -> electrons with A^-1 of the g(n) model.
     anchor="comb" (default): the whole conversion ADU -> electrons uses the comb's g(n),
       including its low-charge gain a (one curve for all images of a CCD). In the DM24-26
@@ -952,13 +955,15 @@ def apply(model_json, rootfiles, outdir, verbose=True, anchor="comb"):
     Returns [(input, output, n_clusters, median ratio new/old for E > 1 keV)].
 
     Each pixel's ADU is recovered from pixels_E with the fitted gain, converted to electrons
-    with the model and back to keV with E_PER_E. Output: outdir/<same file name>, with the
+    with the model and to keV with epsilon(temperature) (pair_energy.pair_energy_eV; default 130 K or $COMM_TEMPERATURE_K).
+    Output: outdir/<same file name>, with the
     clustersRec tree rewritten and the info and process_config trees copied. Files without a
     fit gain or for an extension without a reliable model are copied unchanged; files without
     _ext<N> in the name are skipped.
     """
     import ROOT
     ROOT.gROOT.SetBatch(True)
+    eps = pair_energy_eV(temperature)          # eV per electron of the corrected energies
     with open(model_json) as fh:
         models = json.load(fh)["extensions"]
     os.makedirs(outdir, exist_ok=True)
@@ -998,7 +1003,7 @@ def apply(model_json, rootfiles, outdir, verbose=True, anchor="comb"):
                 pe, en = tin.pixels_E, tin.Energy
                 for k in range(pe.size()):
                     v = np.array(pe[k], float)
-                    vn = electrons_with_anchor(v * 1e3 / E_PER_E * gfit, model, gfit, anchor) * E_PER_E * 1e-3
+                    vn = electrons_with_anchor(v * 1e3 / PANASKIMG_EV * gfit, model, gfit, anchor) * eps * 1e-3
                     for j in range(len(vn)):
                         pe[k][j] = float(vn[j])
                     old = en[k]
@@ -1062,6 +1067,8 @@ def main():
     a.add_argument("--anchor", choices=("comb", "fit"), default="comb",
                    help="low-charge gain: the comb's gain a (default; one g(n) for all images) or the "
                         "image's fitted gain (only the charge dependence corrected)")
+    a.add_argument("--temperature", type=float, default=None, metavar="K",
+                   help="operating temperature for the energy per electron epsilon(T) (default: $COMM_TEMPERATURE_K or 130 K)")
     args = ap.parse_args(argv)
 
     if args.cmd == "measure":
@@ -1075,13 +1082,13 @@ def main():
                       autoconfig_args=shlex.split(args.autoconfig_args), memory=mem)
         jpath = os.path.join(args.outdir, f"{name}_gain_vs_charge.json")
         with open(jpath, "w") as fh:
-            json.dump({"images": [os.path.abspath(i) for i in args.images], "e_per_electron_eV": E_PER_E,
+            json.dump({"images": [os.path.abspath(i) for i in args.images], "e_per_electron_eV": E_PER_E, "temperature_K": temperature_K(),
                        "extensions": res}, fh, indent=1)
         plot(res, os.path.join(args.outdir, f"{name}_gain_vs_charge.png"), name)
         plot_nonlinearity(res, os.path.join(args.outdir, f"{name}_nonlinearity.png"), name)
         print(f"-> {jpath}")
     else:
-        apply(args.model, args.rootfiles, args.outdir, anchor=args.anchor)
+        apply(args.model, args.rootfiles, args.outdir, anchor=args.anchor, temperature=args.temperature)
 
 
 if __name__ == "__main__":

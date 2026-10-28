@@ -156,5 +156,34 @@ class ReadoutMemory(unittest.TestCase):
         self.assertGreater(p1, 1.5 * p0)                                      # the comb gets sharper
 
 
+class PairEnergy(unittest.TestCase):
+    """epsilon(T): 3.752 eV at 123 K, -0.0131 %/K; default 130 K; $COMM_TEMPERATURE_K overrides."""
+
+    def setUp(self):
+        import pair_energy as PE
+        self.PE = PE
+        self._env = os.environ.pop("COMM_TEMPERATURE_K", None)
+
+    def tearDown(self):
+        os.environ.pop("COMM_TEMPERATURE_K", None)
+        if self._env is not None:
+            os.environ["COMM_TEMPERATURE_K"] = self._env
+
+    def test_reference_and_default(self):
+        self.assertAlmostEqual(self.PE.pair_energy_eV(123.0), 3.752, places=6)
+        self.assertAlmostEqual(self.PE.pair_energy_eV(), 3.752 * (1 - 1.31e-4 * 7), places=6)   # 130 K
+        self.assertAlmostEqual(self.PE.pair_energy_eV(), 3.7486, places=4)
+
+    def test_colder_is_higher_and_env_override(self):
+        self.assertGreater(self.PE.pair_energy_eV(100.0), self.PE.pair_energy_eV(150.0))
+        os.environ["COMM_TEMPERATURE_K"] = "150"
+        self.assertEqual(self.PE.temperature_K(), 150.0)
+        self.assertAlmostEqual(self.PE.pair_energy_eV(), self.PE.pair_energy_eV(150.0), places=12)
+
+    def test_panaskimg_constant_unchanged(self):
+        self.assertEqual(self.PE.PANASKIMG_EV, 3.74)
+        self.assertEqual(GVC.PANASKIMG_EV, 3.74)
+
+
 if __name__ == "__main__":
     unittest.main()
