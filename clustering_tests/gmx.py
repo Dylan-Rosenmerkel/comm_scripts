@@ -660,7 +660,10 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
                     r_merge=0.5, w_ratio=1.6, hotcol=True, p_count=1e-5, count_E_max=100, grow=3, return_info=False,
                     count_mode="pix", count_fakes=0.08,
                     residual_pass=True, eps_k=1.0, arbitrate=True, link_alpha=0.01, island_max=4000, bic_margin=None, f_sat=0.01, seed_mode="scalespace",
-                    sat_e_max=1.0, ped_ring=(5.0, 8.0), ped_q=25, return_pixels=False):
+                    sat_e_max=1.0, ped_ring=(5.0, 8.0), ped_q=25, return_pixels=False, split_crossings=False, hints=None):
+    # crowded mode (crowded.py, set by adaptive.adaptive_cluster): split_crossings splits clusters holding two straight
+    # lines crossing as an X (after the merge graph and after the island arbitration); hints = straight-track axes
+    # (crowded.find_hints): the clouds on each axis become one cluster (cls 'muon', 'straight_track': True)
     bg = get_bg(Q, valid, bg)
     H, W = Q.shape
     info = {}
@@ -726,6 +729,11 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
     info["n_clouds"] = len(mix)
     # 3. merge
     lab = merge_graph(mix, r_merge=r_merge, w_ratio=w_ratio)
+    hinted = None
+    if (split_crossings or hints) and len(mix):
+        import crowded as CR
+        if split_crossings:
+            lab, info["n_crossing_splits"] = CR.split_crossings(mix, lab)
     out = []
     if len(mix):
         I, K, G, DY, DX = evaluate(mix, R.shape, valid)
@@ -736,6 +744,11 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
                 bic_margin = 100.0 if PIX_EXACT else 30.0     # exact pixel model: free clouds fit sharp X-rays better (sim-calibrated, docs/aGMX phase 2)
             lab, dec = island_arbitration(lab, mix, R, V, M.reshape(H, W), island, valid, eps, island_max=island_max, margin=bic_margin)
             info["decisions"] = dec
+            if split_crossings:
+                lab, n2 = CR.split_crossings(mix, lab); info["n_crossing_splits"] = info.get("n_crossing_splits", 0) + n2
+        if hints:
+            lab, hinted = CR.assign_hints(lab, mix, hints)
+            info["n_hinted_clouds"] = int(hinted.sum())
         rf = R.ravel()
         pI, pL, rc, dom, nc = _aggregate(I, K, G, M, lab, H, W)
         E = np.bincount(pL, rc * rf[pI], nc)
@@ -869,6 +882,11 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
             out.append(c)
         # 6. classes
         _classify(out, mix, lab, R, Rp, pI, pL, rc, W)
+        if hinted is not None and hinted.any():
+            hl = np.zeros(nc, bool); hl[np.unique(lab[hinted])] = True
+            for k, c in enumerate(out[:nc]):
+                if hl[k]:
+                    c["cls"] = "muon"; c["straight_track"] = True
         if PHYS_FIX:
             # G2 (audit): saturation flag. Alphas (4-9 MeV) and other huge deposits can reach the ADC limit, which
             # appears as a plateau at the image maximum; their energy is then a lower limit

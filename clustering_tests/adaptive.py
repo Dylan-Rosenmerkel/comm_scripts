@@ -26,6 +26,11 @@ Steps
      energies over extra rings were both worse (adaptive_crowded_scan_am241.py)
   6. every cluster gets 'regime', 'occ' and (from MHC) 'cls'; crowded clusters get cls 'x-ray' / 'x-ray diffuse' /
      'big deposit' / 'extended' from their energy and size
+  7. engine 'gmx', crowded CCDs (crowded.py): with crowded='auto' ($AGMX_CROWDED; default 'off' for now) crowded mode
+     is on when the core fill (fraction of pixels whose smoothed charge is above max(60 e-, 5 noise)) is >= 0.10:
+     regional background override, serial-register streaks removed (clusters 'artifact-row', regime 'serial'),
+     straight tracks found and passed to GMX as hints (their clouds -> one cluster, cls 'muon'), clusters that
+     cross as an X split, collinear track fragments linked. Other images are clustered exactly as before.
 """
 import os, sys
 import numpy as np
@@ -73,8 +78,12 @@ def hysteresis(Q, region, sigma, k_pix, n_pix=10.0, n_seed=30.0, seed_e=9.5):
     return out
 
 
+CROWDED = os.environ.get("AGMX_CROWDED", "off")       # default of adaptive_cluster(crowded=...): auto | on | off
+# (off until the Am-241 check passes: on EXT3 the background override and the linking lose 59.5 keV events)
+
+
 def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.3, box=31, margin=8, excess_ratio=3.0,
-                     return_info=False, engine="mhc", return_pixels=False, noise_max=1.0, **kw):
+                     return_info=False, engine="mhc", return_pixels=False, noise_max=1.0, crowded=None, crowd_fill=None, **kw):
     """engine='mhc' : unmodelled -> hysteresis; else per region crowded -> hysteresis, sparse -> MHC.
     engine='gmx' : unmodelled -> hysteresis; else GMX on the whole image (GMX shares charge by model responsibility,
                    so it needs no crowded / sparse split; occupancy is still reported per cluster). A_GMX.
@@ -84,6 +93,9 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
     sigma_crowd, margin: engine 'mhc' only (pedestal sigma of the crowded-region hysteresis, region overlap)
     **kw: passed to MH.mhc (engine 'mhc') or GX.general_cluster (engine 'gmx')
     return_pixels: engine 'gmx' (and 'unmodelled'): every cluster gets '_pix' = (rows, cols, charge [e-]) summing to E
+    crowded: engine 'gmx': 'auto' | 'on' | 'off' (default $AGMX_CROWDED, else 'off') - crowded mode (step 7) when the core fill
+             >= crowd_fill (default crowded.CROWD_FILL = 0.10) / always / never. info: core_fill, crowded_mode,
+             bg_override (report), n_streaks, n_hints, n_linked
     Each cluster: E [keV], y, x, sxy, cls, regime ('sparse' / 'crowded' / 'unmodelled'), occ; with engine 'gmx'
     also the quality flags edge, blend, ped [e-/pix], peakfrac, chi2, sig (gmx.fill_flags for clusters that were
     not fitted by the mixture: blend 0, peakfrac 1, chi2 NaN)."""
@@ -98,9 +110,25 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
             bg = AM.background_map(Q, valid)
         except Exception:
             bg = simple_bg(Q, valid, sigma)
+    info = dict(sigma=sigma, sigma_crowd=sigma_crowd)
+    streak_cl, hints = [], None
+    cmode = (crowded or CROWDED).lower()
+    if cmode not in ("auto", "on", "off"):
+        raise ValueError(f"adaptive_cluster: crowded={cmode!r} (use 'auto', 'on' or 'off')")
+    if engine == "gmx" and cmode != "off":
+        import crowded as CR
+        fill = CR.core_fill(Q, valid, bg)
+        on = cmode == "on" or fill >= (CR.CROWD_FILL if crowd_fill is None else crowd_fill)
+        info.update(core_fill=fill, crowded_mode=bool(on))
+        if on:
+            bg, info["bg_override"] = CR.regional_background(Q, valid, bg)
+            hints = CR.find_hints(Q, valid, bg)
+            st, streak_cl = CR.find_streaks(Q, valid, bg)
+            valid = valid & ~st
+            info.update(n_hints=len(hints), n_streaks=len(streak_cl))
     noise = float(np.median(bg.s[valid])); lam = float(np.median(bg.lam[valid]))
     k = max(int(AM.poisson_tail_k(lam, 0.10)[0]), 2)
-    info = dict(sigma=sigma, noise=noise, lam=lam, sigma_crowd=sigma_crowd)
+    info.update(noise=noise, lam=lam)
     # 'unmodelled': the background is not dark current + read noise (bg spread >= excess_ratio x read noise), or the
     # image is not electron-counting skipper data (read noise >= noise_max e-, physics audit 2026-10-25): with a few
     # e- of noise per pixel the GMX energy (sum over the whole footprint) collects sqrt(Npix) x noise and the lines
@@ -127,10 +155,18 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
     if engine == "gmx":
         import gmx as GX
         out = []
-        for c in GX.general_cluster(Q, valid, bg, return_pixels=return_pixels, **kw):
+        cm = info.get("crowded_mode", False)
+        if cm:
+            kw = dict(kw, split_crossings=True, hints=hints)
+        for c in GX.general_cluster(Q, valid, bg, return_pixels=return_pixels or cm, **kw):
             y, x = int(round(c["y"])), int(round(c["x"]))
             o = float(occ[y, x]) if 0 <= y < Q.shape[0] and 0 <= x < Q.shape[1] else np.nan
             out.append(dict(c, regime="crowded" if o >= occ_thr else "sparse", occ=o))
+        if cm:
+            out = out + [dict(c, occ=np.nan) for c in streak_cl]
+            out, info["n_linked"] = CR.link_tracks(out)
+            if not return_pixels:
+                for c in out: c.pop("_pix", None)
         info.update(regime="gmx", occ=occ, crowded_frac=float(((occ >= occ_thr) & valid).sum() / max(valid.sum(), 1)))
         return (out, info) if return_info else out
     crowded = (occ >= occ_thr) & valid

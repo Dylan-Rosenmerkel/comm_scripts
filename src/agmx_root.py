@@ -9,7 +9,8 @@ pixel lists, ...) is computed by panaSKImg's own code, and written with pysimdam
 `info` and `process_config` are copied from the image's panaSKImg file; clustersRec gets the usual branches plus
     agmx_cls, agmx_blend, agmx_ped, agmx_peakfrac, agmx_chi2, agmx_sig, agmx_regime   (vector per cluster;
   -999 = not computed, e.g. agmx_chi2 of clusters the mixture did not fit)
-and the file gets a TNamed `agmx_config` (JSON: version, parameters, class and regime codes).
+and the file gets a TNamed `agmx_config` (JSON: version, parameters, class and regime codes, crowded_mode: setting,
+core fill, whether crowded mode ran and what it found - clustering_tests/crowded.py).
 For electron-counting images (read noise < 0.35 e-) the few-electron candidate catalogue (clustering_tests/
 fe_candidates.py: every 2-20 e- group, masks, background expectation per class) is written to
 OUTDIR/fe_candidates/<stem>_ext<n>_fe_candidates.csv / .json (run_AGMX --no-fe-candidates to skip).
@@ -35,10 +36,10 @@ for p in (HERE, CT):
         sys.path.insert(0, p)
 import naming  # noqa: E402
 
-AGMX_VERSION = "2026-10-25"
+AGMX_VERSION = "2026-10-28"     # crowded mode (clustering_tests/crowded.py)
 CLS_CODES = {"x-ray": 1, "x-ray diffuse": 2, "low-E": 3, "muon": 4, "worm": 5, "alpha": 6, "big deposit": 7,
              "artifact-row": 8, "artifact-column": 9, "extended": 10}
-REGIME_CODES = {"sparse": 0, "crowded": 1, "unmodelled": 2}
+REGIME_CODES = {"sparse": 0, "crowded": 1, "unmodelled": 2, "serial": 3}     # serial: serial-register streak (crowded mode)
 NOT_COMPUTED = -999.0     # agmx_* flag that could not be computed (a real ped / chi2 / blend is never this low)
 
 
@@ -229,9 +230,22 @@ def process(waders_fits, ref_root, final_json, out_path, ext, curve=None, agmx_k
     cls = build_clusters(clusters, ref, adu, ref["gain"], *Q.shape)
     params = dict(method="A_GMX (clustering_tests/adaptive.py engine='gmx')", version=AGMX_VERSION,
                   gain_corrected=curve is not None, gain_anchor=anchor if curve is not None else None, parameters=kw, cls_codes=CLS_CODES, regime_codes=REGIME_CODES, not_computed=NOT_COMPUTED,
+                  crowded_mode=crowded_summary(info),
                   source_image=os.path.basename(waders_fits), reference=os.path.basename(ref_root),
                   recommended_selection="agmx_blend < 0.02 and agmx_ped < 10 (and fSTD/sigma cut of the analysis)")
     return write_root(out_path, cls, ref, ref_root, params)
+
+
+def crowded_summary(info):
+    """crowded-mode record for agmx_config (adaptive.adaptive_cluster info): the setting, the core fill that decided
+    it, and what ran"""
+    import adaptive as AD
+    r = dict(setting=AD.CROWDED, core_fill=info.get("core_fill"), on=bool(info.get("crowded_mode", False)))
+    if r["on"]:
+        bo = info.get("bg_override") or {}
+        r.update(bg_override=bool(bo.get("applied")), bad_rows=int(bo.get("bad_rows", 0)), cells_changed=int(bo.get("cells_changed", 0)),
+                 straight_tracks=int(info.get("n_hints", 0)), streaks=int(info.get("n_streaks", 0)), linked=int(info.get("n_linked", 0)))
+    return r
 
 
 def tasks_for_run(run_dir, root_dir="root"):

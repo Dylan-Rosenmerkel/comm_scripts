@@ -331,6 +331,12 @@ what it does, per image (gain_dc_split.py --per-ext, always on):
           agmx_blend < 0.02 and agmx_ped < 10 with the usual sigma_xy cut. --composite uses the A_GMX files.
           panaSKImg's ClusterFinder still runs (root/ is kept and gives info/process_config).
   both    as agmx, but --composite runs on the WADERs files (composite/) and on the A_GMX files (composite_agmx/).
+  --agmx-crowded auto|on|off (default off for now): A_GMX crowded mode for CCDs dense with tracks (core fill >= 0.10:
+          the fraction of pixels whose smoothed charge is above max(60 e-, 5 noise); L2 surface runs ~0.29, Am-241
+          ~0.45, Fe-55 production CCDs ~0.02, which are clustered exactly as before): regional background override,
+          serial-register streaks as separate 'artifact-row' clusters, straight tracks found and given to GMX as
+          hints (one 'muon' cluster each, A_GMX's own width and charge sharing at crossings), X-crossings split,
+          collinear fragments linked. Recorded per file in agmx_config (crowded_mode).
   For a run that is already finished: bin/run_AGMX WADERs_analysis_<run>.
 
 settings you can pass with --autoconfig-args "..." (all inside one quoted string):
@@ -428,6 +434,9 @@ def build_parser(full=False):
     ap.add_argument("--clusterer", choices=("waders", "agmx", "both"), default="waders",
                     help="waders (default): panaSKImg's ClusterFinder only. agmx: also A_GMX cluster files in the same "
                          "format (root_agmx*/), used by --composite. both: as agmx, --composite on both (details: -h -v)")
+    ap.add_argument("--agmx-crowded", choices=("auto", "on", "off"), default=os.environ.get("AGMX_CROWDED", "off"),
+                    help="with --clusterer agmx/both: A_GMX crowded mode (clustering_tests/crowded.py). auto: on "
+                         "for CCDs whose core fill is >= 0.10 (dense tracks, e.g. L2 surface runs, Am-241); on; off (default, for now)")
     ap.add_argument("--composite", action="store_true",
                     help="after panaSKImg, run MakeComposite_Fe55_Clusters_Extensions.cc on the cluster files, "
                          "once per image type and module (output in composite/; details: -h -v)")
@@ -1080,6 +1089,7 @@ def main():
     args = parse_args()
     run_name, images, out, modules = check_request(args)
     ensure_environment(args.env)          # may re-run this script inside the conda environment and exit
+    os.environ["AGMX_CROWDED"] = args.agmx_crowded   # read by clustering_tests/adaptive.py (A_GMX workers)
     run = Run(args=args, run_name=run_name, images=images, out=out, modules=modules)
     load_pipeline_modules(run)
     prepare_output(run)
