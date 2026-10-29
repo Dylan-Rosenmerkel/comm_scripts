@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.join(ROOT, "src"))
 import adaptive as AD  # noqa: E402
 import agent_methods as AM  # noqa: E402
 import crowded as CR  # noqa: E402
+import crowded_shapes as CS  # noqa: E402
 
 
 def line(img, rng, y0, x0, y1, x1, e_per_px, s=0.7):
@@ -173,6 +174,44 @@ class BackgroundOverride(unittest.TestCase):
         self.assertGreaterEqual(rep["bad_rows"], 10)
         self.assertLess(np.abs(bg2.o[40:50, 0] - bg.o[40:50, 0]).max(), 0.5)
         self.assertLess(abs(np.median(bg2.lam[40:50]) - 6.0), 0.5)
+
+
+class CrowdedShapes(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        S = StraightTracks; S.setUpClass()
+        cls.S = S
+        cls.cl, cls.info = AD.adaptive_cluster(S.Q, S.valid, S.bg, engine="gmx", return_pixels=True, return_info=True,
+                                               crowded="on", crowded_shapes="on")
+
+    def test_muon_is_one_line_component(self):
+        self.assertTrue(self.info["crowded_shapes"]); self.assertGreaterEqual(self.info["n_lines"], 1)
+        own = owner(self.cl, self.S.Q.shape)
+        ys, xs = np.nonzero(self.S.mu); q = self.S.mu[ys, xs]
+        sh = np.bincount(own[ys, xs], q, len(self.cl) + 1); sh[0] = 0
+        best = self.cl[int(sh.argmax()) - 1]
+        self.assertEqual(best["regime"], "line")
+        self.assertGreaterEqual(sh.max() / q.sum(), 0.85)
+        self.assertLess(best["E"] / AM.E_PER_E, 1.15 * q.sum())          # the crossing tracks are not in it
+
+    def test_crossing_tracks_keep_their_charge(self):
+        own = owner(self.cl, self.S.Q.shape)
+        m = self.S.mu > 0; mk = np.bincount(own[m], self.S.mu[m]); mk[0] = 0; mk = int(mk.argmax())
+        for T in self.S.cross:
+            ys, xs = np.nonzero(T); q = T[ys, xs]
+            sh = np.bincount(own[ys, xs], q, len(self.cl) + 1); sh[0] = 0
+            self.assertLess(sh[mk] / q.sum(), 0.3)
+
+    def test_topology_neck_splits_two_touching_deposits(self):
+        import gmx as GX
+        mix = GX.Mix([2000.0, 400.0, 2000.0], [[50.0, 50.0], [50.0, 53.0], [50.0, 56.0]], [[0.4, 0.4, 0.0], [0.6, 0.6, 0.0], [0.4, 0.4, 0.0]])
+        sub = CS.split_cluster(mix.mu, mix.A, mix.S)
+        self.assertNotEqual(sub[0], sub[2])                               # two X-rays 6 px apart with a weak bridge
+
+    def test_topology_keeps_a_straight_track(self):
+        mu = np.c_[np.full(15, 40.0), np.arange(15) * 2.0 + 10]
+        sub = CS.split_cluster(mu, np.full(15, 2000.0), np.tile([0.8, 0.8, 0.0], (15, 1)))
+        self.assertTrue(np.all(sub == 0))
 
 
 class HotColumnsAndGlow(unittest.TestCase):

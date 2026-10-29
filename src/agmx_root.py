@@ -39,7 +39,7 @@ import naming  # noqa: E402
 AGMX_VERSION = "2026-10-28"     # crowded mode (clustering_tests/crowded.py)
 CLS_CODES = {"x-ray": 1, "x-ray diffuse": 2, "low-E": 3, "muon": 4, "worm": 5, "alpha": 6, "big deposit": 7,
              "artifact-row": 8, "artifact-column": 9, "extended": 10, "glow": 11}
-REGIME_CODES = {"sparse": 0, "crowded": 1, "unmodelled": 2, "serial": 3}     # serial: serial-register streak (crowded mode)
+REGIME_CODES = {"sparse": 0, "crowded": 1, "unmodelled": 2, "serial": 3, "line": 4}     # serial: serial-register streak, line: muon line component (crowded mode)
 NOT_COMPUTED = -999.0     # agmx_* flag that could not be computed (a real ped / chi2 / blend is never this low)
 
 
@@ -245,6 +245,7 @@ def crowded_summary(info):
         bo = info.get("bg_override") or {}
         bc = info.get("bg_columns") or {}
         r.update(hot_columns=int(bc.get("columns", 0)), glow=int(info.get("n_glow", 0)))
+        r.update(shapes=bool(info.get("crowded_shapes", False)), lines=int(info.get("n_lines", 0)), topology_splits=int(info.get("n_topology_splits", 0)))
         r.update(bg_override=bool(bo.get("applied")), bad_rows=int(bo.get("bad_rows", 0)), cells_changed=int(bo.get("cells_changed", 0)),
                  straight_tracks=int(info.get("n_hints", 0)), streaks=int(info.get("n_streaks", 0)), linked=int(info.get("n_linked", 0)))
     return r

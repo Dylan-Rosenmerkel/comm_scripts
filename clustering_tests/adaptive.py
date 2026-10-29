@@ -31,6 +31,8 @@ Steps
      regional background override, hot-column bands, serial-register streaks removed (clusters 'artifact-row', regime 'serial'),
      straight tracks found and passed to GMX as hints (their clouds -> one cluster, cls 'muon'), clusters that
      cross as an X split, collinear track fragments linked. Other images are clustered exactly as before.
+     With crowded_shapes='on' the straight tracks are line components of the mixture instead of hints, and the clusters
+     get a topology split (crowded_shapes.py).
 """
 import os, sys
 import numpy as np
@@ -79,10 +81,11 @@ def hysteresis(Q, region, sigma, k_pix, n_pix=10.0, n_seed=30.0, seed_e=9.5):
 
 
 CROWDED = os.environ.get("AGMX_CROWDED", "auto")      # default of adaptive_cluster(crowded=...): auto | on | off
+CROWDED_SHAPES = os.environ.get("AGMX_CROWDED_SHAPES", "off")   # crowded mode with muon lines + topology split: on | off
 
 
 def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.3, box=31, margin=8, excess_ratio=3.0,
-                     return_info=False, engine="mhc", return_pixels=False, noise_max=1.0, crowded=None, crowd_fill=None, **kw):
+                     return_info=False, engine="mhc", return_pixels=False, noise_max=1.0, crowded=None, crowd_fill=None, crowded_shapes=None, **kw):
     """engine='mhc' : unmodelled -> hysteresis; else per region crowded -> hysteresis, sparse -> MHC.
     engine='gmx' : unmodelled -> hysteresis; else GMX on the whole image (GMX shares charge by model responsibility,
                    so it needs no crowded / sparse split; occupancy is still reported per cluster). A_GMX.
@@ -95,6 +98,9 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
     crowded: engine 'gmx': 'auto' | 'on' | 'off' (default $AGMX_CROWDED, else 'auto') - crowded mode (step 7) when the core fill
              >= crowd_fill (default crowded.CROWD_FILL = 0.10) / always / never. info: core_fill, crowded_mode,
              bg_override, bg_columns (reports), n_streaks, n_hints, n_linked, n_glow (cls 'glow': large faint clusters)
+    crowded_shapes: 'on' | 'off' (default $AGMX_CROWDED_SHAPES, else 'off'): in crowded mode the straight tracks become line
+             components of the mixture and the clusters get the topology split (crowded_shapes.py) instead of the
+             hint grouping. info: crowded_shapes, n_lines, n_topology_splits
     Each cluster: E [keV], y, x, sxy, cls, regime ('sparse' / 'crowded' / 'unmodelled'), occ; with engine 'gmx'
     also the quality flags edge, blend, ped [e-/pix], peakfrac, chi2, sig (gmx.fill_flags for clusters that were
     not fitted by the mixture: blend 0, peakfrac 1, chi2 NaN)."""
@@ -156,12 +162,21 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
         import gmx as GX
         out = []
         cm = info.get("crowded_mode", False)
-        if cm:
-            kw = dict(kw, split_crossings=True, hints=hints)
-        for c in GX.general_cluster(Q, valid, bg, return_pixels=return_pixels or cm, **kw):
+        shapes = cm and (crowded_shapes or CROWDED_SHAPES).lower() == "on"
+        info["crowded_shapes"] = bool(shapes)
+        if shapes:
+            import crowded_shapes as CS
+            res, inf2 = CS.shape_cluster(Q, valid, bg, hints, return_pixels=True, return_info=True, **kw)
+            info.update(n_lines=inf2["n_lines"], n_topology_splits=inf2["n_topology_splits"])
+        elif cm:
+            res = GX.general_cluster(Q, valid, bg, return_pixels=True, split_crossings=True, hints=hints, **kw)
+        else:
+            res = GX.general_cluster(Q, valid, bg, return_pixels=return_pixels, **kw)
+        for c in res:
             y, x = int(round(c["y"])), int(round(c["x"]))
             o = float(occ[y, x]) if 0 <= y < Q.shape[0] and 0 <= x < Q.shape[1] else np.nan
-            out.append(dict(c, regime="crowded" if o >= occ_thr else "sparse", occ=o))
+            reg = c["regime"] if c.get("regime") == "line" else ("crowded" if o >= occ_thr else "sparse")
+            out.append(dict(c, regime=reg, occ=o))
         if cm:
             out = out + [dict(c, occ=np.nan) for c in streak_cl]
             out, info["n_linked"] = CR.link_tracks(out)

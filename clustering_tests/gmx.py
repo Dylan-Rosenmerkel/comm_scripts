@@ -660,10 +660,13 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
                     r_merge=0.5, w_ratio=1.6, hotcol=True, p_count=1e-5, count_E_max=100, grow=3, return_info=False,
                     count_mode="pix", count_fakes=0.08,
                     residual_pass=True, eps_k=1.0, arbitrate=True, link_alpha=0.01, island_max=4000, bic_margin=None, f_sat=0.01, seed_mode="scalespace",
-                    sat_e_max=1.0, ped_ring=(5.0, 8.0), ped_q=25, return_pixels=False, split_crossings=False, hints=None):
+                    sat_e_max=1.0, ped_ring=(5.0, 8.0), ped_q=25, return_pixels=False, split_crossings=False, hints=None, mix0=None, fixed=None, post_lab=None):
     # crowded mode (crowded.py, set by adaptive.adaptive_cluster): split_crossings splits clusters holding two straight
     # lines crossing as an X (after the merge graph and after the island arbitration); hints = straight-track axes
-    # (crowded.find_hints): the clouds on each axis become one cluster (cls 'muon', 'straight_track': True)
+    # (crowded.find_hints): the clouds on each axis become one cluster (cls 'muon', 'straight_track': True).
+    # Crowded shapes (crowded.shape_cluster): mix0 = clouds already fitted (stages 1-2 skipped), fixed = image of the muon
+    # line components (part of the model in every responsibility: the clouds keep only what the lines do not explain;
+    # the clusters do not grow into the lines' footprint), post_lab(mix, lab) = topology split of the cloud labels
     bg = get_bg(Q, valid, bg)
     H, W = Q.shape
     info = {}
@@ -687,45 +690,49 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
     # electrons per fit cell); every few-electron test uses at least the lam implied by the measured rate of
     # single-electron pixels (energies keep the fitted background)
     bg_det = detection_bg(Qc, valid, bg) if (PHYS_FIX and counting) else bg
-    # 1. seeds
-    T = mf_maps(R, np.where(valid, bg.var, 0.0), scales)
-    if seed_mode == "maxscale":
-        Tm = T.max(0); bk = T.argmax(0)
-        pk = (Tm == _local_max(Tm, valid, 5)) & (Tm > nsig) & valid
-        py, px = np.nonzero(pk)
-        keep = poisson_keep(Qc, valid, bg_det, py, px, nsig)
-        py, px = py[keep], px[keep]
-        s0 = np.asarray(scales)[bk[py, px]]
+    if mix0 is None:
+        # 1. seeds
+        T = mf_maps(R, np.where(valid, bg.var, 0.0), scales)
+        if seed_mode == "maxscale":
+            Tm = T.max(0); bk = T.argmax(0)
+            pk = (Tm == _local_max(Tm, valid, 5)) & (Tm > nsig) & valid
+            py, px = np.nonzero(pk)
+            keep = poisson_keep(Qc, valid, bg_det, py, px, nsig)
+            py, px = py[keep], px[keep]
+            s0 = np.asarray(scales)[bk[py, px]]
+        else:
+            py, px, s0 = scale_space_seeds(T, scales, Qc, valid, bg_det, nsig)
+        A0 = np.maximum(R[py, px] * 2 * np.pi * (s0 ** 2 + PIX), 1.0)
+        mix = Mix(A0, np.c_[py, px].astype(float), np.c_[s0 ** 2, s0 ** 2, np.zeros_like(s0)])
+    if mix0 is not None:
+        mix = mix0
     else:
-        py, px, s0 = scale_space_seeds(T, scales, Qc, valid, bg_det, nsig)
-    A0 = np.maximum(R[py, px] * 2 * np.pi * (s0 ** 2 + PIX), 1.0)
-    mix = Mix(A0, np.c_[py, px].astype(float), np.c_[s0 ** 2, s0 ** 2, np.zeros_like(s0)])
-    # 2. EM + residual pass
-    mix = em(mix, Rp, eps, valid, n_iter)
-    if residual_pass and len(mix):
-        I, K, G, _, _ = evaluate(mix, R.shape, valid)
-        M = np.bincount(I, G, H * W).reshape(H, W)
-        Rr = np.where(valid, R - M, 0.0)
-        Tr = mf_maps(Rr, np.where(valid, bg.var + np.clip(M, 0, None), 0.0), scales[:2])
-        Trm = Tr.max(0)
-        pk2 = (Trm == _local_max(Trm, valid, 3)) & (Trm > nsig_res) & valid
-        qy, qx = np.nonzero(pk2)
-        if qy.size:
-            # the residual plus the full background (o + lam): poisson_keep removes o and tests against Poisson(lam)
-            k2 = poisson_keep(np.where(valid, Rr + bg.mean, 0.0), valid, bg_det, qy, qx, nsig) if counting else np.ones(qy.size, bool)
-            qy, qx = qy[k2], qx[k2]
-            d, _ = cKDTree(mix.mu).query(np.c_[qy, qx]) if len(mix) else (np.full(qy.size, 9.0), None)
-            new = d > 1.0
-            qy, qx = qy[new], qx[new]
-            s1 = np.asarray(scales)[Tr.argmax(0)[qy, qx]]
-            add = Mix(np.maximum(Rr[qy, qx] * 2 * np.pi * (s1 ** 2 + PIX), 1.0), np.c_[qy, qx].astype(float),
-                      np.c_[s1 ** 2, s1 ** 2, np.zeros_like(s1)])
-            info["n_residual_seeds"] = int(len(add))
-            mix = em(mix.concat(add), Rp, eps, valid, max(n_iter // 2, 10))
-    if len(mix):
-        z = significance(mix, Rp, V, valid)
-        mix = mix.keep(z > sig_min)
-        mix = em(mix, Rp, eps, valid, 5)
+        # 2. EM + residual pass
+        mix = em(mix, Rp, eps, valid, n_iter)
+        if residual_pass and len(mix):
+            I, K, G, _, _ = evaluate(mix, R.shape, valid)
+            M = np.bincount(I, G, H * W).reshape(H, W)
+            Rr = np.where(valid, R - M, 0.0)
+            Tr = mf_maps(Rr, np.where(valid, bg.var + np.clip(M, 0, None), 0.0), scales[:2])
+            Trm = Tr.max(0)
+            pk2 = (Trm == _local_max(Trm, valid, 3)) & (Trm > nsig_res) & valid
+            qy, qx = np.nonzero(pk2)
+            if qy.size:
+                # the residual plus the full background (o + lam): poisson_keep removes o and tests against Poisson(lam)
+                k2 = poisson_keep(np.where(valid, Rr + bg.mean, 0.0), valid, bg_det, qy, qx, nsig) if counting else np.ones(qy.size, bool)
+                qy, qx = qy[k2], qx[k2]
+                d, _ = cKDTree(mix.mu).query(np.c_[qy, qx]) if len(mix) else (np.full(qy.size, 9.0), None)
+                new = d > 1.0
+                qy, qx = qy[new], qx[new]
+                s1 = np.asarray(scales)[Tr.argmax(0)[qy, qx]]
+                add = Mix(np.maximum(Rr[qy, qx] * 2 * np.pi * (s1 ** 2 + PIX), 1.0), np.c_[qy, qx].astype(float),
+                          np.c_[s1 ** 2, s1 ** 2, np.zeros_like(s1)])
+                info["n_residual_seeds"] = int(len(add))
+                mix = em(mix.concat(add), Rp, eps, valid, max(n_iter // 2, 10))
+        if len(mix):
+            z = significance(mix, Rp, V, valid)
+            mix = mix.keep(z > sig_min)
+            mix = em(mix, Rp, eps, valid, 5)
     info["n_clouds"] = len(mix)
     # 3. merge
     lab = merge_graph(mix, r_merge=r_merge, w_ratio=w_ratio)
@@ -738,6 +745,8 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
     if len(mix):
         I, K, G, DY, DX = evaluate(mix, R.shape, valid)
         M = np.bincount(I, G, H * W)
+        if fixed is not None:
+            M = M + fixed.ravel()                     # the muon lines share every pixel's charge with the clouds
         if arbitrate:
             island = (Qc > M2.link_threshold(bg, link_alpha)) & valid
             if bic_margin is None:
@@ -749,6 +758,8 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
         if hints:
             lab, hinted = CR.assign_hints(lab, mix, hints)
             info["n_hinted_clouds"] = int(hinted.sum())
+        if post_lab is not None:
+            lab = post_lab(mix, lab)
         rf = R.ravel()
         pI, pL, rc, dom, nc = _aggregate(I, K, G, M, lab, H, W)
         E = np.bincount(pL, rc * rf[pI], nc)
@@ -788,6 +799,8 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
         # 4b. grow: significant pixels next to (<= grow px) and connected to covered pixels, not covered themselves
         if grow:
             covered = dom >= 0
+            if fixed is not None:
+                covered = covered | (fixed > 1.0)    # the lines' footprint: clouds do not grow into it
             thr = M2.link_threshold(bg, 0.01)
             cand = (Qc > thr) & valid & ~covered
             if cand.any():
@@ -797,6 +810,9 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
                 extra = F & cand
                 ey, ex_ = np.nonzero(extra)
                 own = dom[iy[ey, ex_], ix[ey, ex_]]
+                if fixed is not None:
+                    ok_ = own >= 0                            # nearest covered pixel is a line's: not grown
+                    ey, ex_, own = ey[ok_], ex_[ok_], own[ok_]
                 E += np.bincount(own, R[ey, ex_], nc)
                 gpix = (ey, ex_, own)
             else:
@@ -900,6 +916,8 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
         covered = np.zeros((H, W), bool)
         if len(mix):
             covered.ravel()[pI[rc > 0.05]] = True
+        if fixed is not None:
+            covered |= fixed > 1.0                    # line pixels are not few-electron candidates
         if count_mode == "pix":
             out += _counting_pix(Qc, valid, bg_det, covered, count_fakes)
         else:                                  # the earlier box test (Poisson tail of the group's charge)
