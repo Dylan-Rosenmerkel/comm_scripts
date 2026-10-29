@@ -464,7 +464,8 @@ with \cc{run_AGMX --no-fe-candidates} or \cc{AGMX_FE_CANDIDATES=0} (\cc{clusteri
 \end{center}
 \textbf{Crowded mode} (\cc{--agmx-crowded auto}, the default): on CCDs dense with tracks (core fill $\ge0.10$: L2-type
 surface runs, Am-241; Fe-55 production CCDs are $\approx0.02$ and clustered as before) A\_GMX also corrects the background
-where the row fit takes a wrong pedestal (dark charge $\ge3$\,e$^-$/pix), reports serial-register streaks as separate
+where the row fit takes a wrong pedestal and in hot-column bands (dark charge $\ge3$\,e$^-$/pix), labels large faint
+leftovers \cc{glow} (\cc{agmx_cls} 11), reports serial-register streaks as separate
 \cc{artifact-row} clusters, keeps straight tracks (muons) whole through crossings by giving their axes to the mixture as hints,
 splits clusters that cross as an X and links collinear fragments. Each file records what ran in \cc{agmx_config}
 (\cc{crowded_mode}). Details: \cc{docs/aGMX/agmx_crowded.pdf}.

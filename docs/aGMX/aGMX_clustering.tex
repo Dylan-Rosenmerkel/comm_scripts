@@ -628,7 +628,8 @@ from the \emph{core fill}, the fraction of pixels whose 1-px-smoothed charge exc
 \begin{itemize}
 \item a \textbf{background override} for high dark charge (median $\lambda\ge3$\,\el/pix, read noise $<0.45$\,\el): rows whose
 whole-electron pedestal is wrong get the good rows' pedestal; per-cell truncated-Poisson dark charge replaces the row model
-where it differs significantly;
+where it differs significantly; sharp-edged hot-column bands are added per column; large faint leftovers are
+labelled \code{glow};
 \item \textbf{serial-register streaks} (one row, no vertical spread, $\ge8$\,px) removed before clustering and reported as
 \code{artifact-row} clusters with regime \code{serial};
 \item \textbf{straight-track hints}: straight tracks are found (Hough on the skeleton of the core, ridge walk through crossings,

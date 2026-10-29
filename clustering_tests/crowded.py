@@ -5,6 +5,8 @@ switches crowded mode on when the image's core fill (fraction of pixels whose sm
 max(60 e-, 5 noise)) is >= CROWD_FILL: L2 surface images 0.27-0.31, Am-241 0.43-0.47, Fe-55 production CCDs
 0.015-0.02. On other images nothing here runs and A_GMX is unchanged. In crowded mode:
 
+  column_background    hot-column bands (sharp-edged groups of columns with extra dark charge) added to the model
+  glow_flag            large faint clusters left by background structure: cls 'glow'
   regional_background  the per-row background fit fails at high dark charge (integer pedestal ambiguous): rows with
                        too many pixels below the zero-electron level get the good rows' pedestal; per-cell
                        (10 x 64 px) truncated-Poisson dark charge overrides the row model where it differs
@@ -120,6 +122,64 @@ def regional_background(Q, valid, bg, rb=10, cb=64, s_max=0.45, lam_min=3.0, f_n
     lam_map = np.maximum(lam_map, AM.LAM_FLOOR)
     rep["applied"] = True
     return AM.Background(np.repeat(o[:, None], W, 1), lam_map, bg.s2, bg.mask, dict(bg.rows, regional=rep)), rep
+
+
+def column_background(Q, valid, bg, rows=32, smooth=1.0, n_sig=8.0, grow=2, min_free=8, s_max=0.45, lam_min=3.0, z_min=4.0, d_min=2.0, run_min=4):
+    """hot-column bands (groups of columns with extra dark charge and sharp edges; L2 9 EXT1: columns 893-925 at
+    +8 e-/pix, which the 64-column cells cannot follow and A_GMX turned into 3000-px 'blobs'). Per column and block of
+    `rows` rows: the mean of the free pixels (deposits above n_sig x the noise masked, dilated by `grow` px) minus the
+    model (n_sig 8: a 5-sigma mask also cuts the upper tail of a +8 e- band and biases it low; deposits are hundreds
+    of e-), smoothed along the column only (never across columns). Kept only where it is >= max(d_min, z_min x its
+    error), POSITIVE (hot columns add charge; coherent deficits sit in rows with undershoot after bright tracks, where
+    the low counts still fit the row model) and in runs of >= run_min adjacent columns (random per-column noise and
+    small overall offsets are left to the row model). The deposit mask is built once from the input background
+    (rebuilding it with a changed lam feeds back). Same gate as regional_background. Returns (bg, report)."""
+    H, W = Q.shape
+    rep = dict(applied=False, columns=0)
+    if float(np.median(bg.s[valid])) >= s_max or float(np.median(bg.lam[valid])) < lam_min:
+        return bg, rep
+    o, lam = bg.o, bg.lam
+    noise = np.sqrt(np.maximum(lam, 0) + bg.s2)
+    free = valid & ~nd.binary_dilation(((Q - o - lam) > n_sig * noise) & valid, iterations=grow)
+    starts = np.arange(0, H, rows)
+    S = np.add.reduceat(np.where(free, Q - o - lam, 0.0), starts, axis=0)
+    N = np.add.reduceat(free.astype(float), starts, axis=0)
+    L = np.add.reduceat(np.where(free, lam, 0.0), starts, axis=0)
+    ok = N >= min_free
+    D = np.where(ok, S / np.maximum(N, 1), 0.0)
+    num = nd.gaussian_filter1d(D * ok, smooth, axis=0, mode="nearest"); den = nd.gaussian_filter1d(ok.astype(float), smooth, axis=0, mode="nearest")
+    Ds = np.where(den > 1e-3, num / np.maximum(den, 1e-9), 0.0)
+    Ns = nd.gaussian_filter1d(N, smooth, axis=0, mode="nearest") * 2.5          # pixels behind the smoothed value
+    err = np.sqrt(np.maximum(L / np.maximum(N, 1), 1.0) / np.maximum(Ns, 1))
+    m = (Ds >= np.maximum(z_min * err, d_min))
+    lab, nlab = nd.label(m, structure=np.array([[0, 0, 0], [1, 1, 1], [0, 0, 0]]))
+    if nlab:
+        sizes = nd.sum(m, lab, np.arange(1, nlab + 1)); m = np.isin(lab, np.nonzero(sizes >= run_min)[0] + 1)
+    else:
+        m[:] = False
+    if not m.any():
+        return bg, rep
+    Ds = np.where(m, Ds, 0.0)
+    cy = np.minimum(starts + rows / 2, H - 1)
+    cols = np.nonzero(m.any(0))[0]
+    lam2 = lam.copy()
+    for x in cols:
+        lam2[:, x] = np.maximum(lam[:, x] + np.interp(np.arange(H), cy, Ds[:, x]), AM.LAM_FLOOR)
+    rep.update(applied=True, columns=int(cols.size), max_excess=float(Ds.max()))
+    return AM.Background(o, lam2, bg.s2, bg.mask, dict(bg.rows, column=rep)), rep
+
+
+def glow_flag(clusters, bg, k=3.0, min_pix=100):
+    """large faint clusters - mean charge per pixel below k x sqrt(local dark charge), >= min_pix px - are background
+    structure the model does not follow (glow), not deposits: cls 'glow'. Needs '_pix'. Returns the number marked."""
+    n = 0
+    for c in clusters:
+        if "_pix" not in c or c.get("regime") == "serial": continue
+        ys, xs, q = c["_pix"]
+        if ys.size < min_pix: continue
+        if c["E"] / AM.E_PER_E / ys.size < k * np.sqrt(max(float(np.median(bg.lam[ys, xs])), 1.0)):
+            c["cls"] = "glow"; c["glow"] = True; n += 1
+    return n
 
 
 # ------------------------------------------------------------------------------------------------ serial streaks

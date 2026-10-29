@@ -28,7 +28,7 @@ Steps
      'big deposit' / 'extended' from their energy and size
   7. engine 'gmx', crowded CCDs (crowded.py): with crowded='auto' (default; $AGMX_CROWDED overrides) crowded mode
      is on when the core fill (fraction of pixels whose smoothed charge is above max(60 e-, 5 noise)) is >= 0.10:
-     regional background override, serial-register streaks removed (clusters 'artifact-row', regime 'serial'),
+     regional background override, hot-column bands, serial-register streaks removed (clusters 'artifact-row', regime 'serial'),
      straight tracks found and passed to GMX as hints (their clouds -> one cluster, cls 'muon'), clusters that
      cross as an X split, collinear track fragments linked. Other images are clustered exactly as before.
 """
@@ -94,7 +94,7 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
     return_pixels: engine 'gmx' (and 'unmodelled'): every cluster gets '_pix' = (rows, cols, charge [e-]) summing to E
     crowded: engine 'gmx': 'auto' | 'on' | 'off' (default $AGMX_CROWDED, else 'auto') - crowded mode (step 7) when the core fill
              >= crowd_fill (default crowded.CROWD_FILL = 0.10) / always / never. info: core_fill, crowded_mode,
-             bg_override (report), n_streaks, n_hints, n_linked
+             bg_override, bg_columns (reports), n_streaks, n_hints, n_linked, n_glow (cls 'glow': large faint clusters)
     Each cluster: E [keV], y, x, sxy, cls, regime ('sparse' / 'crowded' / 'unmodelled'), occ; with engine 'gmx'
     also the quality flags edge, blend, ped [e-/pix], peakfrac, chi2, sig (gmx.fill_flags for clusters that were
     not fitted by the mixture: blend 0, peakfrac 1, chi2 NaN)."""
@@ -121,6 +121,7 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
         info.update(core_fill=fill, crowded_mode=bool(on))
         if on:
             bg, info["bg_override"] = CR.regional_background(Q, valid, bg)
+            bg, info["bg_columns"] = CR.column_background(Q, valid, bg)
             hints = CR.find_hints(Q, valid, bg)
             st, streak_cl = CR.find_streaks(Q, valid, bg)
             valid = valid & ~st
@@ -164,6 +165,7 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
         if cm:
             out = out + [dict(c, occ=np.nan) for c in streak_cl]
             out, info["n_linked"] = CR.link_tracks(out)
+            info["n_glow"] = CR.glow_flag(out, bg)
             if not return_pixels:
                 for c in out: c.pop("_pix", None)
         info.update(regime="gmx", occ=occ, crowded_frac=float(((occ >= occ_thr) & valid).sum() / max(valid.sum(), 1)))

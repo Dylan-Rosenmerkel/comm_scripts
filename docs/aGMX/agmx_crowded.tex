@@ -80,6 +80,15 @@ The gate on $\lambda$ matters: on Am-241 ($\lambda=0.2$--2.4\,\el/pix) the dense
 of the cells changed, energies $-0.2$\,\%, 59.5-keV events lost; EXT4: 429 ``bad'' rows and backgrounds of $10^4$\,\el/pix).
 A unit test checks that the override never moves a row's pedestal away from the truth.
 
+\paragraph{Hot-column bands.} On L2 9 EXT1 columns 893--925 carry $+8$\,\el/pix of extra dark charge with sharp edges;
+the 64-column cells cannot follow them and \AGMX{} turned the band into 700--3000\,px faint ``blobs''. For every column and
+block of 32 rows the mean of the free pixels (deposits above $8\sigma$ masked) minus the model is measured, smoothed along
+the column only, and added to $\lambda$ where it is positive, $\ge\max(2\,\el,\,4\sigma)$ and part of a run of $\ge4$ adjacent
+columns. Coherent \emph{deficits} are not applied: they sit in rows with undershoot after bright tracks, where the
+low-count statistics still fit the row model. Fe-55 on L2 is unchanged (EXT1 gains 3\,\% events).
+\paragraph{Glow flag.} Clusters of $\ge100$\,px whose mean charge per pixel is below $3\sqrt\lambda$ are background structure
+the model does not follow: class \code{glow} (\code{agmx\_cls} = 11), 5--12 per L2 CCD.
+
 \subsection{Serial-register streaks}
 Charge clocked into the serial register lands in one row with no vertical spread. A significant pixel is \emph{single-row}
 when the pixels above and below hold $<25$\,\% of its charge; horizontal runs of $\ge8$ such pixels (1-px gaps bridged; pieces
@@ -214,7 +223,7 @@ extended start. Crowded mode adds 7--12\,\% events to the Np L lines and 26.3\,k
 \begin{figure}[H]\centering
 \includegraphics[width=\textwidth]{muon_spectrum.png}
 \caption{Clusters defined by the hints: energy, projected length, energy loss along the 3-D path
-$\sqrt{(15L)^2+675^2}$\,\textmu m and energy vs length. On L2 (1515 tracks) the median energy is 0.61\,MeV and the most
+$\sqrt{(15L)^2+675^2}$\,\textmu m and energy vs length, L2 ACM101. Over 1515 tracks the mean energy is 0.78\,MeV (median 0.61\,MeV) and the most
 probable energy loss 0.34\,keV/\textmu m, $\sim$25\,\% above the 0.27\,keV/\textmu m of a minimum-ionising particle: the
 clusters also carry their share of the tracks they cross, and some are straight stretches of electron tracks.}
 \end{figure}

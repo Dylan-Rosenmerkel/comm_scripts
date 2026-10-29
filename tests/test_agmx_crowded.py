@@ -175,6 +175,36 @@ class BackgroundOverride(unittest.TestCase):
         self.assertLess(abs(np.median(bg2.lam[40:50]) - 6.0), 0.5)
 
 
+class HotColumnsAndGlow(unittest.TestCase):
+    def test_hot_column_band_is_added_to_the_background(self):
+        rng = np.random.default_rng(21)
+        Q = noise(rng, (256, 300), lam=6.0)
+        Q[:, 120:150] += rng.poisson(8.0, (256, 30))                    # a 30-column hot band, +8 e-/pix
+        valid = np.ones(Q.shape, bool); bg = AM.background_map(Q, valid)
+        bg2, rep = CR.column_background(Q, valid, bg)
+        self.assertTrue(rep["applied"])
+        inside = (Q - bg2.mean)[:, 125:145].mean(); outside = (Q - bg2.mean)[:, 20:100].mean()
+        self.assertLess(abs(inside), 1.0)                                # the band is in the model
+        self.assertLess(abs(outside), 0.5)
+        self.assertTrue(np.all(bg2.lam[:, 20:100] == bg.lam[:, 20:100]))  # other columns untouched
+
+    def test_uniform_image_untouched(self):
+        rng = np.random.default_rng(22)
+        Q = noise(rng, (256, 300), lam=6.0)
+        valid = np.ones(Q.shape, bool); bg = AM.background_map(Q, valid)
+        bg2, rep = CR.column_background(Q, valid, bg)
+        self.assertIs(bg2, bg)
+
+    def test_glow_flag(self):
+        rng = np.random.default_rng(23)
+        bg = AM.background_map(noise(rng, (128, 256), lam=9.0), np.ones((128, 256), bool))
+        ys, xs = np.mgrid[10:40, 10:30]; ys, xs = ys.ravel(), xs.ravel()
+        faint = dict(E=600 * 5.0 * AM.E_PER_E, _pix=(ys, xs, np.full(ys.size, 5.0)))        # 600 px at 5 e-/px
+        track = dict(E=200 * 900.0 * AM.E_PER_E, _pix=(ys[:200], xs[:200], np.full(200, 900.0)))
+        self.assertEqual(CR.glow_flag([faint, track], bg), 1)
+        self.assertEqual(faint["cls"], "glow"); self.assertNotIn("cls", track)
+
+
 class AgmxRootRecord(unittest.TestCase):
     def test_codes_and_config(self):
         try:
@@ -182,6 +212,7 @@ class AgmxRootRecord(unittest.TestCase):
         except Exception as e:                                           # needs ROOT / pysimdamicm
             self.skipTest(f"agmx_root not importable: {e}")
         self.assertEqual(AR.REGIME_CODES["serial"], 3)
+        self.assertEqual(AR.CLS_CODES["glow"], 11)
         self.assertEqual(AR.CLS_CODES["muon"], 4)
         r = AR.crowded_summary(dict(core_fill=0.29, crowded_mode=True, bg_override=dict(applied=True, bad_rows=3, cells_changed=5),
                                     n_hints=12, n_streaks=4, n_linked=7))
