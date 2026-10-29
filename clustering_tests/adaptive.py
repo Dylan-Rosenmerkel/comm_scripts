@@ -81,7 +81,7 @@ def hysteresis(Q, region, sigma, k_pix, n_pix=10.0, n_seed=30.0, seed_e=9.5):
 
 
 CROWDED = os.environ.get("AGMX_CROWDED", "auto")      # default of adaptive_cluster(crowded=...): auto | on | off
-CROWDED_SHAPES = os.environ.get("AGMX_CROWDED_SHAPES", "off")   # crowded mode with muon lines + topology split: on | off
+CROWDED_SHAPES = os.environ.get("AGMX_CROWDED_SHAPES", "on")    # in crowded mode: muon lines + topology split: on | off
 
 
 def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.3, box=31, margin=8, excess_ratio=3.0,
@@ -98,7 +98,7 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
     crowded: engine 'gmx': 'auto' | 'on' | 'off' (default $AGMX_CROWDED, else 'auto') - crowded mode (step 7) when the core fill
              >= crowd_fill (default crowded.CROWD_FILL = 0.10) / always / never. info: core_fill, crowded_mode,
              bg_override, bg_columns (reports), n_streaks, n_hints, n_linked, n_glow (cls 'glow': large faint clusters)
-    crowded_shapes: 'on' | 'off' (default $AGMX_CROWDED_SHAPES, else 'off'): in crowded mode the straight tracks become line
+    crowded_shapes: 'on' | 'off' (default $AGMX_CROWDED_SHAPES, else 'on'): in crowded mode the straight tracks become line
              components of the mixture and the clusters get the topology split (crowded_shapes.py) instead of the
              hint grouping. info: crowded_shapes, n_lines, n_topology_splits
     Each cluster: E [keV], y, x, sxy, cls, regime ('sparse' / 'crowded' / 'unmodelled'), occ; with engine 'gmx'

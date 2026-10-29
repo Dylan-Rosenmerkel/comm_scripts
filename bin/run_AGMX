@@ -61,9 +61,9 @@ def main():
     ap.add_argument("--agmx-crowded", choices=("auto", "on", "off"), default=os.environ.get("AGMX_CROWDED", "auto"),
                     help="crowded mode (clustering_tests/crowded.py): auto (default) = on when the core fill >= 0.10 "
                          "(L2-type / Am-241 CCDs; Fe-55 production CCDs stay as before), on, off")
-    ap.add_argument("--agmx-crowded-shapes", choices=("on", "off"), default=os.environ.get("AGMX_CROWDED_SHAPES", "off"),
+    ap.add_argument("--agmx-crowded-shapes", choices=("on", "off"), default=os.environ.get("AGMX_CROWDED_SHAPES", "on"),
                     help="in crowded mode: muons as line components of the mixture + topology split of clusters "
-                         "(clustering_tests/crowded_shapes.py; default off)")
+                         "(clustering_tests/crowded_shapes.py; default on; only on crowded CCDs)")
     ap.add_argument("--env", metavar="NAME", default=os.environ.get("WADERS_ENV"), help="conda environment (as run_WADERs)")
     a = ap.parse_args()
     run_dir = os.path.abspath(a.run_dir)

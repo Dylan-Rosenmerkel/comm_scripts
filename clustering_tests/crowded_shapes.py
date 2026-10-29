@@ -1,6 +1,7 @@
 """A_GMX crowded mode, shape stage (study: wip/agmx_crowded, scratch shapes.py / topo.py): muons as LINE components of the
 mixture and a TOPOLOGY split of the clusters. Used by adaptive.adaptive_cluster when crowded mode runs and
-crowded_shapes='on' ($AGMX_CROWDED_SHAPES; default 'off' until validated on more data).
+crowded_shapes='on' (the default; $AGMX_CROWDED_SHAPES=off or crowded_shapes='off' falls back to the hint grouping).
+It never runs on images below the crowded-mode trigger.
 
 Muon lines. Every straight track found by crowded.find_hints becomes one mixture component with a physical shape
     L(p) = a_j(t) * ends(t) * P(d; sigma(t))

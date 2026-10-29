@@ -441,9 +441,9 @@ def build_parser(full=False):
     ap.add_argument("--agmx-crowded", choices=("auto", "on", "off"), default=os.environ.get("AGMX_CROWDED", "auto"),
                     help="with --clusterer agmx/both: A_GMX crowded mode (clustering_tests/crowded.py). auto (default): on "
                          "for CCDs whose core fill is >= 0.10 (dense tracks, e.g. L2 surface runs, Am-241); on; off")
-    ap.add_argument("--agmx-crowded-shapes", choices=("on", "off"), default=os.environ.get("AGMX_CROWDED_SHAPES", "off"),
+    ap.add_argument("--agmx-crowded-shapes", choices=("on", "off"), default=os.environ.get("AGMX_CROWDED_SHAPES", "on"),
                     help="with --agmx-crowded: muons as line components of the A_GMX mixture and a topology split of "
-                         "clusters (clustering_tests/crowded_shapes.py; default off)")
+                         "clusters (clustering_tests/crowded_shapes.py; default on; only on crowded CCDs)")
     ap.add_argument("--temperature", type=float, default=None, metavar="K",
                     help="CCD operating temperature for the energy per electron epsilon(T) used for gain-corrected and A_GMX "
                          "energies (default: $COMM_TEMPERATURE_K or 130 K -> 3.7486 eV; details: -h -v)")
