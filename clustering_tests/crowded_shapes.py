@@ -318,13 +318,15 @@ def xray_satellites(mu, A, S, sub, a_lo=270.0, a_hi=6000.0, s_max=1.0, ratio_max
     return sub
 
 
-def post_lab(mix, lab, min_clouds=2):
-    """topology split of every cluster of >= min_clouds clouds; new contiguous labels"""
+def post_lab(mix, lab, min_clouds=2, max_clouds=1000):
+    """topology split of every cluster of min_clouds..max_clouds clouds; new contiguous labels. Larger clusters are left
+    alone: the MST works on the full n x n distance matrix (memory ~ 8 n^2 bytes: a 50k-cloud blob on Am-241 EXT4 needs 20 GB),
+    and an event-skeleton rule means nothing on a blob of > 1000 clouds"""
     lab = np.asarray(lab).copy(); nxt = int(lab.max()) + 1 if lab.size else 0
     STATS["split"] = 0
     for L in np.unique(lab):
         k = np.nonzero(lab == L)[0]
-        if k.size < min_clouds: continue
+        if k.size < min_clouds or k.size > max_clouds: continue
         sub = xray_satellites(mix.mu[k], mix.A[k], mix.S[k], split_cluster(mix.mu[k], mix.A[k], mix.S[k]))
         for s in np.unique(sub):
             if s == 0: continue
