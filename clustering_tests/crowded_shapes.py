@@ -238,7 +238,7 @@ def _neck_ratio(mu, A, S, p, q, smooth):
     return float(dens[8:33].min() / max(min(dens[0], dens[-1]), 1e-9))
 
 
-def split_cluster(mu, A, S, l_branch=10.0, ang_max=40.0, f_lobe=0.2, neck_max=0.35, lobe_max=15.0, smooth=0.8):
+def split_cluster(mu, A, S, l_branch=10.0, ang_max=40.0, f_lobe=0.2, neck_max=0.35, lobe_max=15.0, smooth=0.8, neck_max_clouds=150):
     """sub-labels (0 = the main object) for the clouds of one cluster: junction and neck rules"""
     n = len(mu); sub = np.zeros(n, int)
     if n < 2:
@@ -269,7 +269,9 @@ def split_cluster(mu, A, S, l_branch=10.0, ang_max=40.0, f_lobe=0.2, neck_max=0.
     out = sub.copy(); nxt = out.max() + 1
     for g in np.unique(sub):
         idx = np.nonzero(sub == g)[0]
-        if idx.size < 2: continue
+        # the neck test tries every MST edge (cost ~ n^3): only for groups of <= neck_max_clouds clouds; a neck between two
+        # compact deposits never involves more (dense Am-241 EXT4 has clusters of thousands of clouds)
+        if idx.size < 2 or idx.size > neck_max_clouds: continue
         sa = adj[np.ix_(idx, idx)]; best = None
         for a, b in zip(*np.nonzero(np.triu(sa))):
             cut = sa.copy(); cut[a, b] = cut[b, a] = False
@@ -285,19 +287,33 @@ def split_cluster(mu, A, S, l_branch=10.0, ang_max=40.0, f_lobe=0.2, neck_max=0.
     return out
 
 
-def xray_satellites(mu, A, S, sub, a_lo=270.0, a_hi=6000.0, s_max=1.0, ratio_max=1.5, dip_max=0.5, smooth=0.8):
+def xray_satellites(mu, A, S, sub, a_lo=270.0, a_hi=6000.0, s_max=1.0, ratio_max=1.5, dip_max=0.5, smooth=0.8, r_local=12.0):
     """split off compact round X-ray-like clouds attached to a larger group through a density dip"""
     sub = sub.copy(); nxt = sub.max() + 1
     for g in np.unique(sub):
         idx = np.nonzero(sub == g)[0]
         if idx.size < 2: continue
         adj, _ = _mst(mu[idx])
+        tree = cKDTree(mu[idx])
         for i, k in enumerate(idx):
             a, c, b = S[k]; tr = 0.5 * (a + c); dd = np.sqrt(max(0.25 * (a - c) ** 2 + b * b, 0))
             if not (a_lo <= A[k] <= a_hi) or np.sqrt(tr) > s_max or np.sqrt((tr + dd) / max(tr - dd, 1e-6)) >= ratio_max: continue
             if A[k] > 0.5 * A[idx].sum(): continue
             nb = np.nonzero(adj[i])[0]
-            if nb.size and all(_neck_ratio(mu, A, S, np.array([k]), np.array([idx[j]]), smooth) < dip_max for j in nb):
+            if not nb.size: continue
+            # the density between the cloud and a neighbour only depends on the clouds near them (within r_local px)
+            loc = idx[tree.query_ball_point(mu[k], r_local)]
+            lk = int(np.nonzero(loc == k)[0][0])
+            ok = True
+            for j in nb:
+                lj = np.nonzero(loc == idx[j])[0]
+                if lj.size == 0:
+                    loc2 = np.r_[loc, idx[j]]; lj = np.array([loc2.size - 1])
+                else:
+                    loc2 = loc
+                if _neck_ratio(mu[loc2], A[loc2], S[loc2], np.array([lk]), lj, smooth) >= dip_max:
+                    ok = False; break
+            if ok:
                 sub[k] = nxt; nxt += 1
     return sub
 
