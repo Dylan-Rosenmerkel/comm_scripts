@@ -1,5 +1,10 @@
 # A_GMX on crowded CCDs — work in progress
 
+> **Integrated (29 Oct 2026):** the final version is in the pipeline as A_GMX *crowded mode*:
+> `clustering_tests/crowded.py`, switched by `adaptive_cluster(crowded='auto'|'on'|'off')` (default `auto`) and
+> `run_WADERs` / `run_AGMX --agmx-crowded`. It uses straight tracks as **hints** (axis only), not the tubes of
+> `muons2.py` / `muons3.py`. See `docs/aGMX/agmx_crowded.pdf`. This folder is the record of the study.
+
 Scratch study of A_GMX on very crowded images (L2 ACM101, run 2026-09-22, images 9 and 10). Nothing here is
 used by `run_WADERs` / `adaptive.py` yet: every change is applied by wrapping (monkey-patching) the
 `clustering_tests` modules at run time. Status, numbers and figures are in `report/muon_report.pdf`. Its

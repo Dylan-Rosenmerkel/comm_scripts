@@ -619,6 +619,31 @@ projected pixel --- a minimum-ionising particle deposits $\sim$4\,keV per 15-\te
 0.8, muon/worm swap $\sim$30\,\%).
 
 %======================================================================================================
+\section{Step 9 --- crowded CCDs (crowded mode)}\label{sec:crowded}
+On CCDs covered by tracks (surface runs such as L2 ACM101, the Am-241 test CCD) \AGMX{} has a \emph{crowded mode}
+(\code{clustering\_tests/crowded.py}; details, figures and validation in \code{agmx\_crowded.pdf}). It is decided per image
+from the \emph{core fill}, the fraction of pixels whose 1-px-smoothed charge exceeds $\max(60\,\el,\,5\sigma_\lambda)$: with
+\code{crowded='auto'} it runs for core fill $\ge0.10$ (L2 0.27--0.31, Am-241 0.27--0.67, Fe-55 production CCDs
+0.015--0.02). Below the threshold \AGMX{} is unchanged. Crowded mode adds:
+\begin{itemize}
+\item a \textbf{background override} for high dark charge (median $\lambda\ge3$\,\el/pix, read noise $<0.45$\,\el): rows whose
+whole-electron pedestal is wrong get the good rows' pedestal; per-cell truncated-Poisson dark charge replaces the row model
+where it differs significantly;
+\item \textbf{serial-register streaks} (one row, no vertical spread, $\ge8$\,px) removed before clustering and reported as
+\code{artifact-row} clusters with regime \code{serial};
+\item \textbf{straight-track hints}: straight tracks are found (Hough on the skeleton of the core, ridge walk through crossings,
+length, occupancy, width and axis-continuity tests) and only their axis is given to the mixture: after the merge graph and the
+island arbitration every cloud on a hinted axis goes into one cluster (class \code{muon}), except elongated clouds crossing it.
+Width, footprint and charge sharing stay \AGMX's own;
+\item a \textbf{crossing split} of clusters that hold two straight lines crossing as an X;
+\item \textbf{linking} of collinear straight fragments $\ge12$\,px.
+\end{itemize}
+On L2 injected muons go from 4.1 to 1.9 fragments (median 45\,\% $\to$ 93\,\% of their charge in one cluster), Fe-55 K$\alpha$
+from 220 to 85\,eV width on the worst CCD; on Am-241 the 10--30\,keV scale is unchanged (EXT4 $k=1.0004$ vs $1.0009$, EXT3
+$0.9952$ vs $0.9964$). Crowded mode is the default (\code{'auto'}); \code{crowded='off'} or \code{AGMX\_CROWDED=off}
+restores the earlier behaviour everywhere.
+
+%======================================================================================================
 \section{After \AGMX: the few-electron candidate catalogue}\label{sec:fecand}
 
 A per-event decision at a fixed fake rate cannot do what a rare-event search needs at the lowest dark currents (a 2-\el{}
@@ -943,6 +968,8 @@ is a stop-gap.
 only been checked on injected objects and Fe-55; real Am-241 tracks have not been inspected by eye.
 \item \textbf{Labels:} muon/worm swap $\sim$30\,\%; classes only validated on injections.
 \item \textbf{Speed:} minutes on crowded and high-dark-charge CCDs.
+\item \textbf{Crowded mode} (section~\ref{sec:crowded}): straight stretches of electron tracks are taken as straight tracks;
+59.5\,keV loses 2.8\,\% of its events on Am-241 EXT3.
 \item \textbf{Validation:} the wide, Fe-55-width and track tests are from the code of 25 October; injections use Gaussian clouds,
 which is \AGMX's own model; the few-electron blanks are generated from the pixel model the finder assumes.
 \end{itemize}
@@ -977,7 +1004,9 @@ parameter & default & where & meaning \\
 
 \paragraph{Switches} (environment): \code{AGMX\_PIX\_EXACT=0} (Gaussian-at-centre model, island margin 30, no fragment rule),
 \code{AGMX\_PHYS\_FIXES=0} (the background, hot-column, counting, width and class rules of before 25 October),
-\code{AGMX\_NUMBA=0} (numpy EM), \code{AGMX\_FE\_CANDIDATES=0} (no candidate catalogue).
+\code{AGMX\_NUMBA=0} (numpy EM), \code{AGMX\_FE\_CANDIDATES=0} (no candidate catalogue),
+\code{AGMX\_CROWDED=auto|on|off} (crowded mode, section~\ref{sec:crowded}; default \code{auto}; also
+\code{run\_WADERs/run\_AGMX --agmx-crowded}).
 
 \begin{lstlisting}[language=Python]
 import sys; sys.path.insert(0, "comm_scripts/clustering_tests")

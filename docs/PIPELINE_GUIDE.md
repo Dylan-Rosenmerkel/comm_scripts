@@ -96,7 +96,11 @@ charge between overlapping clouds, so it keeps faint cluster edges (unbiased ene
 X-rays and finds few-electron events; in a background it cannot model it falls back to hysteresis like WADERs.
 `src/agmx_root.py` turns its clusters into pysimdamicm `Cluster` objects, so the files have exactly the WADERs format
 plus `agmx_*` quality branches (blend, local pedestal, ...). Recommended X-ray selection: `agmx_blend < 0.02` and
-`agmx_ped < 10`, plus the usual sigma_xy cut.
+`agmx_ped < 10`, plus the usual sigma_xy cut. On CCDs dense with tracks (core fill >= 0.10: L2 surface runs, Am-241)
+A_GMX runs in *crowded mode* (`--agmx-crowded auto`, the default; `on` / `off`): background override at high dark
+charge, serial-register streaks as separate clusters, straight tracks kept whole through crossings (their axes are
+hints to the mixture), X-crossings split, collinear fragments linked (`clustering_tests/crowded.py`,
+`docs/aGMX/agmx_crowded.pdf`).
 
 ### Gain versus charge, g(n) (`--gain-correction`)
 The gain falls slowly with the charge in a pixel (about 3 % lower at 1000 e-), so keV clusters converted with the
