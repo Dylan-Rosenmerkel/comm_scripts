@@ -58,9 +58,9 @@ def main():
     ap.add_argument("--anchor", choices=("comb", "fit"), default="comb", help="as run_WADERs --gain-anchor (default comb)")
     ap.add_argument("--no-fe-candidates", action="store_true",
                     help="do not write the few-electron candidate catalogue (fe_candidates/, electron-counting images)")
-    ap.add_argument("--agmx-crowded", choices=("auto", "on", "off"), default=os.environ.get("AGMX_CROWDED", "off"),
-                    help="crowded mode (clustering_tests/crowded.py): auto = on when the core fill >= 0.10 "
-                         "(L2-type / Am-241 CCDs; Fe-55 production CCDs stay as before), on, off (default, for now)")
+    ap.add_argument("--agmx-crowded", choices=("auto", "on", "off"), default=os.environ.get("AGMX_CROWDED", "auto"),
+                    help="crowded mode (clustering_tests/crowded.py): auto (default) = on when the core fill >= 0.10 "
+                         "(L2-type / Am-241 CCDs; Fe-55 production CCDs stay as before), on, off")
     ap.add_argument("--env", metavar="NAME", default=os.environ.get("WADERS_ENV"), help="conda environment (as run_WADERs)")
     a = ap.parse_args()
     run_dir = os.path.abspath(a.run_dir)

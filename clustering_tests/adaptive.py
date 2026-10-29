@@ -26,7 +26,7 @@ Steps
      energies over extra rings were both worse (adaptive_crowded_scan_am241.py)
   6. every cluster gets 'regime', 'occ' and (from MHC) 'cls'; crowded clusters get cls 'x-ray' / 'x-ray diffuse' /
      'big deposit' / 'extended' from their energy and size
-  7. engine 'gmx', crowded CCDs (crowded.py): with crowded='auto' ($AGMX_CROWDED; default 'off' for now) crowded mode
+  7. engine 'gmx', crowded CCDs (crowded.py): with crowded='auto' (default; $AGMX_CROWDED overrides) crowded mode
      is on when the core fill (fraction of pixels whose smoothed charge is above max(60 e-, 5 noise)) is >= 0.10:
      regional background override, serial-register streaks removed (clusters 'artifact-row', regime 'serial'),
      straight tracks found and passed to GMX as hints (their clouds -> one cluster, cls 'muon'), clusters that
@@ -78,8 +78,7 @@ def hysteresis(Q, region, sigma, k_pix, n_pix=10.0, n_seed=30.0, seed_e=9.5):
     return out
 
 
-CROWDED = os.environ.get("AGMX_CROWDED", "off")       # default of adaptive_cluster(crowded=...): auto | on | off
-# (off until the Am-241 check passes: on EXT3 the background override and the linking lose 59.5 keV events)
+CROWDED = os.environ.get("AGMX_CROWDED", "auto")      # default of adaptive_cluster(crowded=...): auto | on | off
 
 
 def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.3, box=31, margin=8, excess_ratio=3.0,
@@ -93,7 +92,7 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
     sigma_crowd, margin: engine 'mhc' only (pedestal sigma of the crowded-region hysteresis, region overlap)
     **kw: passed to MH.mhc (engine 'mhc') or GX.general_cluster (engine 'gmx')
     return_pixels: engine 'gmx' (and 'unmodelled'): every cluster gets '_pix' = (rows, cols, charge [e-]) summing to E
-    crowded: engine 'gmx': 'auto' | 'on' | 'off' (default $AGMX_CROWDED, else 'off') - crowded mode (step 7) when the core fill
+    crowded: engine 'gmx': 'auto' | 'on' | 'off' (default $AGMX_CROWDED, else 'auto') - crowded mode (step 7) when the core fill
              >= crowd_fill (default crowded.CROWD_FILL = 0.10) / always / never. info: core_fill, crowded_mode,
              bg_override (report), n_streaks, n_hints, n_linked
     Each cluster: E [keV], y, x, sxy, cls, regime ('sparse' / 'crowded' / 'unmodelled'), occ; with engine 'gmx'
