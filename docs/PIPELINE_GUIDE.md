@@ -100,7 +100,8 @@ plus `agmx_*` quality branches (blend, local pedestal, ...). Recommended X-ray s
 A_GMX runs in *crowded mode* (`--agmx-crowded auto`, the default; `on` / `off`): background override at high dark
 charge, serial-register streaks as separate clusters, straight tracks kept whole through crossings (their axes are
 hints to the mixture), X-crossings split, collinear fragments linked (`clustering_tests/crowded.py`,
-`docs/aGMX/agmx_crowded.pdf`).
+`docs/aGMX/agmx_crowded.pdf`). By default (`--agmx-crowded-shapes on`) each straight track is a line component of the
+mixture and the clusters get a topology split (`clustering_tests/crowded_shapes.py`).
 
 ### Gain versus charge, g(n) (`--gain-correction`)
 The gain falls slowly with the charge in a pixel (about 3 % lower at 1000 e-), so keV clusters converted with the

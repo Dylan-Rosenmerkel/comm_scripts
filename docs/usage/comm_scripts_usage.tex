@@ -243,6 +243,8 @@ Each step is one function in \cc{bin/run_WADERs}; \cc{main()} calls them in this
   by \cc{--composite}), \cc{both} (\cc{--composite} on both) \\
 \cc{--agmx-crowded} & \cc{auto} (default: A\_GMX crowded mode on CCDs dense with tracks, core fill $\ge0.10$), \cc{on},
   \cc{off} (also \cc{bin/run_AGMX}; \cc{$AGMX_CROWDED}) \\
+\cc{--agmx-crowded-shapes} & \cc{on} (default: in crowded mode, muons as line components of the mixture and a topology split
+  of the clusters), \cc{off} (also \cc{bin/run_AGMX}; \cc{$AGMX_CROWDED_SHAPES}) \\
 \multicolumn{2}{@{}l}{\textit{composite} (Section~\ref{sec:composite})} \\
 \cc{--composite} & run MakeComposite on the cluster files \\
 \cc{--composite-macro PATH} & the macro (default \cc{$MAKECOMPOSITE_MACRO}, else the one in
@@ -421,7 +423,7 @@ Every branch is therefore computed by panaSKImg's own code, and the file is writ
 \cc{agmx_peakfrac} & largest Gaussian component / cluster \\
 \cc{agmx_chi2} & $\chi^2$ per pixel of the cluster's own model \\
 \cc{agmx_sig} & significance of the cluster \\
-\cc{agmx_regime} & 0 sparse, 1 crowded, 2 unmodelled (hysteresis), 3 serial-register streak (crowded mode) \\
+\cc{agmx_regime} & 0 sparse, 1 crowded, 2 unmodelled (hysteresis), 3 serial-register streak, 4 muon line (crowded mode) \\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -467,7 +469,9 @@ surface runs, Am-241; Fe-55 production CCDs are $\approx0.02$ and clustered as b
 where the row fit takes a wrong pedestal and in hot-column bands (dark charge $\ge3$\,e$^-$/pix), labels large faint
 leftovers \cc{glow} (\cc{agmx_cls} 11), reports serial-register streaks as separate
 \cc{artifact-row} clusters, keeps straight tracks (muons) whole through crossings by giving their axes to the mixture as hints,
-splits clusters that cross as an X and links collinear fragments. Each file records what ran in \cc{agmx_config}
+splits clusters that cross as an X and links collinear fragments. With \cc{--agmx-crowded-shapes on} (the default) each
+straight track is a line component of the mixture (its charge per length and width fitted; touching tracks keep their
+charge) and every cluster gets a topology split (junctions, necks, X-rays attached to tracks). Each file records what ran in \cc{agmx_config}
 (\cc{crowded_mode}). Details: \cc{docs/aGMX/agmx_crowded.pdf}.
 
 Images whose read noise is $\ge1$\,e$^-$ are clustered as the ``unmodelled'' regime: WADERs-like hysteresis with the

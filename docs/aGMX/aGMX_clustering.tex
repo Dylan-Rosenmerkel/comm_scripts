@@ -637,7 +637,12 @@ length, occupancy, width and axis-continuity tests) and only their axis is given
 island arbitration every cloud on a hinted axis goes into one cluster (class \code{muon}), except elongated clouds crossing it.
 Width, footprint and charge sharing stay \AGMX's own;
 \item a \textbf{crossing split} of clusters that hold two straight lines crossing as an X;
-\item \textbf{linking} of collinear straight fragments $\ge12$\,px.
+\item \textbf{linking} of collinear straight fragments $\ge12$\,px;
+\item by default (\code{crowded\_shapes='on'}, \code{crowded\_shapes.py}) the hinted tracks become \textbf{line components} of the
+mixture (charge per 8-px segment and width linear along the track, fitted jointly with the clouds; every pixel shared by
+responsibility) and every cluster gets a \textbf{topology split} (junctions: the straightest pair stays together; necks between
+compact deposits; X-ray-like clouds attached through a density dip). Muons carry 8.5\,\% instead of 28\,\% foreign charge and
+their energy loss peaks at the MIP value 0.27\,keV/\textmu m.
 \end{itemize}
 On L2 injected muons go from 4.1 to 1.9 fragments (median 45\,\% $\to$ 93\,\% of their charge in one cluster), Fe-55 K$\alpha$
 from 220 to 85\,eV width on the worst CCD; on Am-241 the 10--30\,keV scale is unchanged (EXT4 $k=1.0004$ vs $1.0009$, EXT3
@@ -1006,6 +1011,7 @@ parameter & default & where & meaning \\
 \paragraph{Switches} (environment): \code{AGMX\_PIX\_EXACT=0} (Gaussian-at-centre model, island margin 30, no fragment rule),
 \code{AGMX\_PHYS\_FIXES=0} (the background, hot-column, counting, width and class rules of before 25 October),
 \code{AGMX\_NUMBA=0} (numpy EM), \code{AGMX\_FE\_CANDIDATES=0} (no candidate catalogue),
+\code{AGMX\_CROWDED\_SHAPES=on|off} (muon lines + topology in crowded mode; default \code{on}),
 \code{AGMX\_CROWDED=auto|on|off} (crowded mode, section~\ref{sec:crowded}; default \code{auto}; also
 \code{run\_WADERs/run\_AGMX --agmx-crowded}).
 

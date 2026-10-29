@@ -18,7 +18,7 @@
 \graphicspath{{figures_crowded/}}
 
 \title{\textbf{\AGMX{} on crowded CCDs}\\[4pt]
-\large background override, serial-register streaks, straight-track hints, crossing split and track linking}
+\large background override, serial-register streaks, muon line components, topology split, crossing split and track linking}
 \author{comm\_scripts clustering study}
 \date{code of 29 October 2026 (\code{clustering\_tests/crowded.py})}
 
@@ -38,6 +38,12 @@ worst CCD and gains 14--65\,\% events. On the Am-241 crowded CCD (EXT4) the ener
 unchanged ($k=1.0004$ vs $1.0009$ on the same images), and on EXT3 too ($k=0.9952\pm0.0008$ vs $0.9964\pm0.0010$, 29 images)
 once the fit is started from narrow line widths (section~\ref{sec:ext3}). Crowded mode is the default
 (\code{crowded='auto'}): it runs only on images that pass the trigger, and other images are clustered as before.
+
+Since 29 October crowded mode goes one step further by default (\code{crowded\_shapes='on'}): each straight track is a
+\emph{line component} of the mixture (charge per length and width fitted, section~\ref{sec:lines}) instead of a group of clouds,
+and every cluster gets a \emph{topology split} (one event has a simple skeleton, section~\ref{sec:topo}). The charge of
+touching objects in a muon's cluster drops from 28\,\% to 8.5\,\% (median) and the straight tracks' energy loss now peaks at
+0.27\,keV/\textmu m, the most probable value for a minimum-ionising particle (figure~\ref{fig:mip}).
 \end{abstract}
 
 \tableofcontents
@@ -120,6 +126,33 @@ muon's width is the width \AGMX{} fits (figure~\ref{fig:width}).
 An earlier version cut a tube around each track out of the image and shared charge at crossings with an EM step of its own; its
 tubes were twice as wide as the tracks (its width estimate collected neighbours and halos), it took X-rays lying on the muon's
 path (5--8\,\% of the Fe-55 events on L2) and left crumbs. The hint version has none of these.
+
+\subsection{Muon lines (default since 29 October)}\label{sec:lines}
+With the hints, a muon's cluster is the set of clouds on its axis; clouds there also carry charge of crossing tracks,
+neighbours and X-rays, so the muon took 25--40\,\% foreign charge. With \code{crowded\_shapes='on'}
+(\code{clustering\_tests/crowded\_shapes.py}) each hinted track is instead one component of the mixture with a physical shape,
+\[ L(p) = a_j(t)\;e(t)\;P\big(d;\,\sigma(t)\big), \]
+$t, d$ the pixel's position along / across the axis (the axis is refined: a lateral offset at each end), $a_j$ the charge per
+px of length in 8-px segments (free: Landau fluctuations, knots), $\sigma(t)$ the width, linear along the track (diffusion grows
+with depth) and capped at $1.2\times$ the tracker's rms within 2--3\,px, $P$ the pixel-integrated Gaussian and $e(t)$ soft ends.
+The clouds \AGMX{} placed on the axis are handed to the line; clouds and lines are refitted together (EM of the clouds with
+the lines as a fixed part of the model, each line refitted from its responsibility share), compact charge they do not explain
+is re-seeded, clouds centred on a line with the line's own width are its knots (a clearly sharper or wider cloud on the path,
+e.g.\ a front-side X-ray, stays separate), and \AGMX's final stage (\code{gmx.general\_cluster(mix0=, fixed=, post\_lab=)})
+assigns everything else. Every pixel's charge is split between lines and clouds by model responsibility, so a touching track keeps
+its clouds and its charge, and the clusters do not grow into a line's footprint.
+
+\subsection{Topology split (default since 29 October)}\label{sec:topo}
+One physical event has a simple skeleton: an X-ray is round, a muon or electron track a path. On the minimum spanning tree of
+each cluster's cloud centres: where $\ge3$ branches of $\ge10$\,px meet, the two that continue each other most straightly stay
+together and the others become separate clusters (short spurs stay); two compact parts ($\le15$\,px, each $\ge20$\,\% of the
+charge) whose model density (smoothed 0.8\,px) dips below 0.35 between their centres are cut apart; a compact round X-ray-like
+cloud (1--22\,keV, $\sigma\le1$\,px, axis ratio $<1.5$) attached to a larger group through a dip is split off.
+
+\paragraph{Tried and dropped.} Curly electron tracks as \emph{path} components (a spine through the cluster's clouds, charge per
+length and width fitted, fragments joined end to end) lowered every score (electron tracks whole 71 $\to$ 70\,\%, muons
+``correct'' 43.5 $\to$ 40\,\%, Fe-55 events $-3$\,\%); a one-or-two round Gaussian refit of X-ray clusters changed nothing on the
+injected pairs. Neither is in the code.
 
 \subsection{Crossing split}
 After the merge graph and after the island arbitration, a cluster whose clouds hold two straight lines (RANSAC on the cloud
@@ -219,6 +252,30 @@ extended start. Crowded mode adds 7--12\,\% events to the Np L lines and 26.3\,k
 (right: $k=0.9952\pm0.0008$, 1.60, $Z=11.0$). The 59.5-keV and Fe-55 peaks move by 3--33\,eV.}
 \end{figure}
 
+\subsection{Muon lines and topology: injections and the muon energy}
+\begin{center}\small
+\begin{tabular}{lcc}
+\toprule
+L2 injections (study version) & hints & lines + topology \\ \midrule
+muons: median foreign charge in the muon's cluster & 0.28 & \textbf{0.085} \\
+muons: $>30$\,\% foreign & 47\,\% & \textbf{10\,\%} \\
+muons: $\ge90$\,\% in one cluster & 62\,\% & 56\,\% \\
+muons: ``correct'' ($\ge90$\,\% in one, $\le10$\,\% foreign) & 12.5\,\% & \textbf{43.5\,\%} \\
+electron tracks (50--500\,keV): $\ge90$\,\% in one cluster & 66\,\% & \textbf{71\,\%} \\
+electron tracks: median foreign charge & 0.20 & \textbf{0.056} \\
+touching Fe-55 X-ray pairs (2.5--7\,px) resolved & 72\,\% & \textbf{76\,\%} \\
+Fe-55 clean K$\alpha$ events (L2, 3 CCDs) & 2849 & 2758 ($-3$\,\%) \\
+\bottomrule
+\end{tabular}
+\end{center}
+\begin{figure}[H]\centering
+\includegraphics[width=\textwidth]{muon_energy_lines.png}
+\caption{Straight tracks on L2 (6 CCDs, $\sim$1500 tracks) after the full \AGMX: hints (grey) and muon lines with the topology
+split (blue). With the hints the energy loss along the 3-D path peaks at 0.34\,keV/\textmu m, 25\,\% above the most probable value
+of a minimum-ionising particle in 675\,\textmu m of silicon (0.27--0.29\,keV/\textmu m), because the clusters carry charge of the
+tracks they cross; with the lines it peaks at 0.27\,keV/\textmu m and the mean energy drops from 0.78 to 0.55\,MeV.}\label{fig:mip}
+\end{figure}
+
 \subsection{Energy of the straight tracks}
 \begin{figure}[H]\centering
 \includegraphics[width=\textwidth]{muon_spectrum.png}
@@ -234,8 +291,9 @@ clusters also carry their share of the tracks they cross, and some are straight 
 \item \textbf{Am-241 EXT3:} 59.5\,keV loses 2.8\,\% of its events with crowded mode (not traced to one piece).
 \item \textbf{Fit routine:} \code{amfit.Model.fit} can end in a wide-line minimum; it should also start from narrow widths.
 \item \textbf{Electron tracks:} straight 50--90\,px stretches of curly electron tracks are taken as straight tracks.
-\item \textbf{Muon energy:} the hinted clusters' energy loss is 25\,\% above the MIP value on L2; how much of it is charge of
-crossing tracks has not been measured.
+\item \textbf{Muon lines:} slightly fewer muons reach 90\,\% completeness (62 $\to$ 56\,\%) and the median energy loss (0.262)
+sits just below the most probable value: a few percent of a muon's charge goes to neighbours at crossings and knots.
+\item \textbf{Topology split:} long curly electron tracks ($>300$\,keV) are split a little more often; Fe-55 clean events $-3$\,\%.
 \item \textbf{Validation:} the injected muons are simulated (Moyal fluctuations, linear diffusion); EXT4 was checked on 10 of 29
 images.
 \end{itemize}
@@ -245,15 +303,17 @@ images.
 \begin{lstlisting}
 run_WADERs images.txt --gain-correction --clusterer agmx --agmx-crowded auto   # crowded mode where the core fill >= 0.10
 run_AGMX WADERs_analysis_<run> --agmx-crowded on                                # force it on a finished run
+run_AGMX WADERs_analysis_<run> --agmx-crowded-shapes off                        # crowded mode with hints, no lines / topology
 AGMX_CROWDED=auto python my_script.py                                           # in python: environment default
 \end{lstlisting}
 \begin{lstlisting}[language=Python]
 import adaptive as AD
 clusters, info = AD.adaptive_cluster(Q, valid, engine="gmx", crowded="auto", return_info=True)
-info["core_fill"], info["crowded_mode"], info["n_hints"], info["n_streaks"], info["n_linked"], info["bg_override"]
+info["core_fill"], info["crowded_mode"], info["crowded_shapes"], info["n_lines"], info["n_topology_splits"], info["n_streaks"]
 \end{lstlisting}
 Each output file records the setting and what ran in \code{agmx\_config} (key \code{crowded\_mode}). Code:
-\code{clustering\_tests/crowded.py} (the five pieces), \code{adaptive.py} (the switch), \code{gmx.py}
-(\code{general\_cluster(split\_crossings=, hints=)}); tests: \code{tests/test\_agmx\_crowded.py}; the study that led here:
+\code{clustering\_tests/crowded.py} (trigger, background, streaks, hints, crossing split, linking),
+\code{crowded\_shapes.py} (muon lines, topology), \code{adaptive.py} (the switches), \code{gmx.py}
+(\code{general\_cluster(split\_crossings=, hints=, mix0=, fixed=, post\_lab=)}); tests: \code{tests/test\_agmx\_crowded.py}; the study that led here:
 \code{wip/agmx\_crowded/}.
 \end{document}
