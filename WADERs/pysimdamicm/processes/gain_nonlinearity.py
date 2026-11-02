@@ -12,6 +12,10 @@
       - (algorithm "agmx") converts the calibrated image to electrons with the same curve before clustering, as
         comm_scripts' run_WADERs --gain-correction --clusterer agmx.
 
+    The ADU of a pixel is recovered with CalibrationProcess's own curve (calibration_adu): the constant gain, or
+    the polynomial ADU = offset + g e + c2 e^2 + ... of a polynomial calibration (get_calibration_constant). With a
+    polynomial calibration g(n) therefore REPLACES it for the cluster energies; it is never applied on top of it.
+
     The pixels and the threshold cut of the WADERs clusters are unchanged (the cut is on the image calibrated
     with the fitted gain), so the cluster content is identical to the uncorrected run; only pixels_E and Energy
     change, as with ``gain_vs_charge apply``.
@@ -74,11 +78,45 @@ class GainNonlinearityProcess(SKImageProcess):
                 why = "no reliable g(n) curve in the model file" if model is None else "no calibration gain"
                 print(f"    {amp}: not corrected ({why})")
                 continue
-            curves[amp] = dict(model=model, gain=float(gain), anchor=self.anchor, eps=eps)
+            curves[amp] = dict(model=model, gain=float(gain), anchor=self.anchor, eps=eps, amp=amp)
             print(f"    {amp}: g(n) {GVC.model_form(model)} model, calibration gain {float(gain)} ADU/e-, "
                   f"anchor {self.anchor}, {eps:.4f} eV/e- for the corrected energies")
+            if calibration_is_polynomial(amp):
+                print(f"    {amp}: NOTE CalibrationProcess used a polynomial calibration; the cluster energies are "
+                      f"converted back to ADU with that polynomial and then to electrons with g(n), i.e. g(n) "
+                      f"replaces the polynomial for the energies (it is not applied twice)")
         rawdata.gain_curve = curves
         u._tohdr.update({"GNLFILE": (os.path.basename(self.model_file)[:60], "g(n) model (gain_vs_charge)")})
+
+
+def calibration_adu(e, amp):
+    """ADU above the zero-electron peak of pixels that CalibrationProcess converted to e (the inverse of its
+    conversion). CalibrationProcess records its curve ADU = offset + g e + c2 e^2 + ... in u._tohdr (CAL<amp>k,
+    k >= 1, offset CAL<amp>0, valid range CAL<amp>R0/R1 with linear continuation outside); a linear calibration
+    only GAIN_<amp>. Returns g e + c2 e^2 + ... (the offset is the zero of the electron comb, as in g(n))."""
+    from numpy.polynomial import polynomial as P
+    e = np.asarray(e, float)
+    hdr = u._tohdr
+    coeffs = []
+    k = 1
+    while f"CAL{amp}{k}" in hdr:
+        coeffs.append(float(hdr[f"CAL{amp}{k}"][0]))
+        k += 1
+    if len(coeffs) < 2:                                  # linear calibration: ADU = gain x e
+        return e * float(hdr[f"GAIN_{amp}"][0])
+    c = np.concatenate(([0.0], coeffs))
+    out = P.polyval(e, c)
+    if f"CAL{amp}R0" in hdr and f"CAL{amp}R1" in hdr:
+        dc = P.polyder(c)
+        for edge, side in ((float(hdr[f"CAL{amp}R0"][0]), e < float(hdr[f"CAL{amp}R0"][0])),
+                           (float(hdr[f"CAL{amp}R1"][0]), e > float(hdr[f"CAL{amp}R1"][0]))):
+            out[side] = P.polyval(edge, c) + (e[side] - edge) * P.polyval(edge, dc)
+    return out
+
+
+def calibration_is_polynomial(amp):
+    """True if CalibrationProcess used a polynomial (more than one coefficient) for this amplifier."""
+    return f"CAL{amp}2" in u._tohdr
 
 
 def electrons(adu, curve):
@@ -96,7 +134,7 @@ def correct_clusters(clusters, curve):
     ratios = []
     for cls in clusters:
         v = np.asarray(cls.pixels_E, float)                     # [keV]
-        adu = v * u.keV / u.e2eV * curve["gain"]
+        adu = calibration_adu(v * u.keV / u.e2eV, curve["amp"])  # back to ADU with CalibrationProcess's own curve
         new = electrons(adu, curve) * curve["eps"] * u.eV / u.keV
         old = float(cls.Energy)
         cls.pixels_E = new

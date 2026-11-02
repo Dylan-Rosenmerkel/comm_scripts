@@ -46,6 +46,10 @@ Outputs per run name:
   low charge.
 - `temperature` sets epsilon(T) (default `$COMM_TEMPERATURE_K` or 130 K, 3.7486 eV).
 - With `algorithm: "agmx"` the calibrated image is converted with g(n) *before* clustering (as comm_scripts).
+- **With a polynomial CalibrationProcess** (`gain: [g, c2, c3]`, from get_calibration_constant), the ADU is
+  rebuilt with that polynomial (`gain_nonlinearity.calibration_adu`). g(n) then replaces the polynomial for the
+  energies; it is never applied on top of it. See comm_scripts docs/WADERs_gn_vs_polynomial_calibration.md for
+  the comparison of the two measurements.
 
 ## 2. Thresholds from the dark charge (`spr_threshold_auto`)
 

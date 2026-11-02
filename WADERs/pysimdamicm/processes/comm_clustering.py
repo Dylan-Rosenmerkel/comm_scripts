@@ -109,8 +109,9 @@ def find_clusters_agmx(finder, hits, opts):
     valid &= act
     curve = getattr(hits, 'gain_curve', {}).get(amp)
     if curve is not None:
-        from pysimdamicm.processes.gain_nonlinearity import electrons
-        Q = electrons(cal * gain, curve)
+        # back to ADU with CalibrationProcess's own curve (constant gain or polynomial), then g(n)
+        from pysimdamicm.processes.gain_nonlinearity import electrons, calibration_adu
+        Q = electrons(calibration_adu(cal, amp), curve)
     else:
         Q = cal
     Q = np.where(valid, Q, 0.0)
