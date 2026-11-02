@@ -647,7 +647,7 @@ def _measure_print(name, res, g0, nrows_clean, nrows):
     """One-line report of one extension's result (verbose measure())."""
     if res["ok"]:
         m = res["model"]
-        print(f"  {name}: g(n) {model_form(m)}, g(0) = {m['a']:.4f} ADU/e-, measured up to "
+        print(f"  {name}: g(n) {m.get('fit', model_form(m))}, g(0) = {m['a']:.4f} ADU/e-, measured up to "
               f"{res['n_max_measured']:.0f} e-, {res['drop_at_1000'] * 100:.1f}% lower at 1000 e-  "
               f"({nrows_clean}/{nrows} clean rows; 1e- gain {g0:.4f})")
     else:
