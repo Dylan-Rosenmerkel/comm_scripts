@@ -31,7 +31,7 @@ __python2C_type__ = {
         int:int, 
         np.int8:int, np.int16:int, np.int32:int, np.int64:int,
         float:float, 
-        np.float16:float, np.float32:float, np.float64:float, np.float128:float,
+        np.float16:float, np.float32:float, np.float64:float, np.longdouble:float,
         np.double:float, ROOT.std.string:ROOT.std.string
         }
 
@@ -917,7 +917,10 @@ class Cluster(object):
         ### get the STD by fitting a gaussian to the cluster profile
         px = ROOT.TH1D("px","px", int(self.pixels_x.max()-self.pixels_x.min())+3, self.pixels_x.min()-1.5, self.pixels_x.max()+1.5)
         py = ROOT.TH1D("py","py", int(self.pixels_y.max()-self.pixels_y.min())+3, self.pixels_y.min()-1.5, self.pixels_y.max()+1.5)
-                 
+        # detach from the current TFile to avoid "Replacing existing TH1" warnings
+        px.SetDirectory(0)
+        py.SetDirectory(0)
+
         for x,y,e in zip(self.pixels_x,self.pixels_y,self.pixels_E):
             _ = px.Fill(x,e/self.pixels_E.max())
             _ = py.Fill(y,e/self.pixels_E.max())

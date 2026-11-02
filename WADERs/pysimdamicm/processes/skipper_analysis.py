@@ -1418,7 +1418,9 @@ class FitDarkCurrentProcess(SKImageProcess):
         self.dc_min, self.dc_max        = 0.0010,10.0
         # limits for the spectrol window
         self.x_min, self.x_max  = -10,50
-        
+        # optional upper limit of the plotted histogram (>x_max): the fit still uses [x_min,x_max]
+        self.x_max_plot = None
+
         self.ratio_plot = False
 
         # OPTION TO ADD A MASK VIA FITS FILE(+EXT)
@@ -1432,7 +1434,7 @@ class FitDarkCurrentProcess(SKImageProcess):
         self.__units__.update({
             'mask_clusters':1,'in_overscan':1,'rows_to_mask':1,'cols_to_mask':1,
             'do_calibration':1,'calibration':1,'binning_size':1,'add_linear_DQ':1,'n_peaks':1,'mu_min':1,'mu_max':1,'dc_min':1,'dc_max':1,
-            'sigma_min':1,'sigma_max':1,'gain_min':1,'gain_max':1,'x_min':1,'x_max':1,
+            'sigma_min':1,'sigma_max':1,'gain_min':1,'gain_max':1,'x_min':1,'x_max':1,'x_max_plot':1,
             'ratio_plot':1,'fit_options':1,'apply_mask_from_fits':1,'data_as_csv':1, 'dqm_mode':1
             })
 
@@ -1480,23 +1482,36 @@ class FitDarkCurrentProcess(SKImageProcess):
         else:
             n_bins = int(2*np.sqrt(len(pcd_array)))
             self.binning_size_used =  abs(self.x_max-self.x_min)/n_bins
+        # bins in the fit window (used for the normalization guess)
         self.n_bins_used = n_bins
+
+        # histogram range: [x_min,x_max] unless x_max_plot asks to show more charge on the right.
+        # Extra bins have the same width as the fit-window bins, so the bin edges at x_max are unchanged
+        self._x_hist_max = self.x_max
+        if self.x_max_plot is not None and self.x_max_plot > self.x_max:
+            bin_width = abs(self.x_max-self.x_min)/n_bins
+            n_extra = int(np.ceil((self.x_max_plot-self.x_max)/bin_width))
+            n_bins += n_extra
+            self._x_hist_max = self.x_max + n_extra*bin_width
+        hist_array = data[(data>self.x_min)&(data<self._x_hist_max)]
 
         # FITTING USING ROOT
         pcd = ROOT.TH1F("{} [r{},t{}]".format(rawdata._file_name.split(".")[0],np.random.randint(100),self._ntrails),
-                "Dark Current Fit {}".format(amplifier),n_bins,self.x_min,self.x_max)
+                "Dark Current Fit {}".format(amplifier),n_bins,self.x_min,self._x_hist_max)
         pcd.SetDirectory(0)
 
-        for qij in pcd_array:
+        for qij in hist_array:
             pcd.Fill(qij)
-        
+
         # get function to fit
         fitfunc = self.get_fitfunc(len(pcd_array),gain_guess,rawdata.execute_process_in_amp)
-        # fit PCD 
-        pcd.Fit(fitfunc,self.fit_options)
+        # "R": fit only within the function range [x_min,x_max], even if the histogram is wider
+        fit_options = self.fit_options + "R"
+        # fit PCD
+        pcd.Fit(fitfunc,fit_options)
         # re-fit starting with the best parameters
         fitfunc.SetParameters(fitfunc.GetParameter(0),fitfunc.GetParameter(1),fitfunc.GetParameter(2),fitfunc.GetParameter(3),fitfunc.GetParameter(4))
-        pcd.Fit(fitfunc,self.fit_options)
+        pcd.Fit(fitfunc,fit_options)
 
         # add the fitted function
         self.fitfunc = fitfunc   
@@ -1652,10 +1667,23 @@ class FitDarkCurrentProcess(SKImageProcess):
         pcd_hist.SetMarkerStyle(21)
         pcd_hist.Draw()
 
+        # if the histogram extends beyond the fit window, draw the fitted model there as a dashed line
+        x_hist_max = pcd_hist.GetXaxis().GetXmax()
+        if x_hist_max > self.x_max:
+            # evaluated point by point (cloning the TF1 makes ROOT re-parse its formula, which
+            # fails with the parameter names set in get_fitfunc)
+            xs = np.linspace(self.x_max, x_hist_max, 1000)
+            ys = np.array([self.fitfunc.Eval(xi) for xi in xs])
+            self._fitfunc_ext = ROOT.TGraph(len(xs), xs, ys)
+            self._fitfunc_ext.SetLineColor(self.fitfunc.GetLineColor())
+            self._fitfunc_ext.SetLineWidth(self.fitfunc.GetLineWidth())
+            self._fitfunc_ext.SetLineStyle(2)
+            self._fitfunc_ext.Draw("L SAME")
+
 
         if self.mask_clusters and hasattr(self,'_pcd_no_masked'):
             ### Add histogram with the non-masked PCD
-            nmhist = ROOT.TH1F("non-masked {}".format(np.random.randint(1000)), "non-masked PCD",pcd_hist.GetNbinsX(),self.x_min,self.x_max)
+            nmhist = ROOT.TH1F("non-masked {}".format(np.random.randint(1000)), "non-masked PCD",pcd_hist.GetNbinsX(),pcd_hist.GetXaxis().GetXmin(),pcd_hist.GetXaxis().GetXmax())
             nmhist.SetName("pcd_raw")
             nmhist.SetMarkerStyle(22)
             nmhist.SetMarkerSize(0.4)
