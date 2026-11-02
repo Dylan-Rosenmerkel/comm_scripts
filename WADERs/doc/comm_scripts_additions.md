@@ -96,6 +96,54 @@ Options (the run_WADERs flags `--agmx-crowded`, `--agmx-crowded-shapes`, `--temp
 
 A_GMX needs numba, scipy and scikit-image.
 
+## Running it: run_WADERs
+
+`bin/run_WADERs` goes from raw images to cluster files in one command:
+configuration per CCD → g(n) → panaSKImg per CCD → MakeComposite → summary.
+The options of this note are its flags, and it writes them into the panaSKImg JSONs it runs.
+From a WADERs checkout it uses that checkout (no install needed); it finds a conda environment
+with ROOT if the current python lacks it.
+
+    run_WADERs images.txt [-o PARENT] [-j N] [--gain-correction [pooled|per-image]] [--gain-anchor comb|fit]
+               [--gain-model interpolated|broken|linear] [--gain-combine incoherent|coherent] [--gain-memory off|auto]
+               [--clusterer waders|agmx|both] [--agmx-crowded auto|on|off] [--agmx-crowded-shapes on|off]
+               [--auto-threshold] [--temperature K] [--composite] [--module ACM=NAME] ...
+    run_WADERs -h -v      the full guide
+
+`images.txt` lists one image per line. What each flag sets:
+
+| flag | in the final JSONs (json/<image>/final/) |
+|---|---|
+| `--gain-correction` | `GainNonlinearityProcess` after CalibrationProcess, `model_file` = gain_vs_charge/module_<ACM>_gain_vs_charge.json (per-image: image_<stem>_...) |
+| `--gain-anchor` | `GainNonlinearityProcess.anchor` |
+| `--clusterer agmx` | `ClusterFinder.algorithm = "agmx"`, `ClusterFinder.agmx = {crowded, crowded_shapes, fe_candidates, temperature, first_row}` |
+| `--clusterer both` | final/ as waders, final_agmx/ as agmx: two panaSKImg runs per CCD → root/ and root_agmx/ |
+| `--auto-threshold` | `ClusterFinder.spr_threshold_auto = true` |
+
+Example (module DM09, Image 5, three Fe-55 images; 2 min 15 s with -j 4):
+
+    cd ~/Documents/comm_scripts_data/waders_integration_example
+    ~/Documents/Software/comm_scripts/WADERs/bin/run_WADERs DM09_Image5.txt -j 4 \
+        --gain-correction --clusterer both --composite
+
+    WADERs_analysis_DM09_Image5/
+      summary.txt                       gain/noise/DC per CCD, g(n) per CCD, clustering settings, MakeComposite
+      gain_vs_charge/module_109_*       g(n) model (.json) and plots: _gain_vs_charge, _nonlinearity, _adu_of_n
+      json/<image>/final/               the JSONs run (with GainNonlinearityProcess, algorithm waders)
+      json/<image>/final_agmx/          the A_GMX JSONs (algorithm agmx)
+      root/                             WADERs clusters, energies corrected with g(n)
+      root_agmx/                        A_GMX clusters of the g(n)-converted image
+      composite/, composite_agmx/       MakeComposite (Fe-55 lines, front/back) on root/ and root_agmx/
+
+Compared with comm_scripts' run_WADERs on the same images (2026-10-26, root_gaincorr/ and
+root_agmx_gaincorr/):
+
+- WADERs clusters: identical clusters (same pixels on every CCD compared). The energies are higher by
+  3.7486 / 3.74 (epsilon(T), introduced after that run).
+- On EXT2 the g(n) curve itself changed: the single-electron anchor added since then (DM09 EXT2 gain rises
+  at low charge).
+- A_GMX: 926 of 931 clusters identical, energies equal to 4e-5.
+
 ## Validation (L2 surface run, image 9, EXT1, 2026-11-02)
 
 - **g(n), in-pipeline vs `gain_vs_charge apply` on the uncorrected cluster file:** the same 256 clusters

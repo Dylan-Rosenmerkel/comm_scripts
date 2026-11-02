@@ -30,7 +30,13 @@ HEADER = ('# Copied from comm_scripts/{src} by utils/sync_to_waders.py (imports 
           '# Edit the comm_scripts file and re-run the sync, not this copy.\n')
 
 
+# scripts started as subprocesses by file path run as modules of the package instead (relative imports)
+SCRIPT_CALLS = {"[sys.executable, AUTOCONFIG,": '[sys.executable, "-m", __package__ + ".autoconfig_panaSKImg",'}
+
+
 def convert(text):
+    for old, new in SCRIPT_CALLS.items():
+        text = text.replace(old, new)
     mods = "|".join(sorted(MODULES, key=len, reverse=True))
     text = re.sub(rf"^(\s*)import ({mods}) as (\w+)", r"\1from . import \2 as \3", text, flags=re.M)
     text = re.sub(rf"^(\s*)import ({mods})\s*$", r"\1from . import \2", text, flags=re.M)

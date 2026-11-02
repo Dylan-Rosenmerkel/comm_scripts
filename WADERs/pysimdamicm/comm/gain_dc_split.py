@@ -77,7 +77,7 @@ from .naming import image_stem  # noqa: E402,F401  (image name -> output prefix;
 
 def autoconfig(infile, out, extra, log):
     """Run autoconfig_panaSKImg.py; its report goes to log. Returns True if it worked."""
-    p = subprocess.run([sys.executable, AUTOCONFIG, infile, "-o", out] + list(extra),
+    p = subprocess.run([sys.executable, "-m", __package__ + ".autoconfig_panaSKImg", infile, "-o", out] + list(extra),
                        capture_output=True, text=True)
     with open(log, "w") as fh:
         fh.write(p.stdout + p.stderr)
