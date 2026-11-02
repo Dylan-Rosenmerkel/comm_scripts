@@ -97,3 +97,32 @@ Fe-55 energies, same image and CCD:
 4. **`CalibrationProcess` is defined twice** in skipper_analysis.py (a stub at line 1248, then the full
    class). Harmless, since the second definition wins, but probably unintended.
 5. **e2eV**: WADERs' fixed 3.74 eV against epsilon(T) (3.7486 eV at 130 K); 0.23 % on every energy.
+
+## Which is better for energies? Fe-55 Kα on all 12 CCD-images (DM09 Image 5 × 3, EXT1-4)
+
+Method:
+
+- Her preferred model per CCD (`get_calibration_constant` on the 3 calibrated images pooled) was written into
+  `CalibrationProcess` of each image: scaled by the image's own calibration gain, with `valid_range` = the
+  fitted range.
+- panaSKImg was run per CCD, without g(n).
+- Front-side Kα (σ_xy < 1, the unbinned Kα + Kβ fit of run_WADERs) was fitted per file. True value 5.895 keV.
+
+| | mean (excl. EXT2) | rms over the 9 CCD-images | EXT2 (gain rises at low charge) |
+|---|---|---|---|
+| no correction (linear gain) | 5.766 keV (−2.2 %) | 42 eV | ~6.4 keV (+9 %) |
+| peak-fit polynomial (her method) | 5.875 keV at 3.74 eV/e-, 5.888 at 3.7486 (−0.1 %) | 42 eV | ~4.75 keV (−20 %): the fit failed (offset −1.13 e-, slope 1.098: peaks numbered off by one) |
+| comb g(n), anchor comb | 5.891 keV (−0.07 %) | 13 eV | 5.82-5.89 keV |
+
+- **Mean energy:** where her fit works, it is about as good as g(n), once both use the same eV per electron.
+- **Spread:** g(n) is three times tighter across CCDs and images. Its low-charge gain comes from the comb of
+  all images of the module, while her polynomial follows each image's own fitted gain. Image 0 (gain held at
+  a poorer fit) has the largest offsets.
+- **Robustness:** the comb measurement works on all four CCDs; the automatic peak fit failed on EXT2.
+
+Caveats:
+
+- One module and three images only.
+- Her tool was run on the calibrated images pooled, with its polynomial scaled by each image's gain. A fit
+  per image in ADU, as intended, could do better on the spread, but not on EXT2's failure or on the range
+  above about 700-840 e-.
