@@ -101,8 +101,10 @@ N_EDGES = np.r_[20, 35, 55, 80, 110, 150, 200, 270, 360, 480, 640, 850, 1130, 15
 # --model smooth: windows of the same width, but overlapping (a new window every 1/OVERLAP_STEP of a window), and a
 # weighted fit of g(n) as a polynomial of degree SMOOTH_DEG in log n through all their points (fit_model) instead of a
 # curve through every point. On DM09 (simulation with a known A(n), and the real images cross-validated by rows) this
-# halved the error of the curve where the pixels are (0.49 -> 0.30 e- rms in the simulation, 0.21 -> 0.14 e- tooth
-# offset on held-out rows); overlap alone gave 0.36, narrower windows 0.62 (worse).
+# reduced the error of the curve where the pixels are (0.49 -> 0.41 e- rms in the simulation, 0.21 -> 0.14 e- tooth
+# offset on held-out rows; overlap alone 0.36, narrower windows 0.62, worse). Fe-55 K-alpha unchanged; Am-241 59.5 keV
+# (AMTest EXT3/EXT4) +0.08 / -0.16 % instead of +0.02 / -0.38 % (bright pixels: mostly the continuation above the
+# measured range, see fit_model).
 OVERLAP_STEP = 4
 SMOOTH_DEG = 3
 
@@ -320,7 +322,13 @@ def fit_model(good, form, extrap_factor):
         c = np.polyfit(np.log(n), g, deg, w=1 / e)
         grid = np.geomspace(n.min(), n.max(), 40)
         gg = np.polyval(c, np.log(grid))
-        slope = float(np.polyval(np.polyder(c), np.log(grid[-1])) / grid[-1])        # dg/dn at the last point
+        # continuation above the measured range (most of the energy of bright clusters, e.g. 59.5 keV, comes from
+        # there): a straight line through the points of the last 4 window widths, as for 'interpolated'. The
+        # polynomial's own end slope was less stable (Am-241 EXT4 59.5 keV -0.65 % instead of -0.16 %).
+        r = float(np.exp(np.mean(np.diff(np.log(N_EDGES)))))
+        last = n >= n.max() / r ** 3
+        slope = float(np.polyfit(n[last], g[last], 1)[0]) if last.sum() >= 2 else \
+            float(np.polyval(np.polyder(c), np.log(grid[-1])) / grid[-1])
         model = dict(form="interpolated", fit="smooth", a=float(gg[0]), n_pts=[float(v) for v in grid],
                      g_pts=[float(v) for v in gg], slope_end=slope, n_cap=float(ncap),
                      smooth=dict(deg=int(deg), coeffs_log_n=[float(v) for v in c], n_points=int(len(n)),
