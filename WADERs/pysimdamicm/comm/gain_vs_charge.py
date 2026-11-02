@@ -811,6 +811,52 @@ def _measure_coherent(images, exts, verbose, extrap_factor, model, autoconfig_ar
     return results
 
 
+PERIOD_MIN_STEP = 0.01      # gain periods: smallest gain step between two periods (fraction)
+PERIOD_MIN_SIG = 5.0        # ... and its significance against the image-to-image scatter within the periods
+
+
+def gain_periods(rel_gain, err, min_step=PERIOD_MIN_STEP, min_sig=PERIOD_MIN_SIG, min_n=2):
+    """Gain periods of one module: (period label per image, outlier flag per image).
+
+    rel_gain: per image, in time order, ln(gain / module median gain), averaged over the CCDs (a change of the
+    readout or bias settings shifts all CCDs together); err: its error. Pooling images of two periods (e.g.
+    AMtest 106 before / after 2026-05-21, gain 2.5-3.5 % apart) puts two combs on top of each other: g(n) and
+    every line come out doubled. Method:
+      1. single-image outliers (a poor 0e-/1e- fit) are set aside: an image that differs from both of its
+         neighbours by more than max(min_step, 5 sigma) (never the first or last image);
+      2. binary segmentation of the rest: the split that minimises the absolute deviations from the median of
+         each side, kept if the step between the two medians is > min_step and > min_sig times its error
+         (scatter from the MAD of the deviations, at least the fit errors and 0.3 %); then each side again.
+    Each side keeps at least min_n images. Outliers get the period of their place in time.
+    On simulated series (0.4 % scatter, 10 % outlier fits) a 2.5 % step is found at the right image (+-1) in
+    83 % of cases (69 % for a 2-image period), and a series without a step is split in 7 %.
+    """
+    x, s = np.asarray(rel_gain, float), np.asarray(err, float)
+    bad = np.zeros(x.size, bool)
+    if x.size >= 4:
+        for i in range(1, x.size - 1):
+            bad[i] = all(abs(x[i] - x[j]) > max(min_step, 5 * np.hypot(s[i], s[j])) for j in (i - 1, i + 1))
+    idx = np.flatnonzero(~bad)
+    xs, ss = x[idx], s[idx]
+
+    def split(lo, hi):
+        ks = range(lo + min_n, hi - min_n + 1)
+        if not ks:
+            return []
+        k = min(ks, key=lambda k: np.abs(xs[lo:k] - np.median(xs[lo:k])).sum()
+                + np.abs(xs[k:hi] - np.median(xs[k:hi])).sum())
+        a, b = xs[lo:k], xs[k:hi]
+        dev = np.r_[a - np.median(a), b - np.median(b)]
+        sd = max(1.4826 * np.median(np.abs(dev)), np.median(ss[lo:hi]), 0.003)
+        step = np.median(b) - np.median(a)
+        if abs(step) > min_step and abs(step) > min_sig * sd * np.sqrt(1 / a.size + 1 / b.size):
+            return split(lo, k) + [k] + split(k, hi)
+        return []
+
+    cuts = [idx[k] for k in split(0, idx.size)]
+    return np.searchsorted(cuts, np.arange(x.size), side="right"), bad
+
+
 def measure(images, exts=None, verbose=True, extrap_factor=3.0, model="interpolated", combine="incoherent",
             autoconfig_args=(), memory="off"):
     """{ext: result} from a list of images of the same CCDs; model: interpolated, broken or linear.

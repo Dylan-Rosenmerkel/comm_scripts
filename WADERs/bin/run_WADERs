@@ -284,9 +284,20 @@ what it does, per image (gain_dc_split.py --per-ext, always on):
   --gain-model interpolated (default) | broken | linear | smooth: the form of g(n): monotone
   interpolation through the measured points, two straight lines with a fitted knot, one
   straight line (see gain_vs_charge.py; the straight line does not follow the measured
-  curvature, the others do), or smooth: windows of the same width overlapping (4x the points)
-  and a weighted fit of g(n) as a cubic in log n through all of them instead of a curve
-  through every point (on DM09 about half the error of the curve, mostly above ~900 e-).
+  curvature, the others do), or smooth: above 200 e- windows of the same width overlapping
+  (4x the points) and a weighted fit of g(n) as a cubic in log n through them instead of a
+  curve through every point; below 200 e- the standard points, as interpolated (reaches
+  higher charge; same g(0)).
+  --gain-periods auto (default) | off: images of one module are pooled only within a gain
+  period. A change of the readout settings between campaigns shifts the gain of all CCDs
+  (AMtest 106: 2.5-3.5 % lower from 2026-05-21); pooling both puts two combs on top of each
+  other, and every line in the corrected energies comes out doubled. auto: the images are put
+  in time order (date in the name), each image's gain (0e-/1e- fit, mean over the CCDs relative
+  to the module median) is compared, and the module is split where the gain steps by > 1 %
+  and > 5x the image-to-image scatter (gain_vs_charge.gain_periods; a single image with a poor
+  fit is not a period). Each period gets its own curve, module_<ACM>_period<k>_gain_vs_charge.json;
+  a CCD whose period curve is not usable gets the curve of the whole module. summary.txt lists
+  the periods and the step. off: one curve per module.
   --gain-correction per-image: every image gets its own curve (the module curve for a CCD whose
   own comb is not usable).
 
@@ -396,7 +407,8 @@ def build_parser(full=False):
     ap.add_argument("--gain-model", choices=("interpolated", "broken", "linear", "smooth"), default="interpolated",
                     help="with --gain-correction: form of g(n): interpolated (default; monotone interpolation "
                          "through the measured points), broken (two straight lines, fitted knot), linear, or smooth (overlapping "
-                         "windows and a smooth weighted fit through all their points; more accurate at high charge)")
+                         "windows and a smooth weighted fit above 200 e-, the standard points below; reaches higher "
+                         "charge)")
     ap.add_argument("--gain-combine", choices=("coherent", "incoherent"), default="incoherent",
                     help="with --gain-correction: how several images of a module are combined for the module curve: "
                          "incoherent (default; comb powers added - independent of the image order) or coherent "
@@ -405,6 +417,10 @@ def build_parser(full=False):
                     help="with --gain-correction: remove the horizontal readout memory (a pixel keeps ~3e-4 of the "
                          "pixel read before it) before measuring g(n): off (default) or auto (coefficients fitted "
                          "per CCD; the comb stays visible to higher charge)")
+    ap.add_argument("--gain-periods", choices=("auto", "off"), default="auto",
+                    help="with --gain-correction: auto (default): split a module's images into gain periods where "
+                         "their fitted gain steps (> 1 %%, e.g. new readout settings) and measure one curve per "
+                         "period; off: one curve per module")
     ap.add_argument("--gain-anchor", choices=("comb", "fit"), default="comb",
                     help="with --gain-correction: convert with the comb's g(n) including its low-charge gain "
                          "(comb, default), or keep each image's fitted gain and correct only the charge "
@@ -607,6 +623,85 @@ def drop_cluster_finding(configs):
     print("  --no-clusters: ClusterFinder and BuildClusterMask removed from the final JSONs")
 
 
+def _image_time(stem):
+    """'YYYYMMDDhhmmss' from an image name (..._106_20250914_024425_6), '' if it has none."""
+    m = re.search(r"_(\d{8})_(\d{6})(?:_|$)", stem)
+    return m.group(1) + m.group(2) if m else ""
+
+
+def module_groups(run, configs, GVC):
+    """The images that share one g(n) curve: ({key: [config records]}, {key: module}, summary lines).
+
+    Images of one module (ACM id in the name) share the CCDs: key = the ACM id. With --gain-periods auto a module
+    is split into gain periods where the gain of all its CCDs steps (gain_vs_charge.gain_periods, on each image's
+    0e-/1e- fit gain relative to the module median, averaged over the CCDs, in time order): key <ACM>_period<k>.
+    """
+    import numpy as np
+    modules = {}
+    for r in configs.values():
+        modules.setdefault(acm_id(r["stem"]) or r["stem"], []).append(r)
+    groups, parent, lines = {}, {}, []
+    for key, rs in sorted(modules.items()):
+        rs = sorted(rs, key=lambda r: (_image_time(r["stem"]), r["stem"]))
+        gains = []                      # per image: {ext: (gain, error)} from the 0e-/1e- fit
+        for r in rs:
+            fits = r.get("fits", {}).get("dc", {})
+            q = {e: run.FQ.quality(f) for e, f in fits.items() if e not in r.get("skipped", ())}
+            gains.append({e: (v["gain"], max(v["gain_err_s"], 1e-4)) for e, v in q.items() if v.get("gain")})
+        exts = sorted({e for g in gains for e in g})
+        med = {e: float(np.median([g[e][0] for g in gains if e in g])) for e in exts}
+        x, s, have = [], [], []
+        for i, g in enumerate(gains):
+            if g:
+                d = np.array([np.log(v / med[e]) for e, (v, _) in g.items()])
+                w = np.array([(v / err) ** 2 for e, (v, err) in g.items()])
+                x.append(float(np.sum(w * d) / w.sum()))
+                s.append(float(w.sum() ** -0.5))
+                have.append(i)
+        label = np.zeros(len(rs), int)
+        if run.args.gain_periods == "auto" and len(have) >= 4:
+            lab, bad = GVC.gain_periods(x, s)
+            for i in range(len(rs)):            # an image without a gain fit: the period of the image before it
+                j = max([k for k, h in enumerate(have) if h <= i], default=0)
+                label[i] = lab[j]
+        if label.max() == 0:
+            groups[key], parent[key] = rs, key
+            continue
+        lines.append(f"  module {key}: {label.max() + 1} gain periods (the gain of its CCDs steps; one curve each):")
+        rel = dict(zip(have, x))
+        for k in range(label.max() + 1):
+            members = [r for r, lb in zip(rs, label) if lb == k]
+            ids = [i for i, lb in enumerate(label) if lb == k]
+            gk = f"{key}_period{k + 1}"
+            groups[gk], parent[gk] = members, key
+            t0, t1 = _image_time(members[0]["stem"]), _image_time(members[-1]["stem"])
+            when = (f"{t0[:4]}-{t0[4:6]}-{t0[6:8]} {t0[8:10]}:{t0[10:12]} .. {t1[:4]}-{t1[4:6]}-{t1[6:8]} "
+                    f"{t1[8:10]}:{t1[10:12]}") if t0 and t1 else f"{members[0]['stem']} .. {members[-1]['stem']}"
+            v = [rel[i] for i in ids if i in rel]
+            lines.append(f"    period {k + 1}: {len(members)} image(s), {when}, gain "
+                         f"{np.median(v) * 100:+.2f} % vs module median" if v else
+                         f"    period {k + 1}: {len(members)} image(s), {when}")
+        out = [rs[i]["stem"] for i, b in zip(have, bad) if b]
+        if out:
+            lines.append(f"    single-image gain outliers (poor 0e-/1e- fit?; kept in their period): {', '.join(out)}")
+    return groups, parent, lines
+
+
+def fallback_curve(path, images, res, other, source, E_PER_E):
+    """A CCD whose own curve is not usable gets the curve of `other` (recorded as source / own_reason);
+    rewrites the model file. Returns the CCDs replaced."""
+    replaced = []
+    for ext, rr in res.items():
+        rr.setdefault("source", "own")
+        if not rr.get("ok") and other.get(ext, {}).get("ok"):
+            res[ext] = dict(other[ext], source=source, own_reason=rr.get("reason"))
+            replaced.append(ext)
+    if replaced:
+        with open(path, "w") as fh:
+            json.dump({"images": images, "e_per_electron_eV": E_PER_E, "extensions": res}, fh, indent=1)
+    return replaced
+
+
 def step2_run_panaskimg(run, configs, variant="final"):
     """Step 2: panaSKImg once per CCD (--ext N) with its JSON of json/<image>/<variant>/, all runs in parallel.
     variant "final" writes into the output folder; "final_agmx" (--clusterer both) into agmx_run/.
@@ -741,16 +836,23 @@ def step1b_gain_curves(run, configs):
     D["gc"] = os.path.join(run.out, "gain_vs_charge")
     os.makedirs(D["gc"], exist_ok=True)
     run_exts = sorted({int(ext[3:]) for r in configs.values() for ext, _, _ in r["finals"]})
-    groups = {}
-    for r in configs.values():
-        groups.setdefault(acm_id(r["stem"]) or r["stem"], []).append(r)
+    groups, parent, period_lines = module_groups(run, configs, GVC)      # modules, split into gain periods
     model_of = {}                       # image stem -> model file
     gc_lines.append(f"gain vs charge per pixel (--gain-correction {args.gain_correction}, --gain-model {args.gain_model}, "
                     f"--gain-anchor {args.gain_anchor}): measured from the raw images, applied inside panaSKImg by "
                     f"GainNonlinearityProcess (root/ holds the corrected clusters):")
+    gc_lines += period_lines
+    whole = {}                          # module -> curve from all its images (fallback for a period's unusable CCDs)
     for key, rs in sorted(groups.items()):
         print(f"  {run.stamp()} g(n) for module {key} ({len(rs)} image(s))")
         mpath, res = measure_curve(run, GVC, rs, f"module_{key}", f"module {key}", run_exts)
+        if key != parent[key] and not all(rr.get("ok") for rr in res.values()):
+            m = parent[key]
+            if m not in whole:
+                print(f"  {run.stamp()} g(n) for module {m}, all periods (for the CCDs without a period curve)")
+                whole[m] = measure_curve(run, GVC, [r for k, v in groups.items() if parent[k] == m for r in v],
+                                         f"module_{m}", f"module {m}", run_exts)[1]
+            fallback_curve(mpath, [r["orig"] for r in rs], res, whole[m], "module", GVC.E_PER_E)
         report_curve(gc_lines, f"module {key}", res)
         if args.gain_correction == "pooled":
             model_of.update({r["stem"]: mpath for r in rs})

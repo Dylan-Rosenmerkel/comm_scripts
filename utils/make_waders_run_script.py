@@ -250,16 +250,23 @@ def step1b_gain_curves(run, configs):
     D["gc"] = os.path.join(run.out, "gain_vs_charge")
     os.makedirs(D["gc"], exist_ok=True)
     run_exts = sorted({int(ext[3:]) for r in configs.values() for ext, _, _ in r["finals"]})
-    groups = {}
-    for r in configs.values():
-        groups.setdefault(acm_id(r["stem"]) or r["stem"], []).append(r)
+    groups, parent, period_lines = module_groups(run, configs, GVC)      # modules, split into gain periods
     model_of = {}                       # image stem -> model file
     gc_lines.append(f"gain vs charge per pixel (--gain-correction {args.gain_correction}, --gain-model {args.gain_model}, "
                     f"--gain-anchor {args.gain_anchor}): measured from the raw images, applied inside panaSKImg by "
                     f"GainNonlinearityProcess (root/ holds the corrected clusters):")
+    gc_lines += period_lines
+    whole = {}                          # module -> curve from all its images (fallback for a period's unusable CCDs)
     for key, rs in sorted(groups.items()):
         print(f"  {run.stamp()} g(n) for module {key} ({len(rs)} image(s))")
         mpath, res = measure_curve(run, GVC, rs, f"module_{key}", f"module {key}", run_exts)
+        if key != parent[key] and not all(rr.get("ok") for rr in res.values()):
+            m = parent[key]
+            if m not in whole:
+                print(f"  {run.stamp()} g(n) for module {m}, all periods (for the CCDs without a period curve)")
+                whole[m] = measure_curve(run, GVC, [r for k, v in groups.items() if parent[k] == m for r in v],
+                                         f"module_{m}", f"module {m}", run_exts)[1]
+            fallback_curve(mpath, [r["orig"] for r in rs], res, whole[m], "module", GVC.E_PER_E)
         report_curve(gc_lines, f"module {key}", res)
         if args.gain_correction == "pooled":
             model_of.update({r["stem"]: mpath for r in rs})

@@ -109,17 +109,40 @@ From a WADERs checkout it uses that checkout (no install needed); it finds a con
 with ROOT if the current python lacks it.
 
     run_WADERs images.txt [-o PARENT] [-j N] [--gain-correction [pooled|per-image]] [--gain-anchor comb|fit]
-               [--gain-model interpolated|broken|linear] [--gain-combine incoherent|coherent] [--gain-memory off|auto]
+               [--gain-model interpolated|broken|linear|smooth] [--gain-combine incoherent|coherent] [--gain-memory off|auto]
+               [--gain-periods auto|off]
                [--clusterer waders|agmx|both] [--agmx-crowded auto|on|off] [--agmx-crowded-shapes on|off]
                [--auto-threshold] [--temperature K] [--composite] [--module ACM=NAME] ...
     run_WADERs -h -v      the full guide
 
-`images.txt` lists one image per line. What each flag sets:
+`images.txt` lists one image per line.
+
+**Gain periods.** One g(n) curve per module assumes that all its images share the gain. A change of the readout
+settings between campaigns breaks this (AMtest 106: all CCDs 2.5-3.5 % lower from 2026-05-21). Pooling both periods
+puts two electron combs on top of each other, and every line of the corrected energies comes out doubled (59.5 keV:
+two peaks 1.5 keV apart). With `--gain-periods auto` (default) run_WADERs:
+
+1. puts the images of a module in time order (date and time in the image name);
+2. takes each image's gain from its 0e-/1e- fit (step 1), relative to the module median and averaged over the
+   CCDs;
+3. splits the module where this gain steps by more than 1 % and more than 5 times the image-to-image scatter
+   (`gain_vs_charge.gain_periods`). A single image with a poor fit is set aside and does not start a period.
+
+Each period gets its own curve. A CCD whose period curve is not usable gets the curve of the whole module.
+summary.txt lists the periods, their dates and their gain. Checks:
+
+- AMtest 106 (29 images): split at 2026-05-21 00:46, the first image of the new settings (19 + 10 images).
+- DM09 (3 images): not split.
+- Simulated series: a 2.5 % step is found at the right image (±1) in 83 % of cases; a series without a step is split
+  in 7 % (with 10 % of images given a poor fit).
+
+What each flag sets:
 
 | flag | in the final JSONs (json/<image>/final/) |
 |---|---|
 | `--gain-correction` | `GainNonlinearityProcess` after CalibrationProcess, `model_file` = gain_vs_charge/module_<ACM>_gain_vs_charge.json (per-image: image_<stem>_...) |
 | `--gain-anchor` | `GainNonlinearityProcess.anchor` |
+| `--gain-periods auto` (default) | a module whose images span a gain step gets one curve per period: `model_file` = gain_vs_charge/module_<ACM>_period<k>_gain_vs_charge.json |
 | `--clusterer agmx` | `ClusterFinder.algorithm = "agmx"`, `ClusterFinder.agmx = {crowded, crowded_shapes, fe_candidates, temperature, first_row}` |
 | `--clusterer both` | final/ as waders, final_agmx/ as agmx: two panaSKImg runs per CCD → root/ and root_agmx/ |
 | `--auto-threshold` | `ClusterFinder.spr_threshold_auto = true` |
