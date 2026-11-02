@@ -1,0 +1,145 @@
+version: "3.2"
+
+services:
+    waders:
+        build: .
+        image: gitlab-registry.in2p3.fr/damicm/pysimdamicm/waders:latest
+
+          #    analysis:
+          #        image: gitlab-registry.in2p3.fr/damicm/pysimdamicm/waders:latest
+          #        volumes:
+          #            - type: bind
+          #              source: /iodata/fits_parking
+          #              target: /data/fits
+          #            - waders_reports:/data/waders_reports
+          #            - waders_npz:/data/waders_npz
+          #
+          #    dqm_ACM_PA08:
+          #        image: gitlab-registry.in2p3.fr/damicm/pysimdamicm/waders:latest
+          #        volumes:
+          #            - type: bind
+          #              source: /iodata/fits_parking
+          #              target: /data/fits
+          #            - waders_reports:/data/waders_reports
+          #            - waders_npz:/data/waders_npz
+          #            - type: bind 
+          #              source: /home/damicm/run_dqm/acm-bkg-contrun-b1
+          #              target: /home/wuser/workdir/dqm_manual/acm-bkg-contrun-b1
+          #        entrypoint: "/bin/bash -c 'cd dqm_manual/acm-bkg-contrun-b1/ && pwd && ls && python3 run_dqm_ACM_PA08_B1.py'"
+          #
+          #    dqm_create_pkl:
+          #        image: gitlab-registry.in2p3.fr/damicm/pysimdamicm/waders:latest
+          #        volumes:
+          #            - type: bind
+          #              source: /iodata/fits_parking
+          #              target: /data/fits
+          #            - waders_reports:/data/waders_reports
+          #            - waders_npz:/data/waders_npz
+          #            - type: bind 
+          #              source: /home/damicm/run_dqm/acm-bkg-contrun-b1
+          #              target: /home/wuser/workdir/dqm_manual/acm-bkg-contrun-b1
+          #        entrypoint: "/bin/bash -c 'cd dqm_manual/acm-bkg-contrun-b1/ && python3 run_create_mongoDB_documents.py'"
+          #
+          #
+          #    dqm_sci3_ccd6414:
+          #        image: gitlab-registry.in2p3.fr/damicm/pysimdamicm/waders:latest
+          #        volumes:
+          #            - type: bind
+          #              source: /iodata/fits_parking
+          #              target: /data/fits
+          #            - waders_reports:/data/waders_reports
+          #            - waders_npz:/data/waders_npz
+          #            - type: bind 
+          #              source: /home/damicm/run_dqm/science-run3
+          #              target: /home/wuser/workdir/dqm_manual/science-run3
+          #        entrypoint: "/bin/bash -c 'cd dqm_manual/science-run3/ && pwd && ls && python3 run_dqm_science3_6414.py'"
+          #    
+          #    dqm_sci3_ccd6415:
+          #        image: gitlab-registry.in2p3.fr/damicm/pysimdamicm/waders:latest
+          #        volumes:
+          #            - type: bind
+          #              source: /iodata/fits_parking
+          #              target: /data/fits
+          #            - waders_reports:/data/waders_reports
+          #            - waders_npz:/data/waders_npz
+          #            - type: bind 
+          #              source: /home/damicm/run_dqm/science-run3
+          #              target: /home/wuser/workdir/dqm_manual/science-run3
+          #        entrypoint: "/bin/bash -c 'cd dqm_manual/science-run3/ && python3 run_dqm_science3_6415.py'"
+          #
+          #    dqm_sci3_test:
+          #        image: gitlab-registry.in2p3.fr/damicm/pysimdamicm/waders:latest
+          #        volumes:
+          #            - type: bind
+          #              source: /iodata/fits_parking
+          #              target: /data/fits
+          #            - waders_reports:/data/waders_reports
+          #            - waders_npz:/data/waders_npz
+          #            - type: bind 
+          #              source: /home/damicm/run_dqm/science-run3
+          #              target: /home/wuser/workdir/dqm_manual/science-run3
+          #        entrypoint: "/bin/bash -c 'ls && /bin/bash'"
+          #
+          #    dqm_ccd6414:
+          #        image: gitlab-registry.in2p3.fr/damicm/pysimdamicm/waders:latest
+          #        volumes:
+          #            - type: bind
+          #              source: /iodata/fits_parking
+          #              target: /data/fits
+          #            - waders_reports:/data/waders_reports
+          #            - waders_npz:/data/waders_npz
+          #            - type: bind 
+          #              source: /home/damicm/run_dqm/science-run2
+          #              target: /home/wuser/workdir/dqm_manual/science-run2
+          #        entrypoint: "/bin/bash -c 'cd dqm_manual/science-run2/ && pwd && ls && python3 run_dqm_science2_6414.py'"
+          #    
+          #    dqm_ccd6415:
+          #        image: gitlab-registry.in2p3.fr/damicm/pysimdamicm/waders:latest
+          #        volumes:
+          #            - type: bind
+          #              source: /iodata/fits_parking
+          #              target: /data/fits
+          #            - waders_reports:/data/waders_reports
+          #            - waders_npz:/data/waders_npz
+          #            - type: bind 
+          #              source: /home/damicm/run_dqm/science-run2
+          #              target: /home/wuser/workdir/dqm_manual/science-run2
+          #        entrypoint: "/bin/bash -c 'cd dqm_manual/science-run2/ && python3 run_dqm_science2_6415.py'"
+          #   
+          #
+          # 
+          #    dqm_test:
+          #        image: gitlab-registry.in2p3.fr/damicm/pysimdamicm/waders:latest
+          #        volumes:
+          #            - type: bind
+          #              source: /iodata/fits_parking
+          #              target: /data/fits
+          #            - waders_reports:/data/waders_reports
+          #            - waders_npz:/data/waders_npz
+          #            - type: bind 
+          #              source: /home/damicm/run_dqm/science-run2
+          #              target: /home/wuser/workdir/dqm_manual/science-run2
+          #        entrypoint: "/bin/bash -c 'ls && /bin/bash'"
+
+    dqm_test_home:
+        image: gitlab-registry.in2p3.fr/damicm/pysimdamicm/waders:latest
+        volumes:
+            - type: bind 
+              source: /media/T9/LBC/adapt_panaSKImg_to_ACM/home_docker
+              target: /home/wuser/workdir/dqm_manual
+        entrypoint: "/bin/bash -c 'ls && /bin/bash'"
+
+          #volumes:
+          #    waders_reports:
+          #        driver: local
+          #        driver_opts:
+          #            type: none
+          #            device: /iodata/waders/waders_reports
+          #            o: bind
+          #    waders_npz:
+          #        driver: local
+          #        driver_opts:
+          #            type: none
+          #            device: /iodata/waders/waders_npz
+          #            o: bind
+

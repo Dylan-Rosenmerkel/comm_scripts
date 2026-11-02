@@ -1,0 +1,188 @@
+{
+    "input":
+    {
+        "image":
+        {
+            "extensions"        : 0, 
+            "skip_image"        : true,
+            "axis_to_compress"  : 1,
+            "correct_leach_bug" : true,
+            "correct_polarity"  : false,
+            "id_skip_start"     : 10,
+            "id_skip_end"       : -10,
+            "id_row_start"      : 0,
+            "id_row_end"        : -1,
+            "id_col_start"      : 0,
+            "id_col_end"        : -1,
+            "n_rows_prescan"    : 1,
+            "n_rows_overscan"   : 0,
+            "ccd_rows"          : 4128,
+            "n_cols_prescan"    : 8,
+            "ccd_cols"          : 6144,
+            "n_amp"             : 2
+         },
+         "datetime":
+         {
+             "exposure_start"   : "EXPSTART",
+             "readout_start"    : "RDSTRT",
+             "readout_end"      : "RDEND"
+         },
+         "scp":
+        {    
+        },
+        "convention":
+        {
+            "ampdir"        : "VCKDIRN",
+            "itgtime"       : "ITGTIME",
+            "Nskips"        : "NDCMS",
+            "Ncols"         : "NAXIS1",
+            "Nrows"         : "NAXIS2",
+            "Npbin"         : "NPBIN",
+            "Nsbin"         : "NSBIN",
+            "ampl"          : "AMPL",
+            "exposure_time" : "MEXP",
+            "read_time"     : "MREAD"
+            }
+    },
+    "process":
+    {
+        "sequence":"CompressSkipperProcess;PedestalSubtractionProcess;CalibrationProcess;ClusterFinder",
+        "CompressSkipperProcess":
+        {
+            "func_to_compress"  : ["mean"],
+            "save_image"        : false
+        },
+        "PedestalSubtractionProcess":
+        {
+            "image"             : "mean_compressed",
+            "method"            : "median",
+            "__DEBUG__"         : false,
+            "in_overscan"       : true,
+            "use_mad"           : false,
+            "axis"              : "row",
+            "n_sigma_win_fit"   : 2,
+            "n_sigma_to_mask"   : 3,
+            "show_fit"          : false,
+            "histequ"           : false,
+            "save_image"        : false
+        },
+        "CorrectElectronicColumnTransient":
+        {
+            "image"           : "mean_compressed_pedestal_subtracted",
+            "col_start"       : 1,
+            "col_end"         : 10,
+            "subtract_median" : true,
+            "n_exp"           : 1,
+            "fit_options"     : "QSMER"
+        },
+        "CalibrationProcess":
+        {
+            "image" : "mean_compressed_pedestal_subtracted",
+            "gain"  : {"U":10.0, "L":10.0}
+        },
+        "FitCalibrationConstant":
+        {
+            "image"             : "mean_compressed_pedestal_subtracted",
+            "n_peaks"           : 3,
+            "calibration"       : {"U":10.0, "L":10.0},
+            "n_sigma_win_fit"   : 3
+        },
+        "FitDarkCurrentProcess":
+        {
+            "image"             : "mean_compressed_pedestal_subtracted",
+            "__DEBUG__"         : false,
+            "__verbose__"       : false,
+            "rows_to_mask"      : {"L":[], "U":[]},
+            "cols_to_mask"      : {"L":[0,1], "U":[638,639]},
+            "mask_clusters"     : false,
+            "do_calibration"    : true,
+            "calibration"       : 10.0,
+            "n_peaks"           : 3,
+            "binning_size"      : 0.3,
+            "sigma_max"         : {"L":2.5,  "U":3.0},
+            "gain_min"          : 8.0,
+            "gain_max"          : {"L":10.8, "U":10.8},
+            "x_min"             : -20,
+            "x_max"             : 60
+        },
+        "FitDarkCurrentPerRow":
+        {
+            "image"             : "mean_compressed_pedestal_subtracted",
+            "row_start"         : 0,
+            "row_end"           : 840,
+            "row_step"          : 10,
+            "calibration"       : 10.0,
+            "rows_to_mask"      : {"L":[], "U":[]},
+            "cols_to_mask"      : {"L":[0,1], "U":[[638,639]]},
+            "n_peaks"           : 5,
+            "binning_size"      : 0.3,
+            "gain_min"          : 8.0,
+            "gain_max"          : 15.0,
+            "x_min"             : -20,
+            "x_max"             : 60
+        },
+        "FitDarkCurrentPerCol":
+        {
+            "image"             : "mean_compressed_pedestal_subtracted",
+            "col_start"         : 0,
+            "col_end"           : -1,
+            "col_step"          : 10,
+            "rows_to_mask"      : {"L":[], "U":[]},
+            "cols_to_mask"      : {"L":[0,1], "U":[[638,639]]},
+            "calibration"       : 10.0,
+            "n_peaks"           : 5,
+            "binning_size"      : 0.3,
+            "gain_min"          : 8.0,
+            "gain_max"          : 15.0,
+            "x_min"             : -20,
+            "x_max"             : 60
+        },
+        "ChargeLossPlot":
+        {
+            "skip_id_list"      : [0,1,2,45],
+            "skip_id_baseline"  : -1,
+            "histequ"           : false,
+            "gray_palette"      : false
+        },
+        "ChargeLossSkewnessProcess":
+        {
+            "use_overscan"      : false,
+            "id_skip_reference" : 1,
+            "id_skip_start"     : 2,
+            "id_skip_end"       : -1,
+            "skip_step"         : 20,
+            "kcl_threshold"     : 3.2,
+            "kcl_n_sig"         : 8,
+            "display"           : true
+        },
+        "FFTNoisePlot":
+        {
+        },
+        "RNvsNskipsPlot":
+        {
+            "n_skips_per_block" : 10,
+            "is_blank"          : false
+        },
+        "ClusterFinder":
+        {
+            "spr_threshold"        : {"U": [null,3,4], "L":[null,3,4]},
+            "spr_image"            : "mean_compressed_pedestal_subtracted_e",
+            "spr_mask"             : false,
+            "method"               : 0,
+            "max_nearest_neighbor" : 1
+        },
+        "BuildClusterMask":
+        {
+            "cluster_size_min"  : 20,
+            "N_col_pre"         : 3,
+            "N_col_post"        : 3,
+            "N_row_pre"         : 3,
+            "N_row_post"        : 3
+        },
+        "ApplySelectionCuts":
+        {
+            "cols"  : [10,141,42,143,144,145,146,147,148,149,150],
+            "rows"  : [1,2,3,149,150]
+        }
+    }
+}

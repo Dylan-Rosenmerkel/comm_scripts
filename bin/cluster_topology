@@ -1,0 +1,206 @@
+#!/usr/bin/env python3 
+import ROOT
+from glob import glob
+import numpy as np
+import click
+
+from pysimdamicm.utils.root_plot_styles import get_moskita_style as Style
+style = Style(squared=True)
+style.cd()
+ROOT.gROOT.ForceStyle()
+
+
+def build_TH2D_root_files(rootfile,ccd_size=(3100,550)):
+    ROOT.gROOT.SetBatch(1)
+    ROOT.gStyle.SetOptStat(0)
+    ROOT.gStyle.SetOptFit(0) 
+    
+    ROOT.gStyle.SetPaintTextFormat("4.2f")
+
+    fin = ROOT.TFile.Open(rootfile)
+    try:
+        entries = fin.clustersRec.GetEntries()
+    except AttributeError:
+        return
+    
+    fin.clustersRec.Draw("pixels_E:pixels_y:pixels_x>>himg({},{},{},{},{},{})".format(ccd_size[0],0.5,ccd_size[0]+0.5,ccd_size[1],0.5,ccd_size[1]+0.5),
+            f"has_seed==1", "COLZ prof ")
+    # Get the histogram object
+    hist = ROOT.gDirectory.Get("himg")
+    # unlink it from file
+    hist.SetDirectory(0)
+
+    # Build now the has_seed histogram 
+    fin.clustersRec.Draw("pixels_E*1000/3.77:pixels_y:pixels_x>>hbkg({},{},{},{},{},{})".format(ccd_size[0],0.5,ccd_size[0]+0.5,ccd_size[1],0.5,ccd_size[1]+0.5),
+            f"has_seed==0", "COLZ prof ")
+    # Get the histogram object
+    hbkg = ROOT.gDirectory.Get("hbkg")
+    # unlink it from file
+    hbkg.SetDirectory(0)
+
+    # close file to properly link histogram with output root file
+    fin.Close()
+    fout = ROOT.TFile.Open(rootfile.replace("panaSKImg_","th2D_panaSKImg_"),"RECREATE")
+    fout.cd()
+    # Save TH2D into a root file
+    hist.SetName( "rec_cls_seed")
+    hist.SetTitle("rec_cls_seed")
+    hist.Write()
+
+    # now bkg hist
+    hbkg.SetName( "rec_cls_noseed_e")
+    hbkg.SetTitle("rec_cls_noseed_e")
+    hbkg.Write()
+    fout.Write()
+    fout.Close()
+
+    return
+
+def cluster_energy_profiles(rootfile,LX=3,LY=3,Emin=0.0,outdir=".",setlogz=True,Emax=20.0,fmt="png",plot_isolated_cluster=False, only_serial_register=False,
+        xyelongation=[1,4], skip_sre=False, erange=[None,None]):
+    ROOT.gROOT.SetBatch(1)
+    ROOT.gStyle.SetOptStat(0)
+    ROOT.gStyle.SetOptFit(0)     
+    ROOT.gStyle.SetPaintTextFormat("4.2f")
+    
+
+    f = ROOT.TFile.Open(rootfile)
+    try:
+        entries = f.clustersRec.GetEntries()
+    except AttributeError:
+        return
+
+    e2eV = 3.74
+    try:
+        _ = f.process_config.GetEntry(0)
+        e2eV = f.process_config.e2eV
+    except AttributeError:
+        pass
+    print(f"Using {e2eV} eV/e-")
+
+
+    max_elongation = 0
+    for i in range(entries):
+        _ = f.clustersRec.GetEntry(i)
+
+        cluster_ids = np.array(f.clustersRec.cluster_id).astype(int)
+        try:
+            cluster_hasseed = np.logical_not(np.array(f.clustersRec.excluded).astype(bool))
+        except AttributeError:
+            cluster_hasseed = np.array(f.clustersRec.has_seed).astype(bool)
+
+        for j,(cid,hasseed) in enumerate(zip(cluster_ids,cluster_hasseed)):
+            if bool(hasseed):
+                minX = int(f.clustersRec.minX[j])-LX
+                minY = int(f.clustersRec.minY[j])-LY
+                maxX = int(f.clustersRec.maxX[j])+LX
+                maxY = int(f.clustersRec.maxY[j])+LY
+                DX = int(f.clustersRec.DX[j])+int(2*LX)
+                DY = int(f.clustersRec.DY[j])+int(2*LY)
+                E = round(f.clustersRec.Energy[j],2)
+                wSTD_xy = round(f.clustersRec.wSTD_XY[j],2)
+                fSTD_x = round(f.clustersRec.fSTD_X[j],2)
+                fSTD_y = round(f.clustersRec.fSTD_Y[j],2)
+             
+                ##### DX>3, DY==1 high-E>0.5keV
+                is_serial_register       = (f.clustersRec.DX[j]>=xyelongation[0]) and (f.clustersRec.DY[j]==xyelongation[1])
+                is_serial_register_too   = (f.clustersRec.DX[j]>=xyelongation[0]*2) and (f.clustersRec.DY[j]==xyelongation[1]+1)
+                
+                # is a serial regiser event, and cluster topology should not do the map for this event
+                if not only_serial_register and skip_sre and (is_serial_register or is_serial_register_too):
+                    continue
+                    
+                # not a serial register event, and option to plot only sre has been activated
+                if only_serial_register and not (is_serial_register or is_serial_register_too):
+                    continue
+
+                # update pixel window for the combined cluster topology
+                if E<Emax and E>Emin:
+                    max_elongation = max(DX,DY,max_elongation)
+
+                if E<Emin:
+                    continue
+
+                if erange[0] is not None:
+                    if E<erange[0] or E>erange[1]:
+                        continue
+                NbinsX = (maxX-minX)+1
+                NbinsY = (maxY-minY)+1
+                if not plot_isolated_cluster:
+                    f.clustersRec.Draw("pixels_E*1000/{}:pixels_y:pixels_x>>h{}({},{},{},{},{},{})".format(e2eV,j,NbinsX,minX-0.5,maxX+0.5,NbinsY,minY-0.5,maxY+0.5),
+                            f"cluster_id == {cid}",
+                            "COLZ prof GOFF")
+                else:
+                    f.clustersRec.Draw("pixels_E*1000/{}:pixels_y:pixels_x>>h{}({},{},{},{},{},{})".format(e2eV,j,NbinsX,minX-0.5,maxX+0.5,NbinsY,minY-0.5,maxY+0.5),
+                            #f"(pixels_x>={minX} && pixels_x<={maxX}) && (pixels_y>={minY} && pixels_y<={maxY})",
+                            "",
+                            "COLZ prof GOFF")
+               
+                c = ROOT.TCanvas()
+                cluster = ROOT.gDirectory.Get("h{}".format(j))
+                cluster.SetDirectory(0)
+                # FIXME harcoded saturation value (Emax for moskita ext3), should be a CLI
+                #cluster.SetMaximum(28)
+                cluster.SetTitle(f"E={E}keV, "+" #sigma_{xy}="+f"{wSTD_xy}pix"+", #sigma_{x}="+f"{fSTD_x}pix"+", #sigma_{y}="+f"{fSTD_y}pix")
+                cluster.Draw("COLZ prof")
+                # add energy as title
+                t = ROOT.TLatex()
+                t.SetTextSize(0.031)
+                t.SetTextFont(62)
+                t.DrawLatexNDC(0.1,0.93,cluster.GetTitle())
+                c.Update()
+                
+                fname = rootfile.split('/')[-1].replace('.root',f"_evt{i}_cls{cid}.{fmt}")
+                outfname = f"{outdir}/{fname}"
+                if setlogz:
+                    c.SetLogz()
+                c.SaveAs( outfname )
+    
+    width = max_elongation // 2
+    Nbins = int(2*width)+1
+    f.clustersRec.Draw("pixels_E/Qmax:pixels_y-QmaxY:pixels_x-QmaxX>>hcomb({},{},{},{},{},{})".format(Nbins,-width,width,Nbins,-width,width),
+            f"has_seed && Energy > {Emin} && Energy < {Emax}", "COLZ prof ")
+    c = ROOT.TCanvas()
+    ccomb = ROOT.gDirectory.Get("hcomb")
+    ccomb.Draw("colz prof")
+    c.Update()
+    if setlogz:
+        c.SetLogz()
+    c.SaveAs( f"{outdir}/combined_cluster_topology_Emax{int(Emax)}keV.pdf" )
+
+    
+    return
+
+@click.command(help="Create the 2D energy topology for each cluster in  the ROOT file")
+@click.option("-r","--roots",help="Pattern file for the root files")
+@click.option("--padx",help="Pad in the x-axis: number of empty pixels on the X direction", default=3)
+@click.option("--pady",help="Pad in the y-axis: number of empty pixels on the y direction", default=3)
+@click.option("--emin",help="Miminum cluster energy (in keV)", default=0.0)
+@click.option("-o","--odir",help="Directory where to save the outputs pdf files", default=".")
+@click.option("--logz",help="Color code bar (energy) will be in Log scale", type=bool, default=False)
+@click.option("--emax",help="Maximum cluster energy (in keV) to include in the combined cluster topology plot",type=float,default=20)
+@click.option("--fmt",help="Format for the outputs plots",type=str,default="png")
+@click.option("--ccd",help="CCD size in pixel units",type=(int,int),default=(3100,550))
+@click.option("--onlyroot",help="Only the construction of the TH2 cluster map",type=bool,default=False)
+@click.option("--region",help="Set to plot the cluster and its surrounding",type=bool,default=False)
+@click.option("--sre",help="Set to plot only serial register events",type=bool,default=False)
+@click.option("--srexy",help="Elongation on x- and y-axis, respectively, to detect serial register event (DX>=[0] and DY==[1])",type=(int,int),default=(3,1))
+@click.option("--skipsre",help="Set to skip SRE",type=bool,default=False)
+@click.option("--erange",help="Energy range in which cluster topology plot will be build",type=(float,float),default=(0,0))
+def main(roots,padx,pady,emin,odir,logz,emax,fmt,ccd,onlyroot,region,sre,srexy,skipsre,erange):
+    lof = glob(roots)
+    for f in lof:
+        if onlyroot:
+            build_TH2D_root_files(f,ccd_size=ccd)
+        else:
+            Emin,Emax = erange
+            if Emin==0 and Emax==0:
+                Emin = None
+                Emax = None
+
+            cluster_energy_profiles(f,LX=padx,LY=pady,Emin=emin,outdir=odir,Emax=emax,fmt=fmt,plot_isolated_cluster=region,only_serial_register=sre,xyelongation=srexy,skip_sre=skipsre,setlogz=logz, erange=[Emin,Emax])
+
+if __name__ == '__main__':
+    main()
+
+

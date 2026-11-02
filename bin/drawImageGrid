@@ -1,0 +1,305 @@
+#!/usr/bin/env python3 
+""":script:`drawImageGrid`
+============================================================
+
+
+      .. moduleauthor:: Nuria Castello-Mor <castello@ifca.unican.es>
+      .. date::06/05/2022
+
+"""
+
+import sys 
+import numpy as np
+
+from matplotlib import pyplot as plt 
+from astropy.io import fits
+from glob import glob
+
+import matplotlib as mpl 
+# Configuración global para el estilo
+plt.rcParams.update({
+    'xtick.direction': 'in',        # Ticks del eje X hacia adentro
+    'ytick.direction': 'in',
+    'xtick.major.size': 10,         # Longitud de los ticks mayores del eje X
+    'ytick.major.size': 10,         # Longitud de los ticks mayores del eje Y
+    'xtick.major.width': 2,         # Grosor de los ticks mayores del eje X
+    'ytick.major.width': 2,         # Grosor de los ticks mayores del eje Y
+    'xtick.minor.size': 5,          # Longitud de los ticks menores del eje X
+    'ytick.minor.size': 5,          # Longitud de los ticks menores del eje Y
+    'xtick.minor.width': 1.5,       # Grosor de los ticks menores del eje X
+    'ytick.minor.width': 1.5,
+    # Tamaño de las etiquetas (labels)
+    'axes.labelsize': 14,           # Tamaño del xlabel y ylabel
+    'axes.titlesize': 16,           # Tamaño del título del gráfico
+    # Tamaño de la leyenda (legend)
+    'legend.fontsize': 12,          # Tamaño de la fuente de la leyenda
+    'legend.title_fontsize': 14,    # Tamaño de la fuente del título de la leyenda
+    # Tamaño de los ticks
+    'xtick.labelsize': 12,          # Tamaño de las etiquetas de los ticks del eje X
+    'ytick.labelsize': 12
+    })  
+
+
+def get_data(infile,ext,amp=None,transpose=False,prescan=1,overscan=12):
+
+    d = fits.getdata(infile, ext=ext)
+    if transpose:
+        if amp=='L':
+            L = d[:,prescan:d.shape[1]//2-overscan]
+            return L.T
+        else:
+            U = d[:,d.shape[1]//2+overscan:-1*prescan]
+            U = np.flip(U,axis=1)
+            return U.T
+
+    return d
+
+
+def main(lof, ne, vrange, ext=0, as_float=False, cmap=None, ne_range=False, mext=None, qmax=None,
+        pcd=True, transpose=False, amp=None, ovs_col=None, hotcol=None, xtalk=None,Qseed=7.0):
+
+    dtype = float if as_float else int
+    if cmap is None:
+        cmap = plt.get_cmap('inferno', int(vrange[1]-vrange[0]) )
+    else:
+        cmap = plt.get_cmap(cmap, int(vrange[1]-vrange[0]) )
+    
+    # dimension of the single image
+    img = get_data(lof[0], ext, amp, transpose)
+    rows, cols = img.shape
+
+    # total size of the composed image
+    Nrows = int(rows*len(lof))
+    compose_image = np.zeros((Nrows,cols))
+    if mext is not None:
+        compose_mask_image = np.zeros((Nrows,cols))
+
+    # fill the compose images
+    for i,f in enumerate(lof):
+        compose_image[rows*i:(i+1)*rows,:] = get_data(f, ext, amp, transpose).astype(float)
+        if mext is not None:
+            compose_mask_image[rows*i:(i+1)*rows,:] = get_data(f, mext, amp, transpose).astype(bool)
+            #### SUM UP ALL MASK FROM ALL OTHER FILES
+            if xtalk is not None:
+                ccds = xtalk.split(',')
+                for ccd in ccds[1:]:
+                    print(ccd, np.sum(compose_mask_image[rows*i:(i+1)*rows,:]))
+                    compose_mask_image[rows*i:(i+1)*rows,:] = np.logical_or(compose_mask_image[rows*i:(i+1)*rows,:], 
+                            get_data(f.replace(ccds[0],ccd), mext, amp, transpose).astype(bool))
+
+        if xtalk is not None:
+            if len(lof)==1:
+                xtalk_imgs = {}
+                ccds = xtalk.split(',')
+                for ccd in ccds[1:]:
+                    xtalk_imgs[ccd] = get_data(f.replace(ccds[0],ccd), ext, amp, transpose).astype(float)
+            else:
+                xtalk = None
+
+    if dtype is int:
+        compose_image = np.round(compose_image)
+
+    if hotcol is not None:
+        if mext is None:
+            compose_mask_image = np.zeros_like(compose_image).astype(bool)
+        for c in hotcol:
+            compose_mask_image[:,c] = True
+
+    if mext is not None:
+        compose_image = np.ma.array(compose_image, mask=compose_mask_image)
+   
+    # draw image
+    f = plt.figure(1, figsize=(8,16))
+    _ = plt.imshow(compose_image, origin='lower', aspect='auto', vmin=vrange[0], vmax=vrange[1], cmap=cmap)
+    plt.colorbar(_) 
+
+    # draw where an image ends
+    for i in range(1,len(lof)):
+        plt.plot([0,cols],[i*rows,i*rows], linestyle='dashed', lw=1, color='grey')
+
+    if ne is not None:
+        if ne_range:
+            # pixels in a range of events
+            ne_mask = np.logical_and(compose_image>=min(ne), compose_image<=max(ne))
+            print(f" - {np.sum(ne_mask)} pixels with charge betwee {ne[0]},{ne[1]}")
+        else:
+            # pixels with an exact value of electrons
+            ne_mask = np.round(compose_image)==ne[0]
+            print(" - {} pixels with charge {} (displayed in red)".format(ne_mask.sum(),ne[0]))
+        
+        # find which pixels meet the condition
+        _y,_x = np.where(ne_mask)
+        if mext is not None:
+            for yi,xi in zip(_y,_x):
+                if not bool(compose_mask_image[yi,xi]):
+                    plt.plot(xi, yi, 'ro', mfc='None', linestyle='None', ms=2)
+                    isXTALK = f"cls in row? {np.sum(compose_mask_image[yi,:]>Qseed)>0}; "
+                    if xtalk is not None:
+                        for ccd in xtalk_imgs.keys():
+                            cls_in_row = np.sum(xtalk_imgs[ccd][yi,:]>Qseed)>0
+                            qxtalk = np.round(xtalk_imgs[ccd][yi,xi],2)
+                            if cls_in_row:
+                                xcls = np.where(xtalk_imgs[ccd][yi,:]>Qseed)
+                                print(f"Cluster at the same row at CCD-{ccd}")
+                                print(list(xcls))
+                            isXTALK += f"CCD-{ccd.replace('_','')}: {qxtalk}, {cls_in_row}; "
+
+                    print(f"col:{xi}, row:{yi} with q:{np.round(compose_image[yi,xi],2)}, {isXTALK}")
+            
+            fig_id = 3
+            M = 50
+            for yi,xi in zip(_y,_x):
+                if not bool(compose_mask_image[yi,xi]):
+                    f = plt.figure(fig_id)
+                    plt.title(f"col:{xi}, row:{yi}")
+                    _ = plt.imshow(compose_image.data[max(0,yi-M):min(yi+M+1,compose_image.shape[0]),max(0,xi-M):min(xi+M+1,compose_image.shape[1])], origin='lower',aspect='auto')
+                    plt.colorbar(_)
+                    fig_id+=1
+                    if xtalk is not None:
+                        for ccd in xtalk_imgs.keys():
+                            f = plt.figure(fig_id)
+                            plt.title(f"{ccd.replace('_','')}: col:{xi}, row:{yi}")
+                            _ = plt.imshow(xtalk_imgs[ccd][max(0,yi-M):min(yi+M+1,compose_image.shape[0]),max(0,xi-M):min(xi+M+1,compose_image.shape[1])], origin='lower',aspect='auto')
+                            plt.colorbar(_)
+                            fig_id+=1
+                        plt.show()
+                        input("...")
+        else:
+            ### plot on top of the colorcode image pixels that satisfy the condition
+            plt.plot( _x, _y, 'ro', mfc='None', linestyle='None', ms=2 )
+
+    if  ovs_col is not None:
+        plt.axvline(x=ovs_col, color='yellow', linestyle='-.')
+    
+    if pcd:
+        plt.figure(2, figsize=(10,6))
+        if mext is not None:
+            _ = plt.hist(compose_image.compressed(), 200, range=(vrange[0],vrange[1]), histtype='step', lw=2, color="k")
+        else:
+            _ = plt.hist(compose_image.flatten(), 200, range=(vrange[0],vrange[1]), histtype='step', lw=2, color="k")
+        plt.yscale('log')
+        plt.xlabel('pixel charge')
+        plt.ylabel('counts')
+
+    plt.show( block=True )
+
+    return
+
+##################################################
+if __name__ == '__main__':
+
+    import argparse
+    
+    parser = argparse.ArgumentParser()
+
+    #### MANDATORY ARGUMENTS
+    ##################################################
+    parser.add_argument(
+            action="store",
+            dest="infiles",
+            help='pattern file names (+absolute or relative path) to generate the composed image via single fits file images of the same dimension')
+    
+    parser.add_argument('--ext',
+            action="store",
+            dest="extension",
+            type=int,
+            default=0,
+            help='Extension in the fits file for the data')
+
+    parser.add_argument('--mext',
+            action="store",
+            dest="mext",
+            type=int,
+            default=None,
+            help='Extension in the fits file for the mask')
+   
+    parser.add_argument('--float',
+            action="store_true",
+            dest="as_float",
+            help='Use if the pixel charge must be display as float instead of integer (by default)')
+  
+    parser.add_argument('--ne',
+            action="store",
+            dest="ne",
+            type=str,
+            default=None,
+            help='Number of electrons (int) per pixel to be displayed on top of the coded-color image (default None). For a range of values, just do --ne 3,5')
+
+    parser.add_argument('--color-range','-r',
+            action="store",
+            dest="color_range",
+            nargs='+',
+            default=[-0.5,7.5],
+            help='minimum and maximum range that the colormap will cover to display the data as an image (by default, 0 and 7.5 electrons)')
+
+    parser.add_argument('--cmap',
+            action="store",
+            dest="cmap",
+            default='jet',
+            help='palette for the color code jet (default)|viridis|plasma|magma|Dark2|Set1|...|tab20bc') 
+    
+    parser.add_argument('-T',
+            action="store",
+            dest="T",
+            default=0,
+            help='Set to transpose image, to plot as a funciton of rows instead of columns (by default)') 
+    
+    parser.add_argument('--amp',
+            action="store",
+            dest="amp",
+            default='L',
+            help='name of the ampligier L/U') 
+    
+    parser.add_argument('--ovs-col',
+            action="store",
+            dest="ovs_col",
+            type=float,
+            help='column number where overscan region starts') 
+
+    parser.add_argument('--hotcol',
+            action="store",
+            dest="hotcol",
+            type=str,
+            help='hot column list, comma-separated values') 
+
+    parser.add_argument('--xtalk',
+            action="store",
+            dest="xtalk",
+            default=None,
+            help='List of CCDs (coma separated) to look for xtalk') 
+
+    parser.add_argument('--qseed',
+            action="store",
+            dest="qseed",
+            default=7.0,
+            type=float,
+            help='Minimum pixels charge to check if in this row there is any high-E event at the other CCDs') 
+
+    args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
+
+    # list of images
+    image_list = sorted(glob(args.infiles))
+    if len(image_list)==0:
+        raise OSError(f"No images have been found with patter {args.infiles}")
+
+    print(" {} have been joined ".format(len(image_list)))
+
+    if len(image_list)==0:
+        raise IOError("No images have been found with pattern ", args.infiles)
+
+    vrange = [float(args.color_range[0]),float(args.color_range[1])]
+    
+    if args.ne is not None:
+        ne = args.ne.split(',')
+        ne = [float(e) for e in ne]
+        ne_range = True if len(ne)>1 else False
+    else:
+        ne_range = None
+    
+    hot_column = [int(i) for i in args.hotcol.split(",")]
+
+    T = True if int(args.T)==1 else False
+    main(image_list, ne, vrange, args.extension, args.as_float, args.cmap, ne_range=ne_range,
+            mext=args.mext, transpose=T, amp=args.amp, ovs_col=args.ovs_col, hotcol=hot_column, xtalk=args.xtalk, Qseed=args.qseed)
+
+

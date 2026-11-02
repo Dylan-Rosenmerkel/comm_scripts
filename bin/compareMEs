@@ -1,0 +1,424 @@
+#!/usr/bin/env python3 
+""":script:`panaSKImg` -- CCD image processing with python3
+============================================================
+
+
+      .. moduleauthor:: Nuria Castello-Mor <castello@ifca.unican.es>
+      .. date::01/10/2020
+
+"""
+
+import sys 
+
+# For Am
+src_regions = [(12,24),(30,60),(91,120),(151,210),(271,330),(439,725)]
+bkg_regions = [(61,90),(121,150),(211,270),(331,390),(726,802)]
+# For Co
+src_regions = []
+bkg_regions = []
+
+### To avoid ROOT help print out
+if not '-h' in sys.argv and not '--help'in sys.argv:
+	import pickle
+	from matplotlib import pyplot as plt
+	from glob import glob
+	import numpy as np
+	import ROOT
+	
+	from pysimdamicm.utils.root_plot_styles import get_sifca_style
+	from pysimdamicm.utils.libplot4ana import update_mpl_style
+	update_mpl_style()
+
+
+def main(medir=".",display=True,save_exp_plots=False):
+
+    lofme = glob(medir)
+        
+    # load all ME
+    data = []
+    for fme in lofme:
+        fme = open(fme,'rb')
+        data.append( pickle.load(fme) )
+        fme.close()
+    
+    # create a dictionary for all parameters to control
+    me_params = {}
+    for par in data[0].keys():
+        if par in[ 'run']:
+            me_params[par] = np.array([int(d[par]) for d in data])
+        elif par in ['me_dc_lambda', 'me_dc_mu0', 'me_dc_gain','me_dc_sigma']:
+            y,yerr = [],[]
+            for i,d in enumerate(data):
+                try:
+                    _y,_yerr = d[par]
+                except TypeError:
+                    _y = np.nan
+                    _yerr = np.nan
+                y.append(_y)
+                yerr.append(_yerr)
+
+            me_params[par] = np.array(y)
+            me_params[par+"_err"] = np.array(yerr)
+        elif par in ['MEImageMedianperCol']:
+            me_params[par+"_median"] = {
+                    'y': np.array([np.median(np.array(d['MEImageMedianperCol']['y']), axis=0) for d in data]),
+                    'x': np.array([np.median(np.array(d['MEImageMedianperCol']['x']), axis=0) for d in data])
+                    }
+    me_params['MEImageMedianperCol_median'].update({'run':me_params['run']})
+    
+    ### convert lambda in units of e-/pix/day (pix = single pixel), data used with binning: 16*4
+    # lamda / (16*4) / (40.32 / (60*60*24) ) / ADC2e
+    texp = 40.32/86400.0 # total exposure in days
+    animg = 16*4 # binning of the image
+    me_params['me_dc_lambda'] = me_params['me_dc_lambda']/me_params['me_dc_gain']/texp/animg
+
+    #### PLOTTING EVOLUTION OF THE DARK CURRENT FIT PARAMETERS ###################
+    #       GAIN                                                                 #
+    #       LAMBDA                                                               #
+    #       SIGMA                                                                #
+    #       MU0                                                                  #
+    ##############################################################################
+    ylabel  = ['calibration [ADC/e$^{-}$]','$\lambda$ [e$^{-}$/pix/day]','$\sigma$ [e$^{-}$]','$\mu_{0}$ [e$^{-}$]']
+    parlist = ['me_dc_gain','me_dc_lambda','me_dc_sigma','me_dc_mu0']
+    yrange  =  {
+            'me_dc_gain':(4.6,5.5),
+            'me_dc_lambda':(0.05,1.0),
+            'me_dc_sigma':(0.0,0.2),
+            'me_dc_mu0':(-0.12,0.12)
+            }
+    for num in range(2):
+        fig,((ax1,ax2),(ax3,ax4)) = plt.subplots(2,2,figsize=(14,7))
+        plt.subplots_adjust(top=0.90, bottom=0.09, left=0.10, right=0.95, hspace=0.25, wspace=0.35)
+        axlist = [ax1,ax2,ax3,ax4]
+        for k,(_ax,par,ylab) in enumerate(zip(axlist,parlist,ylabel)):
+            if num==1:
+                ylim = yrange[par]
+            else:
+                ylim = None
+
+            ### get values
+            y    = me_params[par]
+            yerr = me_params[par+"_err"]
+            isnan = np.isnan(yerr)
+            # remove nan values 
+            run  = me_params['run'][~isnan]
+            y    = y[~isnan]
+            yerr = yerr[~isnan]
+
+            ### check if some error bars are too long
+            mask = yerr < np.median(yerr) + 3.*np.nanstd(yerr)
+            _ = _ax.errorbar(run[mask], y[mask],yerr=yerr[mask],ms=2.8,
+                marker='o', mfc='white', mec='black', ecolor='black',capsize=2.0, linestyle='None',alpha=0.7)
+            ### median value
+            _ = _ax.axhline(np.nanmedian(y[mask]),label="median: {}".format(round(np.nanmedian(y[mask]),3)),
+                    c='black',linestyle='dashed')
+            
+            ### if some values where mask, plot as upper limit
+            mmask = ~mask
+            if mmask.sum()>0:
+                _ = _ax.errorbar(run[mmask], y[mmask],yerr=3*np.nanmedian(yerr[mask]),ms=2.8,
+                    marker='o', mfc='white', mec='black',ecolor='black', linestyle='None',uplims=True, lolims=True, alpha=0.7)
+            _ = _ax.set_xlabel('run number')
+            _ = _ax.set_ylabel(ylab)
+            _ax.legend()
+            
+            ### adding background region limits
+            #for bkg_run in bkg_run_list:
+            for x1,x2 in src_regions:
+                if x2 < 25:
+                    color = '#80b370'
+                    ls = 'dotted'
+                elif x2 < 400:
+                    color = '#4cb1f5'
+                    ls = '--'
+                else:
+                    color = '#ca80f2'
+                    ls = '-.'
+                #_ax.axvline(bkg_run, linestyle=ls, alpha=0.5, color=color)
+                _ax.axvspan(x1,x2, alpha=0.2, color=color )
+            for x1,x2 in bkg_regions:
+                if x1 > 720:
+                    color = '#f23d49'
+                    ls = '--'
+                else:
+                    color = '#916e40'
+                    ls = '-.'
+                #_ax.axvline(bkg_run, linestyle=ls, alpha=0.5, color=color)
+                _ax.axvspan(x1,x2, alpha=0.2, color=color )
+
+            # y-axis limits
+            _ = _ax.set_ylim(ylim)
+            _ = _ax.set_xlim(0,max(run)+5)
+
+        plt.suptitle("Evolution of the Dark Current Fit \n (image with 2000 skips)")
+        plt.savefig("DCFit_run_evolution_z{}.png".format(num), dpi=200)
+
+    
+    #### PLOTTING EVOLUTION OF SEVERAL POLYFIT                 ###################
+    #
+    #   Mean Dark Current 
+    #
+    ##############################################################################
+    
+    # MEPedestalSigmaPerRow,MEPedestalMu
+    plot_title = {
+#            '001_MEPedestalSigmaPerRow': 'slope and interception from the linear fit: '+
+#                r'$\langle \sigma_{row} \rangle = slope \cdot row + interception$'+
+#                '\n [from MEPedestalSigmaPerRow]',
+            '002_MEPedestalMu': 'slope and interception from the linear fit: '+
+                r'$\langle \mu_{row} \rangle = slope \cdot row + interception$'+
+                '\n [from MEPedestalMu]',
+            '003_MESensorMedianperRow':'slope and interception from the linear fit: '+
+                r'$median(q_{i,j}^{sensor}) = slope \cdot row + interception$'+
+                '\n [from MESensorMedianperRow]',
+            '004_MEImageMedianperCol':'slope and interception from the linear fit: '+
+                r'$median(q_{i,j}^{image}) = slope \cdot column + interception$'+
+                '\n [from MEImageMedianperCol]',
+            '005_MEOverscanMedianperRow':'slope and interception from the linear fit: '+
+                r'$median(q_{i,j}^{overscan}) = slope \cdot row + interception$'+
+                '\n [from MEOverscanMedianperRow]',
+            '006_MEMeanDCperRow': 'slope and interception from the linear fit: '+
+                r'$\langle q_{ij}(q_{ij}>q_{thr}) \rangle = slope \cdot row + interception$'+
+                '\n [from MEMeanDCperRow]',
+            '007_MEDCslope':'slope and interception from the linear fit: '+
+                r'$\langle slope_{DC_{row}} \rangle = slope \cdot image + interception$'+
+                '\n [from MEDCslope]',
+            '008_MEDCintercept':'slope and interception from the linear fit: '+
+                r'$\langle inteception_{DC_{row}} \rangle = slope \cdot image + interception$'+
+                '\n [from MEDCslope]'
+            }
+    ylim = {
+            '003_MESensorMedianperRow':{'interception': (-0.30,0.30)}
+            }
+
+    for _par_name in sorted(plot_title.keys()):
+        par_name = _par_name.split("_")[-1]
+        y_p25 = np.zeros_like(me_params['run'],dtype=float)
+        y_p50 = np.zeros_like(me_params['run'],dtype=float)
+        y_p75 = np.zeros_like(me_params['run'],dtype=float)
+        y_slope = np.zeros_like(me_params['run'],dtype=float)
+        y_int   = np.zeros_like(me_params['run'],dtype=float)
+        for i,d in enumerate(data):
+            y_p25[i],y_p50[i],y_p75[i] = np.percentile( d[par_name]['y'], (25,50,75))
+            y_int[i] = d[par_name]['fit_model'][1]
+            try:
+                y_slope[i] = d[par_name]['fit_model'][0]
+            except KeyError:
+                y_slope[i] = np.nan
+    
+        fig,(ax5,ax6) = plt.subplots(1,2,figsize=(16,5))
+        plt.subplots_adjust(top=0.76, bottom=0.12, left=0.10, right=0.95, hspace=0.25, wspace=0.35)
+        if _par_name not in ['005_MEOverscanMedianperRow','004_MEImageMedianperCol','006_MEMeanDCperRow']:
+            _ = ax5.errorbar(me_params['run'], y_p50, yerr=( y_p75-y_p50, y_p50-y_p25), 
+                marker='s', mfc='white',mec='black',ecolor='black', linestyle='None', label="percentile (25,50,75)")
+        _ = ax5.errorbar(me_params['run'], y_int, marker='o',mfc='black',mec='black',ecolor='black', linestyle='None', 
+                label="fitted interception")
+        _ = ax5.set_xlabel('run number')
+        _ = ax5.set_ylabel(data[0][par_name]['ylabel'])
+        _ = ax5.legend()
+        _ = ax5.set_title("evolution of the fitted $interception$")
+        for bkg_run in bkg_run_list:
+            _ = ax5.axvline(bkg_run,linestyle='dotted',alpha=0.5,color='#1c1c1c')
+
+
+        if _par_name in ylim and 'interception' in ylim[_par_name]:
+            _ = ax5.set_ylim(ylim[_par_name]['interception'])
+
+
+        _ = ax6.plot(me_params['run'], y_slope, 'o', mfc='black',mec='black', linestyle='None', label="fitted slope")
+        _ = ax6.set_xlabel('run number')
+        _ = ax6.set_ylabel("{}/row".format(data[0][par_name]['ylabel']))
+        _ = ax6.legend()    
+        for bkg_run in bkg_run_list:
+            _ = ax6.axvline(bkg_run,linestyle='dotted',alpha=0.5,color='#1c1c1c')
+        _ = ax6.set_title("evolution of the fitted $slope$")
+        if _par_name in ylim and 'slope' in ylim[_par_name]:
+            _ = ax6.set_ylim(ylim[_par_name]['slope'])
+
+
+        _ = plt.suptitle(plot_title[_par_name])
+
+        plt.savefig("{}_run_evolution.png".format(_par_name), dpi=200)
+       
+    fit_MEImageMedianPerCol(me_params['MEImageMedianperCol_median'],display=display,save_exp_plots=save_exp_plots)
+    if display:
+        plt.show(block=True)
+        input("Press enter ... ")
+
+
+def fit_MEImageMedianPerCol(me_data,col_min=1, col_max=250, display=True,save_exp_plots=False):
+    """
+    """
+    st = get_sifca_style(squared=False,stat_off=False,fit_stat=True)
+    st.cd()
+
+    if display:
+        ROOT.gROOT.SetBatch(0)
+    else:
+        ROOT.gROOT.SetBatch(1)
+    
+    exp_norm = [np.zeros(me_data['y'].shape[0]),np.zeros(me_data['y'].shape[0])]
+    exp_x0 = [np.zeros(me_data['y'].shape[0]),np.zeros(me_data['y'].shape[0])]
+    exp_lambda = [np.zeros(me_data['y'].shape[0]),np.zeros(me_data['y'].shape[0])]
+    exp_y0 = [np.zeros(me_data['y'].shape[0]),np.zeros(me_data['y'].shape[0])]
+    
+    #for run in range(me_data['y'].shape[0]):
+    for runi,run in enumerate(me_data['run']):
+        print("Fittind data from run ", run)
+        y = me_data['y'][runi,:]
+        x = me_data['x'][runi,:]
+
+        fitfunc = ROOT.TF1("fitfunc", "[0]*TMath::Exp([1]+[2]*x) + [3]")
+        fitfunc.SetParNames("Norm", "x_{0}", "#lambda", "y_{0}")
+        fitfunc.SetLineColor(ROOT.kOrange+9)
+        fitfunc.SetLineWidth(3)
+        fitfunc.SetLineStyle(2)
+        fitfunc.SetParameters(0.013,3.4,-0.12,0.003)
+        fitfunc.SetParLimits(0,0,1)
+        fitfunc.SetParLimits(1,0.1,6)
+        fitfunc.SetParLimits(2,-1,1)
+        fitfunc.SetParLimits(3,-1,1)
+
+        baseline = ROOT.TH1F( "h_run{}".format(run),"", int(col_max-col_min), col_min, col_max)
+        
+        for k,freq in enumerate(y[col_min:col_max]):
+            baseline.SetBinContent(k,freq)
+    
+        baseline.Fit(fitfunc)
+        for it in range(2):
+            fitfunc.SetParameters(fitfunc.GetParameter(0),fitfunc.GetParameter(1),fitfunc.GetParameter(2),fitfunc.GetParameter(3))
+            baseline.Fit(fitfunc)
+
+        #### read fitted parameters
+        exp_norm[0][runi] = fitfunc.GetParameter(0)
+        exp_norm[1][runi] = fitfunc.GetParError(0)
+        exp_x0[0][runi] = fitfunc.GetParameter(1)
+        exp_x0[1][runi] = fitfunc.GetParError(1)
+        exp_lambda[0][runi] = fitfunc.GetParameter(2)
+        exp_lambda[1][runi] = fitfunc.GetParError(2)
+        exp_y0[0][runi] = fitfunc.GetParameter(3)
+        exp_y0[1][runi] = fitfunc.GetParError(3)
+        
+        if save_exp_plots:
+            c = ROOT.TCanvas("c")
+            c.Clear()
+            baseline.GetXaxis().SetTitle("column number")
+            baseline.GetYaxis().SetTitle("median(q_{i,j}) [e^{-}/pix]")
+            baseline.Draw()
+            c.Update()
+            
+            stat_box = baseline.FindObject("stats")
+            stat_box.SetX1NDC(0.62)
+            stat_box.SetY1NDC(0.63)
+            stat_box.SetX2NDC(0.96)
+            stat_box.SetY2NDC(0.91)
+            c.Update()
+
+            print("Figure save as MEImageMedianPerCol_median_ExpFit_run{:03}.png".format(run))
+            c.SaveAs("MEImageMedianPerCol_median_ExpFit_run{:03}.png".format(run))
+
+        if display:
+            baseline.Draw()
+            input("Press enter .... ")
+
+    ##### evolution of the exponential
+    fig,((ax1,ax2),(ax3,ax4)) = plt.subplots(2,2,figsize=(14,7))
+    plt.subplots_adjust(top=0.90, bottom=0.09, left=0.10, right=0.95, hspace=0.25, wspace=0.35)
+    yerr = exp_norm[1]
+    mask = yerr < np.median(yerr) + 3.*np.nanstd(yerr)
+    _ = ax1.errorbar(me_data['run'][mask],exp_norm[0][mask], yerr=exp_norm[1][mask],
+        marker='o', mfc='white', mec='black', ecolor='black',capsize=2.0, linestyle='None')
+    mmask = ~mask
+    if mmask.sum()>0:
+        _ = ax1.errorbar(me_data['run'][mmask],exp_norm[0][mmask], yerr=exp_norm[1][mmask],
+                marker='o', mfc='white', mec='black',ecolor='black', linestyle='None',uplims=True,lolims=True)
+    _ = ax1.set_ylabel("fitted $N$")
+    _ = ax1.set_xlabel("run number")
+    ### adding background region limits
+    for bkg_run in bkg_run_list:
+        ax1.axvline(bkg_run,linestyle='dotted',alpha=0.5,color='#1c1c1c')
+
+    yerr =exp_x0[1]
+    mask = yerr < np.median(yerr) + 3.*np.nanstd(yerr)
+    _ = ax2.errorbar(me_data['run'][mask],exp_x0[0][mask], yerr=exp_x0[1][mask],
+        marker='o', mfc='white', mec='black', ecolor='black',capsize=2.0, linestyle='None')
+    mmask = ~mask
+    if mmask.sum()>0:
+        _ = ax2.errorbar(me_data['run'][mmask],exp_norm[0][mmask], yerr=exp_norm[1][mmask],
+                marker='o', mfc='white', mec='black',ecolor='black', linestyle='None',uplims=True,lolims=True)
+    _ = ax2.set_ylabel("fitted $x_{0}$")
+    _ = ax2.set_xlabel("run number")
+    ### adding background region limits
+    for bkg_run in bkg_run_list:
+        ax2.axvline(bkg_run,linestyle='dotted',alpha=0.5,color='#1c1c1c')
+
+
+    yerr=exp_lambda[1]
+    mask = yerr < np.median(yerr) + 3.*np.nanstd(yerr)
+    _ = ax3.errorbar(me_data['run'][mask],exp_lambda[0][mask], yerr=exp_lambda[1][mask],
+        marker='o', mfc='white', mec='black', ecolor='black',capsize=2.0, linestyle='None')
+    mmask = ~mask
+    if mmask.sum()>0:
+        _ = ax3.errorbar(me_data['run'][mmask],exp_norm[0][mmask], yerr=exp_norm[1][mmask],
+                marker='o', mfc='white', mec='black',ecolor='black', linestyle='None',uplims=True,lolims=True)
+    _ = ax3.set_ylabel("fitted $\lambda$")
+    _ = ax3.set_xlabel("run number")
+    ### adding background region limits
+    for bkg_run in bkg_run_list:
+        ax3.axvline(bkg_run,linestyle='dotted',alpha=0.5,color='#1c1c1c')
+
+    yerr=exp_y0[1]
+    mask = yerr < np.median(yerr) + 3.*np.nanstd(yerr)
+    _ = ax4.errorbar(me_data['run'][mask],exp_y0[0][mask], yerr=exp_y0[1][mask],
+        marker='o', mfc='white', mec='black', ecolor='black',capsize=2.0, linestyle='None')
+    mmask = ~mask
+    if mmask.sum()>0:
+        _ = ax4.errorbar(me_data['run'][mmask],exp_norm[0][mmask], yerr=exp_norm[1][mmask],
+                marker='o', mfc='white', mec='black',ecolor='black', linestyle='None',uplims=True,lolims=True)
+    _ = ax4.set_ylabel("fitted $y_{0} [e^{-}/pix]$")
+    _ = ax4.set_xlabel("run number")
+    ### adding background region limits
+    for bkg_run in bkg_run_list:
+        ax4.axvline(bkg_run,linestyle='dotted',alpha=0.5,color='#1c1c1c')
+
+    plt.suptitle("Evolution of fitted parameters: baseline(column) = "+r"$N \times exp(x_{0} + \lambda \cdot column) + y_{0}$"+
+            "\n [from MEImageMedianperCol]")
+    
+    plt.savefig("BaselinePerCol_ExpoFit_run_evolution.png", dpi=200)
+
+    if display:
+        plt.show(block=True)
+        input("....")
+
+
+
+#################################################################################################################
+if __name__ == '__main__':
+
+    import argparse
+    from argparse import Action
+    import os
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument("-i",
+            action="store",
+            dest="me_dir",
+            help="Path to the me_summary_runXXX.pkl files (absolute or relative)")
+
+    parser.add_argument("--display",
+            action="store_true",
+            dest="display",
+            help="Set to display all plots")
+    parser.add_argument("--save-exp-plots",
+            action="store_true",
+            dest="save_exp_plots",
+            help="Set to save exponential fit plots (fit of the baseline vs column to an exponential function)")
+
+
+
+    args = parser.parse_args()
+    main(args.me_dir,args.display, args.save_exp_plots)
+
+
+

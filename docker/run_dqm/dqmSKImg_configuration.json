@@ -1,0 +1,275 @@
+{
+    "monitoring_elements":
+    {
+        "MESkewnessCoeff":
+        {
+            "id_skip_reference" : 1,
+            "id_skip_start"     : 0,
+            "id_skip_end"       : -1,
+            "skip_step"         : 50,
+            "kcl_threshold"     : 3.2,
+            "kcl_n_sig"         : 8,
+            "active"            : 0
+        },
+        "MEDefectsMask":
+        {
+            "n_mad":3,
+            "hot_pixel_fraction":0.5,
+            "active":0
+        },
+        "MEQmeanDiffSingleSkips":{
+            "active":1
+        },
+        "MEReadoutnoiseNDCM":{
+            "n_skips_per_block":-30,
+            "active":1
+        },
+        "MESTDSkipsPerCol":
+        {
+            "active": 1
+        },
+        "MEMeanPixelChargePerRow":
+        {
+            "n_mad":5,
+            "active":1
+        },
+        "MESTDPixelChargePerRow":
+        {
+            "active":1
+        },
+        "MESlopeFromMeanPCPerRow":
+        {
+            "plot_with_yerrors":false,
+            "active":1
+        },
+        "MEInterceptFromMeanPCPerRow":
+        {
+            "plot_with_yerrors":false,
+            "active":1
+        },
+        "MEMedianPixelChargePerRow":
+        {
+            "active":1
+        },
+        "MEMADPixelChargePerRow":
+        {
+            "active":1
+        },
+        "MEMedianPixelChargePerCol":
+        {
+            "active":1
+        },
+        "MENpixQ1ePerCol":
+        {
+            "image":"mean_compressed_pedestal_subtracted_e",
+            "ne":1,
+            "active":1
+        },
+        "MEMADPixelChargePerCol":
+        {
+            "active":1
+        },
+        "MEOVSMedianPixelChargePerRow":
+        {
+            "active":1
+        },
+        "MEOVSMADPixelChargePerRow":
+        {
+            "active":1
+        },
+        "MEOVSPedestalMu":
+        {
+            "active":1
+        },
+        "MEOVSPedestalSigma":
+        {
+            "active":1
+        },
+        "MEOVSPedestalMuPerRow":
+        {
+            "active":1
+        },
+        "MEOVSPedestalSigmaPerRow":
+        {
+            "active":1
+        },
+        "MEPCD":
+        {
+            "image":"mean_compressed_pedestal_subtracted",
+            "active":1
+        },
+        "MEOVSPCD":
+        {
+            "active":1
+        },
+        "MEMeanPedestalSigma":
+        {
+            "active":0
+        },
+        "MESinglePED":
+        {
+            "active":0
+        },
+        "MEOVSPCDMu":
+        {
+            "active":0
+        },
+        "MEOVSPCDSigma":
+        {
+            "active":0
+        },
+        "MEFitDC":
+        {
+            "active"            : 1,
+            "cols_to_mask"      : {"L":[], "U":[]},
+            "rows_to_mask"      : {"L":[], "U":[]},
+            "n_peaks"           : {"L":4,"U":4},
+            "mask_clusters"     : true,
+            "binning_size"      : 1.0,
+            "calibration"       : 10.0,
+            "mu_min"            : -1.5,
+            "mu_max"            : 1.5,
+            "sigma_min"         : 0.01,
+            "sigma_max"         : {"L":2.5,  "U":3.0},
+            "gain_min"          : 8.0,
+            "gain_max"          : {"L":10.6,"U":11.6},
+            "dc_min"            : 0.001,
+            "dc_max"            : 10.0,
+            "x_min"             : -20,
+            "x_max"             : 60
+        },
+        "MEFitDCMu0":
+        {
+            "active":1
+        },
+        "MEFitDCSigma":
+        {
+            "active":1
+        },
+          "MEFitDCLambda":
+        {
+            "active":1
+        },
+        "MEFitDCCalibration":
+        {
+            "active":1
+        },
+        "MEFitDCPerCol":{
+            "col_start"         : 2,
+            "col_end"           : -1,
+            "col_step"          : 5,
+            "binning_size"      : 0.5,
+            "calibration"       : 10.0,
+            "mu_min"            : -1.5,
+            "mu_max"            : 1.5,
+            "sigma_min"         : 0.01,
+            "sigma_max"         : 5.0,
+            "gain_min"          : 8.0,
+            "gain_max"          : {"L":11.0,"U":12.0},
+            "dc_min"            : 0.001,
+            "dc_max"            : 10.0,
+            "x_min"             : -15,
+            "x_max"             : 60,
+            "active"    : 1
+        },
+        "MEFitSigmaPerCol":{
+            "active":1
+        },
+        "MEFitCalibrationPerCol":{
+            "active":1
+        },
+        "MEFitMu0PerCol":{
+            "active":1
+        },
+        "MEFitDCPerRow":{
+            "row_start"         : 2,
+            "row_end"           : -1,
+            "row_step"          : 10,
+            "binning_size"      : 0.5,
+            "calibration"       : 10.0,
+            "mu_min"            : -1.5,
+            "mu_max"            : 1.5,
+            "sigma_min"         : 0.01,
+            "sigma_max"         : 5.0,
+            "gain_min"          : 8.0,
+            "gain_max"          : {"L":11.0,"U":12.0},
+            "dc_min"            : 0.001,
+            "dc_max"            : 10.0,
+            "x_min"             : -15,
+            "x_max"             : 60,
+            "active"    : 1
+        },
+        "MEFitSigmaPerRow":{
+            "active":1
+        },
+        "MEFitCalibrationPerRow":{
+            "active":1
+        },
+        "MEFitMu0PerRow":{
+            "active":1
+        },
+        "MEColTransient":
+        {   
+            "col_start":1,
+            "col_end":50,
+            "active":0
+        },
+        "MEColTransientMu":
+        {   
+            "active":0
+        },
+        "MEColTransientAmplitude":
+        {   
+            "active":0
+        },
+        "MECCDEqualizedImage":
+        {
+            "active": 0
+        }, 
+        "MECCDMeanImage":
+        {
+            "active": 1
+        }, 
+        "MECCDStdImage":
+        {
+            "image": "std_compressed",
+            "active": 1
+        },
+        "MECCDCalImage":
+        {
+            "image": "mean_compressed_pedestal_subtracted_e",
+            "active": 1
+        },
+        "METempShift":
+        {
+            "active": 0
+        },
+        "MEBaselineShift":
+        {
+            "active"                    : 0,
+            "partitions"                : 25,
+            "allowed_sigma_deviation"   : 0.75
+        },
+        "MEHorizontalClusters":
+        {
+            "active"                    : 0,
+            "minimum_cluster_size"      : 3,
+            "allowed_sigma_deviation"   : 10
+        },
+        "MENoisyImages":
+        {
+            "active"                    : 0,
+            "min_sigma"                 : 5,
+            "max_sigma"                 : 10
+        },
+        "MESigmaCutoffNoise":
+        {
+            "active"                    : 0,
+            "cutoff_sigma"              : 4.0
+        },
+        "MEPoorQualityData":
+        {
+            "active"                    : 0
+        }
+    }
+}

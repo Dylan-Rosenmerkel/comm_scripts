@@ -1,0 +1,109 @@
+{
+    "in_root" : 
+    {
+        "in_dir_path" : ".",
+        "root_file_name": "None"
+    },
+    "out_root":
+    {
+        "out_dir_path" : ".",        
+        "prefix_root_name"  : "out_simulCCDimg",
+        "store_pixel_info"  : 1,
+        "save_CCDimg"       : 0
+    },
+    "detector_response" :
+    {
+        "Diffusion":
+        {
+            "model"     : "gauss",
+            "A"         : 216.2,
+            "B"         : 0.000886,
+            "z_offset"  : 0.0,
+            "alpha0"    : 1,
+            "alpha"     : 0.0000597,
+            "units"     : "A:um*um;B:1/um;z_offset:um;alpha:pixel/eVee;alpha0:pixel",
+            "fanofactor": 0.12,
+            "only_pair_creation": 0,	    
+            "active"    : 0
+        },
+        "ContinuousReadout":
+        {
+            "pixel_read_time" : 0.001,
+            "units"           : "s/pixel",
+            "ampli"           : 4,
+            "active"          : 0
+        },
+        "PixelizeSignal":
+        {
+            "shift_pixel_in_x" : 0,
+            "shift_pixel_in_y" : 0,
+            "units"            : "N_pixels_in_x:pixel;pixel_size_in_x:mm;shift_pixel_in_x:pixel;N_pixels_in_y:pixel;shift_pixel_in_x:pixel:shift_pixel_in_y:mm",
+            "active"           : 1
+        },
+        "ElectronicNoise":
+        {
+            "mode"     : "cropped-image",
+            "pedestal" : 0.0,
+            "sigma"    : 0.25,
+            "units"    : "pedesta:e/pixel;img_size:pixel;min_enlarge:pixel",
+            "img_size" : 300,
+            "min_enlarge":30,
+            "active"   : 0
+        },
+        "DarkCurrent":
+        {
+            "mode"        : "cropped-image",
+            "darkcurrent" : 0.001,
+            "exp_time"    : 0.3333333333,
+            "row_readtime": 1,
+            "img_size"    : 300,
+            "min_enlarge" : 30,
+            "units"       : "darkcurrent:e/pixel/day;exp_time:day;img_size:pixel;min_enlarge:pixel",
+            "active"      : 0
+        },
+        "PixelSaturation":
+        {
+            "saturation" : 65535,
+            "units"      : "ADC",
+            "active"     : 0
+        },
+		"PasteClusterProcess":
+        {
+            "blank_outdir"      :null,
+            "blank_dir"         :null,
+            "extension"         :0,
+            "row_cls_dist_fx"   :"linear",
+            "clusters_per_blank":50,
+            "in_ADU"            :true,
+            "active"            :0
+        }
+    },
+    "reconstruction":
+    {
+        "SignalPatternRecognition":
+        {
+            "method"    : 1,
+            "threshold" : 15,
+            "units"     : "ADC",
+            "active"    : 0
+        },
+        "ClusterFinder":
+        {
+            "method"               : 1,
+            "max_nearest_neighbor" : 2,
+            "active"               : 1
+        }
+    },
+    "CF":
+    {
+        "ccd_shape":[1000,4000],
+        "ccd_pixel_size_x":0.015,
+        "ccd_pixel_size_y":0.015,
+        "ccd_thickness":0.675,
+        "ADC2eV": 0.72,
+        "e2eV"  : 3.77,
+        "img_exp_time": 1e9,
+        "detector_name":"CCDSensor"
+    }
+}
+

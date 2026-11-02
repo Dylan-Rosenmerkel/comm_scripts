@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+import sys
+import click
+
+sec2days = 1/(60.*60.*24)
+error_function_xovery = lambda p: np.sqrt((p[1]/p[2])**2. + (p[0]*p[3]/p[2]**2.)**2.)
+
+custom_style = { 
+        'xtick.direction': 'in',
+        'ytick.direction': 'in', 
+        'axes.grid': False,
+        'xtick.labelsize': 12,
+        'ytick.labelsize': 12,
+        'axes.labelsize': 14, 
+        'axes.titlesize': 20,
+        'axes.linewidth': 1.5, 
+        'xtick.major.pad': 5,
+        'ytick.major.pad': 5}
+    
+
+### To avoid ROOT help print out
+if not '-h' in sys.argv and not '--help'in sys.argv:
+    from dateutil import parser
+    from glob import glob
+    from astropy.io import fits
+    import numpy as np
+    import time
+    
+    from matplotlib import pyplot as plt
+    try:
+        plt.style.use("seaborn-v0_8-muted")
+    except OSError:
+        pass
+    #plt.style.use("seaborn-v0_8-deep")
+    plt.rcParams.update( custom_style )
+
+@click.group()
+def main():
+    pass
+
+################################################################################## DARK CURRENT MODE
+@main.command(name="dc", help="dc mode: Evolution of the Dark current")
+@click.option("-i","--infile",help="List of files")
+@click.option("--ccdnames",help="CCD name or list of names to extract the dark current information (como separated values)",type=str,default="A,B,C,D")
+@click.option("--ext",help="Header extension number",type=int,default=0)
+@click.option("--dates",help="Naming for the start and end date time of the readout of the image, and the exposure time keyword",type=(str,str,str),default=("DATEINI","DATEEND","EXPOSURE"))
+@click.option("--binning",help="Naming for the x- and y-axis binning",type=(str,str),default=("NSBIN","NPBIN"))
+@click.option("-c","--continuous",help="1|0 for continous|no-continous readout mode; In continuous readout mode all the pixels has the same exposure, while the other, is pixel dependent",type=bool,default=True)
+@click.option("--modules",help="List with the modules names (comma separated)",default="_103_,_104_")
+@click.option("--nfile",help="Set to have on the x-axis the number id files, instead of readouttime",type=bool,default=True)
+def dc(infile,ccdnames,ext,dates,binning,continuous,modules,nfile):
+    
+    lof = sorted(list(glob(infile)))   
+    # checking if files have been found
+    if len(lof)==0:
+        raise("IOError: file(s) not found with pattern {}".format(infile))
+
+    # list of CCDs
+    ccd_names = ccdnames.split(",")
+    module_names = modules.split(",")
+    dc = {}
+    for mod in module_names:
+        dc[mod] = {}
+        for ccd in ccd_names:
+            dc[mod][ccd] = ([],[],[],[])
+    
+    for fitsfile in lof:
+        # when readout started
+        tstart = time.mktime(parser.parse(fits.getval(fitsfile,dates[0],ext=ext)).timetuple())
+
+        # when readout ends
+        tend = time.mktime(parser.parse(fits.getval(fitsfile,dates[1],ext=ext)).timetuple())
+        # exposure time for all pixels
+        texp = float(fits.getval(fitsfile,dates[2],ext=ext))
+        # binning
+        pixels_per_bin = float(fits.getval(fitsfile,binning[0],ext=ext)) * float(fits.getval(fitsfile,binning[1],ext=ext)) 
+
+        # total number of pixels
+        Npix = float(fits.getval(fitsfile,"NAXIS2",ext=ext)) * float(fits.getval(fitsfile,"NAXIS1",ext=ext))
+        # all in seconds
+        if continuous:
+            tpix = texp + (tend-tstart) 
+        else:
+            tpix = texp + (tend-tstart)/2.
+        tpix *= sec2days 
+        
+        module_name = [s for s in module_names if fitsfile.count(s)][0]
+        
+        # determine which CCD is
+        for ccd in ccd_names:
+            if fitsfile.count(f"_ext{ccd}_")>0:
+                value  = float(fits.getval(fitsfile,f"MEDC{ccd}",ext=ext))
+                evalue = float(fits.getval(fitsfile,f"EMEDC{ccd}",ext=ext))
+                gain   = float(fits.getval(fitsfile,f"MEGAIN{ccd}",ext=ext))
+                egain  = float(fits.getval(fitsfile,f"EMEGAIN{ccd}",ext=ext))
+                # dark current from ADU/bin/img to e-/pix/day
+                dc[module_name][ccd][0].append( tstart*sec2days )
+                dc[module_name][ccd][1].append( value/gain/pixels_per_bin/tpix )
+                dc[module_name][ccd][2].append( error_function_xovery((value,evalue,gain,egain))/pixels_per_bin/tpix )
+                dc[module_name][ccd][3].append( float(fits.getval(fitsfile,f"MEIMGID{ccd}",ext=ext)) )
+        
+    for j,mod in enumerate(module_names):
+        for i,ccd in enumerate(ccd_names):
+            plt.figure(j+i, figsize=(12,6))
+            x,y,ey = zip(*sorted(zip(dc[mod][ccd][0],dc[mod][ccd][1],dc[mod][ccd][2])))
+            if nfile:
+                x = dc[module_name][ccd][3]
+            else:
+                x = np.array(x) - min(x) 
+            
+            _ = plt.errorbar(x, y, yerr=ey, marker='s', linestyle='None', label=f"module: {mod.replace('_','')}, {ccd}")
+            plt.xlabel("relative readout starting time [days]")
+            plt.ylabel("dark current [e-/pix/day]")
+
+            plt.legend(loc='best')
+            plt.subplots_adjust(left=0.18,bottom=0.15,right=0.95,top=0.95)
+
+    plt.show(block=True)
+    
+
+################################################################################## ANY OTHER PLOT BETWEEN ONE OR TWO PARAMETERS
+@main.command(name='xyplot', help="par: Evolution plot for a given parameter")
+@click.option("-i","--infile",help="List of files")
+@click.option("--ext",help="Header extension number",type=int,default=0)
+@click.option("--dateini",help="Naming for the readout starting time",type=str,default="DATEINI")
+@click.option("--xpar",help="Parameter that should be used on the x-axis",type=str,default="DATEINI")
+@click.option("--ypar",help="List of parameteres that should be plot on the y-axis (coma separated values)",default=None)
+@click.option("--eypar",help="List of parameteres that should be used as the y-axis error (coma separated values)",default=None)
+@click.option("--labels",help="List (coma separated) of x and y labels (separated by ;) for each parameter to be displayed",type=str,default=None)
+def xyplot(infile,ext,dateini,xpar,ypar,eypar,labels):
+    
+    lof = sorted(list(glob(infile)))   
+    # checking if files have been found
+    if len(lof)==0:
+        raise("IOError: file(s) not found with pattern {}".format(infile))
+    
+    ynames  = ypar.split(",")
+    eynames = eypar.split(",") if eypar is not None else [None for i in ynames]
+    labels  = labels.split(",") if labels is not None else [None for i in ynames]
+
+    for fitsfile in lof:
+        # when readout started
+        tstart = time.mktime(parser.parse(fits.getval(fitsfile,dateini,ext=ext)).timetuple())
+        
+        # values on the x-axis
+        xval = tstart if xpar==dateini else float(fits.getval(fitsfile,xpar,ext=ext))
+
+        # values on the y-axis
+        for j,(yname,eyname,xylabel) in enumerate(zip(ynames,eynames,labels)):
+            yval  = float(fits.getval(fitsfile,yname,ext=ext))
+            eyval = float(fits.getval(fitsfile,eyname,ext=ext)) if eyname is not None else 0.0
+            
+            # sorted on readout starting time
+            _tstart,xval,yval,eyval = zip(*sorted(zip(tstart,xval,yval,eyval)))
+
+            plt.figure(j)
+            _ = plt.errorbar(xval, yval, yerr=eyval, marker='s', linestyle='None', label=f"{yname}")
+            if xylabel is not None:
+                plt.xlabel(xylabel.split(";")[0])
+                plt.ylabel(xylabel.split(";")[1])
+            else:
+                plt.xlabel(xpar)
+                plt.ylabel(yname)
+
+            plt.legend(loc='best')
+            plt.subplots_adjust(left=0.18,bottom=0.15,right=0.95,top=0.95)
+
+    plt.show(block=True)
+
+
+
+
+
+
+########################################################################################
+if __name__=='__main__':
+    main()
+

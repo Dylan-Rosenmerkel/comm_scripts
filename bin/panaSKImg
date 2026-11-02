@@ -1,0 +1,725 @@
+#!/usr/bin/env python3 
+""":script:`panaSKImg` -- CCD image processing with python3
+============================================================
+
+
+      .. moduleauthor:: Nuria Castello-Mor <castello@ifca.unican.es>
+      .. date::01/10/2020
+
+"""
+
+import sys
+import os
+
+
+### To avoid ROOT help print out
+if not '-h' in sys.argv and not '--help'in sys.argv:
+    from pysimdamicm.utils.config import Config
+    from pysimdamicm import __commit__
+    
+    # try to paralilize run several files with several cpus
+    import concurrent.futures
+
+
+def remove_files(file_list, substring_list):
+    """
+    remove any file containing any substring from the <substring_list> list
+    """
+    if substring_list is None:
+        return file_list,[]
+
+    ### looks for a file type input and appends internal files to substring list for removal
+    for s in substring_list:
+        if s.endswith('.txt'):
+            cuts = open(s, 'r')
+            for i in cuts.readlines():
+                substring_list.append(i.strip())
+
+    selected_files=[]
+    ignored_files =[]
+
+    for f in file_list:
+        if any(map(f.__contains__,substring_list)):
+            ignored_files.append(f)
+        else:
+            selected_files.append(f)
+
+    return selected_files,ignored_files
+
+
+########################################################################################
+########################################################################################
+if __name__ == '__main__':
+
+    import argparse
+    from argparse import Action
+    import os
+    
+    parser = argparse.ArgumentParser()
+
+    # Helper class to allow list json options (without introducing
+    # the positional arguments)
+    #class PrintJSON(Action):
+    #    def __init__(self,option_strings,dest,default=False,required=False,help=None):
+    #        super().__init__(option_strings=option_strings,
+    #                dest=dest,
+    #                nargs=0,
+    #                const=True,
+    #                default=default,
+    #                required=required,
+    #                help=help)
+    #    def __call__(self, parser, namespace, values, option_string=None):
+    #        _ = Config()
+    #        quit()
+    #        parser.exit()
+
+
+
+    #### MANDATORY ARGUMENTS
+    ##################################################
+    parser.add_argument(
+            action="store",
+            dest="infile",
+            help='Input CCD Image or a pattern file name for multiple inputs, in this case use ""'+
+            ' to quote the expression. If extension is not 0, see -e')
+
+    parser.add_argument("--ncpus",
+            action="store",
+            dest="ncpus",
+            type=int,
+            default=1,
+            help='Set the number of cpus to be used on multiprocessing mode. The number of CPUs should be smaller than the number of input files. Note that the memory usage will be something around 1G Mem/Image, of course will depend on the image size')
+
+    parser.add_argument("--skip",
+            action="store",
+            dest="skip",
+            nargs="+",
+            help="List of strings (for instance '_full_1.fits'). When `infile` is not a "+
+            "single file but a multiple inputs, this option can be used to ignore a set of"+
+            "files that contains one of these stings")
+
+    parser.add_argument("--acm",
+            action="store_true",
+            dest="ACM",
+            help="Use this option if input fits file is from ACM board and multi-extension data should be reprocessed in once")
+
+    #parser.add_argument("--bz2",
+    #        action="store_true",
+    #        dest="bz2",
+    #        help="Use this option if input output fits file should be stored as bz2 instead of standard fits format")
+    parser.add_argument("--bz2",
+            action=argparse.BooleanOptionalAction,
+            dest="bz2",
+            default=True,
+            help="Use bz2 compression (default: True). Disable with --no-bz2")
+   
+    parser.add_argument("-o", "--ouptut",
+            action="store",
+            dest="output",
+            default=os.path.abspath("."),
+            help="Directory for the outputs (plots and images will be both recorded here)")
+    
+    parser.add_argument("-e","--ext",
+            action="store",
+            dest="extension",
+            nargs="+",
+            default=None,
+            help="Extension to load when more than one image is available in the input file (for instance in multi-extension fits files)")
+    
+    parser.add_argument("--hext",
+            action="store",
+            dest="header_extension",
+            nargs="+",
+            default=None,
+            help="Extension number to extract the input parameters from the image")
+   
+    parser.add_argument("-j","--json",
+            action="store",
+            dest="jsonfile",
+            default=None,
+            help="Configuration JSON file. Run `panaSKImg --json help` to list all configuration parameters."+
+            " Some of the parameters in the json file can be also pass by command line (see process options)")
+    
+    parser.add_argument("--amp-name",
+            action="store",
+            dest="amp_name",
+            default=None,
+            help="Name of the amplifier (U,L,...)")
+
+    parser.add_argument("--halo-radius",
+            action="store",
+            dest="halo_radius",
+            default=None,
+            help="Radius in units of pixels for the halo study (done by the Cluster process)")
+
+    parser.add_argument("--halo-radius-min",
+            action="store",
+            dest="halo_radius_min",
+            default=None,
+            help="Minimum Radius in units of pixels for the halo study (done by the Cluster process)")
+
+    #parser.add_argument("--one-root",
+    #        action="store_true",
+    #        dest="one_root",
+    #        help="Sequence of process will be instanciated only once, and all clusters will be "+
+    #        "recorded in a single output ROOT file. In this case --oroot is needed ")
+    
+    parser.add_argument("--oroot",
+            action="store",
+            dest="outrootfile",
+            help="Name of the outpt ROOT file for clusterization. In this case, no matter if input is a list of files,"+ 
+            "all clusters will be recorded in a single ROOT file"
+            )
+    
+    parser.add_argument("--MCT",
+            action="store",
+            dest="MCT",
+            type=int,
+            default=None,
+            help="Extension number for the MCT image that should be found in the same input fits file"
+            )
+
+    parser.add_argument("--ccd",
+            action="store",
+            dest="ccd",
+            type=int,
+            default=None,
+            help="CCD number"
+            )
+
+    parser.add_argument("--calL",
+            action="store",
+            dest="cal_L_amp",
+            type=float,
+            help="Gain or calibration for the amplifier L (for 1 or 2 amplifier readout)"
+            )
+    parser.add_argument("--calU",
+            action="store",
+            dest="cal_U_amp",
+            type=float,
+            help="Gain or calibration for the amplifier U (only for n_amp=2)"
+            )
+
+    parser.add_argument("--run",
+            action="store",
+            dest="run",
+            type=int,
+            default=None,
+            help="Run number"
+            )
+
+
+
+    #### ONLY WHEN RECONSTRUCTION IS APPLYIED
+    ##################################################
+    argcls = parser.add_argument_group('*** Options for CLUSTERING ************************** ')
+    argcls.add_argument("--mask",
+            action="store",
+            dest="mask",
+            help="binary-data(1/0) fits file to mask data before clustering")
+
+    #####################################################################################################################
+    ####  ARGUMENT FOR THE JSON FILE: some of the parameters of the JSON file can be pass by command line           #####
+    #####################################################################################################################
+    #### GROUP OF ARGUMENTS RELATED WITH THE DATA
+    argcorr = parser.add_argument_group('*** Related to the input data: JSON[input][image] ************************** ')
+    # invert polarity
+    argcorr.add_argument("--invert",
+            action="store_true",
+            dest="correct_polarity",
+            help="[BOOL] Use to invert the pixel charge (in ADUs) to be proportional to"+
+            " the ionizing charge ('correct_polarity' option in the json file)")
+    # starting and end point for each axis: skip, rows and columns
+    for axis in ["skip","row","col"]:
+        argcorr.add_argument("--{}-start".format(axis),
+                action="store",
+                dest="id_{}_start".format(axis),
+                type=int,
+                help="First {} to start with (for all processes, if a process use an specific ".format(axis)+
+                "starting point include id_{}_start in its scope in the json file)".format(axis))
+        argcorr.add_argument("--{}-end".format(axis),
+                action="store",
+                dest="id_{}_end".format(axis),
+                type=int,
+                help="First {} to start with (for all processes, if a process use an specific ".format(axis)+
+                "starting point include id_{}_start in its scope in the json file).".format(axis)+
+                " Note that -1 means last value")
+
+    #### GROUP OF ARGUMENTS RELATED WITH PROCESS 
+    argjson = parser.add_argument_group('*** Common to all PROCESS ************************** ')
+    argjson.add_argument("-s", "--sequence",
+            action="store",
+            dest="sequence",
+            help="Coma-separated list of process names (in this case, sequence from json file will be ignored)")
+    argjson.add_argument("--list-processes",
+            action="store_true",
+            dest="list_processes",
+            help="List all available process names")
+    argjson.add_argument("--save-img",
+            action="store_true",
+            dest="save_image",
+            help="[BOOL] Set to save intermediate images as fits files")
+    argjson.add_argument("--save-plots",
+            action="store_true",
+            dest="save_plots",
+            help="[BOOL] Set to save plots as eps and pdf files")
+    argjson.add_argument("--display",
+            action="store_true",
+            dest="__display__",
+            help="[BOOL] Running in debug mode (all plots will be also display)")
+    argjson.add_argument("--verbose",
+            action="store_true",
+            dest="__verbose__",
+            help="[BOOL] Report extra information/plots during execution (for all booked processes)")
+    argjson.add_argument("--debug",
+            action="store_true",
+            dest="__DEBUG__",
+            help="[BOOL] It displays debug plots/information during execution (for all booked processes)")
+
+    argjson.add_argument("--cal",
+            action="store",
+            dest="calibration",
+            type=float,
+            help="Calibration constant to start with (several process has this parameter)")
+
+    #### GROUP OF ARGUMENTS RELATED WITH PROCESS
+    # CALIBRATION PROCESS
+    argCS = parser.add_argument_group('*** For Process CalibrationProcess ************************** ')
+    argCS.add_argument("--adu2e",
+            action="store",
+            dest="adu2e",
+            type=float,
+            help="CalibrationProcess. ADU to e- calibration value (gain parameter in the json file)")
+
+    #### GROUP OF ARGUMENTS RELATED WITH PROCESS
+    # COMPRESS SKIPPER PROCESS
+    argCS = parser.add_argument_group('*** For Process CompressSkipperProcess ************************** ')
+    argCS.add_argument("--func-to-compress",
+            action="store",
+            dest="func_to_compress",
+            nargs='+',
+            type=str,
+            help="CompressSkipperProcess. List of functions to reduce the single skipper images into a single one (functions must exist in the numpy package)")
+ 
+    #### GROUP OF ARGUMENTS RELATED WITH PROCESS
+    # PEDESTAL SUBTRACTION :: PedestalSubtractionProcess
+    argPS = parser.add_argument_group('*** For Process PedestalSubtractionProcess ************************** ')
+    argPS.add_argument("--method",
+            action="store",
+            dest="method",
+            help="Method to use to compute the pedestal")
+    argPS.add_argument("--in-overscan",
+            action="store_false",
+            dest="in_overscan",
+            help="Set to use the full image to estimate the pedestal, instead of only the overscan region")
+    argPS.add_argument("--axis",
+            action="store",
+            dest="axis",
+            help="Axis in which the overscan should be computed: row/col/both/none")
+    argPS.add_argument("--n-sigma-win-fit",
+            action="store",
+            dest="n_sigma_win_fit",
+            type=float,
+            help="Number of sigmas to define the spectral window to fit a gaussian to single electron peaks")
+    argPS.add_argument("--n-sigma-to-mask",
+            action="store",
+            dest="n_sigma_to_mask",
+            type=float,
+            help="Number of sigmas to define the maximum pixel charge to take into account to estimate the pedestal")
+    argPS.add_argument("--show-fit",
+            action="store_true",
+            dest="show_fit",
+            help="Set to show up several extra plots and information")
+ 
+    #### GROUP OF ARGUMENTS RELATED WITH PROCESS
+    # CHARGE LOSS PLOT
+    argCL = parser.add_argument_group('*** For Process ChargeLossPlot ************************** ')
+    argCL.add_argument("--skip-id-list",
+            action="store",
+            dest="skip_id_list",
+            nargs='+',
+            type=int,
+            help="List of skip index to be display to search for charge loss/gain")
+    argCL.add_argument("--skip-id-baseline",
+            action="store",
+            dest="skip_id_baseline",
+            type=int,
+            help="Index of the single skip image to be used as baseline image")
+    argCL.add_argument("--histequ",
+            action="store_true",
+            dest="histequ",
+            help="The image will be displayed after equalization")
+    argCL.add_argument("--gray-palette",
+            action="store_true",
+            dest="gray_palette",
+            help="Set palettte to gray colors")
+
+  
+    #### GROUP OF ARGUMENTS RELATED WITH PROCESS
+    # READOUT NOISE :: RNvsNskipsPlot
+    argRN = parser.add_argument_group('*** For Process RNvsNskipsPlot (readout noise study) ************************** ')
+    argRN.add_argument("--n-skips",
+            action="store",
+            dest="n_skips_per_block",
+            type=int,
+            help="RNvsNskipsPlot. Number of skips specifying the incrementation")
+    argRN.add_argument("--is-blank",
+            action="store_true",
+            dest="is_blank",
+            help="RNvsNskipsPlot. Set if the input image is a blank image (if not overscan region will be used)")
+
+  
+    #### GROUP OF ARGUMENTS RELATED WITH PROCESS
+    # FIT CALIBRATION CONSTANT: LINEALITY: FitCalibrationConstant` 
+    argCC = parser.add_argument_group('*** For Process FitCalibrationConstant ************************** ')
+    argCC.add_argument("--n-peaks",
+            action="store",
+            dest="n_peaks",
+            type=int,
+            help="Number of peaks to be fitted for the lineality study (to estimate the calibration constant)")
+    argCC.add_argument("--calibration",
+            action="store",
+            dest="calibration",
+            type=float,
+            help="Starting point for the calibration fitting process (important when fit does not converge)")
+    
+    #### GROUP OF ARGUMENTS RELATED WITH PROCESS
+    # FITTING DARK CURRENT : FitDarkCurrentProcess
+    argFDC = parser.add_argument_group('*** For Process FitDarkCurrentProcess ************************** ')
+    argFDC.add_argument("--dc-axis",
+            action="store",
+            dest="dc_axis",
+            help="Axis to fit the dark current.")
+    argFDC.add_argument("--n-elec", 
+            action="store",
+            dest="n_elec",
+            type=int,
+            help="Number of single eletron peaks to use to fit the dark current")
+    argFDC.add_argument("--n-sigma-fit", 
+            action="store",
+            dest="n_sigma_fit",
+            type=int,
+            help="Number of sigmas to define the spectral window to estimate the initial values of all paramters to be fit")
+    argFDC.add_argument("--mu-gauss", 
+            action="store",
+            dest="mu_gauss",
+            type=int,
+            help="Initial value for the position of the single electron peak at 0 electrons")
+    argFDC.add_argument("--sigma-gauss", 
+            action="store",
+            dest="sigma_gauss",
+            type=int,
+            help="Initial value for the electronic noise (e-/pix)")
+    argFDC.add_argument("--lambda-poisson", 
+            action="store",
+            dest="lambda_poisson",
+            type=int,
+            help="Initial value for the dark current (e-/pix)")
+    argFDC.add_argument("--fit-options", 
+            action="store",
+            dest="fit_options",
+            type=int,
+            help="Options for the fitting see ROOT::TGraph::Fit")
+    argFDC.add_argument("--do-calibration",
+            action="store_true",
+            dest="do_calibration",
+            help="Set if the calibration constant from user should be used (in this case, use calibration option to pass its value)")
+
+
+    args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
+    
+    from pysimdamicm.scripts import anaSKImg
+    
+    #################################################################################
+    # LIST ALL AVAILABLE PROCESS AND EXIT
+    #################################################################################
+    if args.list_processes:
+        from pysimdamicm.process_manager import ProcessManager as pm
+        for i in sorted(pm.__valid_processes__.keys()):
+            print("\t",i)
+        parser.exit()
+    
+    #################################################################################
+    #################################################################################
+    # CONFIGURATION PARAMETERS TO PROCESS THE INPUT IMAGE
+    #################################################################################
+    if args.jsonfile is None:
+        # use the default configuration JSON file for data analysis
+        from pysimdamicm import __path__ as module_path
+        args.jsonfile = module_path[0]+"/json/panaSKImg_configuration.json"
+    else:
+        # use the JSON given by the user
+        if not os.path.exists(args.jsonfile):
+            # JSON file does exist, raise exception
+            raise IOError("""\033[1;31m panaSKImg: Configuration JSON file "{}" does not exist \033[1;m""".format(args.jsonfile))
+
+    #################################################################################
+    # Load CONFIGURATION from JSON file AS Config CLASS
+    #################################################################################
+    # create the configuration container 
+    print("Config INFO. Setting user configurations:")
+    config = Config(args.jsonfile, False)
+
+    # Overwrite configuration parameters in case the user used some of the available command lines
+    ### user region for skip, rows and columns
+    for axis in ["skip","row","col"]:
+        for point in ["start","end"]:
+            param = "id_{}_{}".format(axis,point)
+            if getattr(args,param):
+                config.configuration["input"]["image"][param] = getattr(args,param)
+  
+    ### invert polarity
+    if args.correct_polarity:
+        config.configuration["input"]["image"]['correct_polarity'] = True
+
+    ### amplifier to be used
+    if args.amp_name is not None:
+        config.configuration["input"]["image"]["amp_name"] = args.amp_name
+
+    ####################################################################################################### MULTIEXTENSION FITS FILE
+    #######################################################################################################
+    ### fits file extension
+    if args.extension:
+        config.configuration["input"]["image"]['extensions'] = list(map(int,args.extension))
+    if args.header_extension:
+        config.configuration["input"]["image"]['ext_header'] = list(map(int,args.header_extension))
+
+    ### calibration constant 
+    if args.calibration:
+        config.configuration["process"]["FitCalibrationConstant"]["calibration"] = args.calibration
+
+    ### list of processes to run
+    if args.sequence:
+        config.configuration["process"]["sequence"] = args.sequence.replace(",",";")
+    else:
+        # SANITY CHECK
+        # check if process in the JSON is an empty sequence
+        if len(config.configuration["process"]["sequence"].replace(" ","").split(";")[0]) == 0:
+            msm = "\033[1;31m panaSKImg: 'sequene' is an empty string! Define the sequence of"
+            msm += " processes in the JSON or by using the command line -s (see --help)\033[1;m"
+            raise AttributeError(msm)
+
+    ### verbose level, save plots as eps/pdf, save image as fits file
+    for attr in ['save_plots', 'save_image','__verbose__','__display__','__DEBUG__']:
+        if getattr(args, attr):
+            for process_name in config.configuration["process"]["sequence"].split(";"):
+                config.configuration["process"][process_name][attr] = True
+    anaSKImg.rawdata.__verbose__ = args.__verbose__
+
+    ### CHARGE LOSS PLOT
+    for param in ['skip_id_list','skip_id_baseline']:
+        if getattr(args,param) is not None:
+            config.configuration["process"]['ChargeLossPlot'][param] = getattr(args,param)
+    for param in ['histequ','gray_palette']:
+        if getattr(args,param):
+            config.configuration["process"]['ChargeLossPlot'][param] = getattr(args,param)
+
+    ### COMPRESS SKIPPER IMAGE
+    if args.func_to_compress is not None:
+        config.configuration["process"]['CompressSkipperProcess']['func_to_compress'] = args.func_to_compress
+
+    ### CALIBRATION PROCESS
+    if args.adu2e is not None:
+        config.configuration["process"]['CalibrationProcess']['gain'] = float(args.adu2e)
+    if args.cal_L_amp is not None and args.cal_U_amp is not None:
+        config.configuration["process"]['CalibrationProcess']['gain'] = {'L':float(args.cal_L_amp),"U":float(args.cal_U_amp)}
+
+    ### RNvsNskipsPlot
+    if args.n_skips_per_block is not None:
+        config.configuration["process"]['RNvsNskipsPlot']['n_skips_per_block'] = int(args.n_skips_per_block)
+    if args.is_blank:
+        config.configuration["process"]['RNvsNskipsPlot']['is_blank'] = args.is_blank
+
+    ### PedestalSubtractionProcess
+    for param in ["method","axis","n_sigma_win_fit","n_sigma_to_mask"]:
+        if getattr(args,param) is not None:
+            config.configuration["process"]['PedestalSubtractionProcess'][param] = getattr(args,param)
+    if not args.in_overscan:
+        config.configuration["process"]['PedestalSubtractionProcess']['in_overscan'] = False
+    if args.show_fit:
+        config.configuration["process"]['PedestalSubtractionProcess']['show_fit'] = True
+    
+    ### FitCalibrationConstant
+    for param in ["n_peaks","calibration","n_sigma_win_fit"]:
+        if getattr(args,param) is not None:
+            config.configuration["process"]['FitCalibrationConstant'][param] = getattr(args,param)
+    
+    ### FitDarkCurrentProcess
+    if args.n_elec is not None:
+         config.configuration["process"]['FitDarkCurrentProcess']['n_peaks'] = args.n_elec
+    for param in ["n_sigma_fit","mu_gauss","sigma_gauss","lambda_poisson","fit_options","calibration","dc_axis"]:
+        if getattr(args,param) is not None:
+            config.configuration["process"]['FitDarkCurrentProcess'][param] = getattr(args,param)
+    if args.do_calibration:
+        ## the image should be calibrated
+        config.configuration["process"]['FitDarkCurrentProcess']['do_calibration'] = True
+        if args.calibration is None:
+            raise ValueError("calibration is mandatory when do-calibration is used")
+   
+    ## ClusterFinder
+    if args.halo_radius is not None:
+        config.configuration["process"]['ClusterFinder']['halo_radius'] = int(args.halo_radius)
+        config.configuration["process"]['ClusterFinder']['halo_radius_min'] = int(args.halo_radius_min)
+
+    print("Process sequence is ", config.configuration["process"]["sequence"])
+
+    # ACTIVATE CONFIGURATION
+    #   with the updated config file 
+    config.activate_configuration()
+    #################################################################################
+
+
+    #################################################################################
+    ### OUTPUT DIRECTORY
+    #################################################################################
+    if args.output:
+        outdir = os.path.abspath(args.output)
+    else:
+        # not defined by the user, use the CWD
+        outdir = os.path.abspath(".")
+
+    # SANITY CHECK: is a directory?
+    if not os.path.isdir(outdir):
+        raise IOError("{} is not a directory".format(outdir))
+
+    #################################################################################
+    #   HERE STARTS THE PROPER CODE
+    #################################################################################
+    # A collection/list of files is accepted as an input
+    #  run the main script anaSKImg secuentially over this list of input files
+    ###############################################################################
+    
+    print("INFO. Reconstruction starts ... ")
+    # Is the input file a single file? or a pattern file name?
+    args.infile = os.path.abspath(args.infile)
+    if os.path.isfile(args.infile):
+        # single file --> convert to a list
+        args.infile = [args.infile]
+    else:
+        # pattern file 
+        #   create a list with all files following this pattern
+        from glob import glob
+        args.infile = glob(args.infile)
+
+    # REMOVE FROM THE FULL LIST OF INPUT FILES the ONES CONTAINING ANY OF THE 
+    #       sub-STRING given by the user
+    selected_images,ignored_images = remove_files(args.infile,args.skip)
+
+    # USE of MASK?
+    if args.mask is not None:
+        args.mask = os.path.abspath(args.mask)
+
+    # OUTPUT DIRECTORY
+    #   several directories can be added to properly record images form different process
+    #       this is a feature mostly for the DQM which defines an output structure,
+    #       here only one output directory is accepted, so any sub-directory needed for rawdata is
+    #       set to outdir
+    outdir_dict = { 
+            'others': outdir, 
+            'avg':    outdir
+            }
+    
+    #######################################################################################################
+    #   DEFINE FUNCTION TO RUN ONE IMAGE -- TO BE USED WHENEVER WE WANT TO PARALELIZE
+    #######################################################################################################
+    def process_one_image(image, config, outdir_dict, display, mask, MCT, ccd, run):
+        print("Processing image:", image)
+        rawdata = anaSKImg.main( [image],config,outdir=outdir_dict,display=display,image_mask=mask,MCText=MCT,ccd_id=ccd,run_id=run)
+        return rawdata
+    
+
+    #######################################################################################################
+    # initialize the process sequence file by file (running as independents)
+    #######################################################################################################
+    selected_images = sorted(selected_images)
+    if args.ACM:
+        print("----------------- RAW DATA from ACM: use multi extension class ------------------- ")
+    config.configuration["input"]["image"].update({"ACM_multi_extension": args.ACM})
+    
+    ### allow for compressed output fits files
+    config.configuration["input"]["image"].update({"bz2": args.bz2})
+
+    if args.outrootfile:
+        rawdata = anaSKImg.main(
+                            selected_images,
+                            config,
+                            outdir=outdir_dict,
+                            display=args.__display__,
+                            image_mask=args.mask,
+                            out_root_file=args.outrootfile, 
+                            MCText=args.MCT, 
+                            ccd_id=args.ccd, 
+                            run_id=args.run)
+    else:
+        if args.ACM:
+            if not type(config.configuration["input"]["image"]['extensions'])==list:
+                config.configuration["input"]["image"]['extensions'] = [config.configuration["input"]["image"]['extensions']]
+            for id_image,image in enumerate(sorted(selected_images)):
+                rawdata = anaSKImg.main(
+                        [image],
+                        config,
+                        outdir=outdir_dict,
+                        display=args.__display__,
+                        image_mask=args.mask, 
+                        MCText=args.MCT, 
+                        ccd_id=args.ccd, 
+                        run_id=args.run)
+        else:
+            if not type(config.configuration["input"]["image"]['extensions'])==list:
+                config.configuration["input"]["image"]['extensions'] = [config.configuration["input"]["image"]['extensions']]
+            if not type(config.configuration["input"]["image"]['ext_header'])==list:
+                config.configuration["input"]["image"]['ext_header'] = [config.configuration["input"]["image"]['ext_header']]
+    
+            if len(config.configuration["input"]["image"]['extensions'])==len(config.configuration["input"]["image"]['ext_header']):
+                extensions = zip(config.configuration["input"]["image"]['extensions'],config.configuration["input"]["image"]['ext_header'])
+            else:
+                headers = [config.configuration["input"]["image"]['ext_header'][0] for e in config.configuration["input"]["image"]['extensions']]
+                extensions = zip(config.configuration["input"]["image"]['extensions'],headers)
+
+
+            for ext,hext in extensions:
+                config.configuration["input"]["image"]['extensions'] = ext
+                config.configuration["input"]["image"]['ext_header'] = hext
+
+                if args.ncpus>1:
+
+                    if args.ncpus+2 > os.cpu_count():
+                        raise IOError(f"There is only {os.cpu_count()-2} available CPUs, while you are requesting {args.ncpus}")
+
+                    if (args.ncpus>1 and len(selected_images)==1):
+                        raise IOError(f"Multiprocessing is only valid if the list of images is larger than 1")
+
+                    print("=====================================================================================================")
+                    print(f"Running in a MultiProcessing Mode: {args.ncpus} CPUs for {len(selected_images)} images")
+                    print("=====================================================================================================\n")
+
+                    with concurrent.futures.ProcessPoolExecutor(max_workers=args.ncpus) as executor:
+                        futures = []
+                        for image in sorted(selected_images):
+                            futures.append(executor.submit(process_one_image, image, config, outdir_dict, args.__display__, args.mask, args.MCT, args.ccd, args.run))
+                        for future in concurrent.futures.as_completed(futures):
+                            try:
+                                result = future.result()
+                            except Exception as exc:
+                                print(f'Generated an exception: {exc}')
+                    print("=====================================================================================================")
+                    print(f"{len(selected_images)} images have been processed with multiprocessing mode using {args.ncpus} CPUs")
+                    print("=====================================================================================================\n")
+
+                else:
+                    print("Running in a Single Processing Mode")
+                    for id_image,image in enumerate(sorted(selected_images)):
+                        rawdata = anaSKImg.main(
+                                [image],
+                                config,
+                                outdir=outdir_dict,
+                                display=args.__display__,         
+                                image_mask=args.mask, 
+                                MCText=args.MCT, 
+                                ccd_id=args.ccd, 
+                                run_id=args.run)
+                         
+
+        
+    print("Finished correctly, after processing {} files".format(len(selected_images)))
+

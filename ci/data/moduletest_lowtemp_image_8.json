@@ -1,0 +1,241 @@
+{
+    "input":
+    {
+        "image":
+        {
+            "ACM_multi_extension": true,
+            "extensions"        : [1,2,3,4],
+            "ext_header"        : 0,
+            "skip_image"        : false,
+            "axis_to_compress"  : 1,
+            "correct_leach_bug" : false,
+            "correct_polarity"  : false,
+            "id_skip_start"     : 0,
+            "id_skip_end"       : -1,
+            "id_row_start"      : 2,
+            "id_row_end"        : -1,
+            "id_col_start"      : 0,
+            "id_col_end"        : -1,
+            "n_rows_prescan"    : 0,
+            "n_rows_overscan"   : 0,
+            "ccd_rows"          : 500,
+            "n_cols_prescan"    : 0,
+            "ccd_cols"          : 3344,
+            "n_amp"             : 1,
+            "save_image"	: true
+         },
+         "datetime":
+         {
+             "exposure_start"   : "DATEINI",
+             "readout_start"    : "DATEINI",
+             "readout_end"      : "DATEEND"
+         },
+         "scp":
+        {    
+        },
+        "convention":
+        {
+            "ampdir"        : "VCKDIRN",
+            "itgtime"       : "TINTEGR",
+            "Nskips"        : "NDCM",
+            "Ncols"         : "NCOL",
+            "Nrows"         : "NROW",
+            "Npbin"         : "NPBIN",
+            "Nsbin"         : "NSBIN",
+            "ampl"          : "AMPL",
+            "exposure_time" : "EXPOSURE",
+            "read_time"     : "MREAD"
+            }
+    },
+    "process":
+    {
+        "sequence":"CompressSkipperProcess;PedestalSubtractionProcess;FitDarkCurrentProcess;CalibrationProcess;ClusterFinder;BuildClusterMask",
+        "CompressSkipperProcess":
+        {
+            "func_to_compress"  : ["mean","std"],
+            "save_image"        : false
+        },
+        "PedestalSubtractionProcess":
+        {
+            "image"             : "mean_compressed",
+            "method"            : "median",
+            "__DEBUG__"         : true,
+            "DEBUG_ROWS"        : [400,500],
+            "in_overscan"       : true,
+            "use_mad"           : false,
+            "axis"              : "row",
+            "n_sigma_win_fit"   : 5,
+            "n_sigma_to_mask"   : 7.0,
+            "is_highDC"         : {"EXT1":false, "EXT2":false, "EXT3":true, "EXT4":false},
+    	    "hist_nbins_method" : "freedman",
+            "hist_nbins"        : 50,
+            "rebin_rows"        : 1,
+	        "cut_left_tail"	    : false,
+	        "cut_right_tail"	: true
+        },
+        "TwoDGaussProcess":
+        {
+            "__display__"   : false,
+            "col_start"     : 0,
+            "row_start"     : 0,
+            "q_min_ADU"     : -10,
+            "q_max_ADU"     : 30,
+            "bin_size"      : 0.4,
+            "do_fit"        : true,
+            "dc_L"          : 0.005,
+            "dc_U_range"    : [0.0005,0.01],
+            "dc_U"          : 0.003,
+            "sig_L"         : 3,
+            "sig_L_range"   : [0.5,5.0],
+            "sig_U"         : 2.0,
+            "sig_L_range"   : [0.5,5.0],
+            "theta"         : 46.0,
+            "cal_L"         : 7.0,
+            "cal_L_range"   : [7.0,9.5],
+            "cal_U"         : 7.0,
+            "cal_U_range"   : [3,9.5],
+            "fit_opt"       : "QR LEM"
+        },
+        "CorrectElectronicColumnTransient":
+        {
+            "image"           : "mean_compressed_pedestal_subtracted",
+            "col_start"       : 1,
+            "col_end"         : 10,
+            "subtract_median" : true,
+            "n_exp"           : 1,
+            "fit_options"     : "QSMER"
+        },
+        "CalibrationProcess":
+        {
+            "image" : "mean_compressed_pedestal_subtracted",
+    		"gain"  : {"EXT1":1.26, "EXT2":1.32, "EXT3":1.34, "EXT4":1.31 },
+            "from_dc_fit": true
+        },
+        "FitCalibrationConstant":
+        {
+            "image"             : "mean_compressed_pedestal_subtracted",
+            "n_peaks"           : 3,
+            "calibration"       : {"U":10.0, "L":10.0},
+            "n_sigma_win_fit"   : 3
+        },
+        "FitDarkCurrentProcess":
+        {
+            "image"             : "mean_compressed_pedestal_subtracted",
+            "__DEBUG__"         : false,
+            "__verbose__"       : false,
+            "fit_options"       : "Q",
+            "ratio_plot"        : false,
+            "rows_to_mask"      : {"EXT1":[0,1,2], "EXT2":[0,1,2], "EXT3":[0,1,2], "EXT4":[0,1,2]},
+            "cols_to_mask"      : {"EXT1":[], "EXT2":[], "EXT3":[], "EXT4":[]},
+            "mask_clusters"     : false,
+            "do_calibration"    : true,
+            "calibration"       : 1.0,
+            "n_peaks"           : 2,
+            "binning_size"      : 0.05,
+            "sigma_max"         : 0.5,
+            "dc_min"            : 0.0001,
+            "dc_max"            : 2.0,
+            "gain_min"          : 0.8,
+            "gain_max"          : 1.8,
+            "x_min"             : -2.5,
+            "x_max"             : 2
+        },
+        "FitDarkCurrentPerRow":
+        {
+            "image"             : "mean_compressed_pedestal_subtracted",
+            "row_start"         : 0,
+            "row_end"           : -1,
+            "row_step"          : 10,
+            "calibration"       : 1.0,
+            "rows_to_mask"      : [],
+            "cols_to_mask"      : [],
+            "n_peaks"           : 2,
+            "binning_size"      : 0.05,
+            "gain_min"          : 0.5,
+            "gain_max"          : 2.5,
+            "x_min"             : -3,
+            "x_max"             : 5
+        },
+        "FitDarkCurrentPerCol":
+        {
+            "image"             : "mean_compressed_pedestal_subtracted",
+            "col_start"         : 0,
+            "col_end"           : -1,
+            "col_step"          : 10,
+            "rows_to_mask"      : [],
+            "cols_to_mask"      : [],
+            "calibration"       : 1.0,
+            "n_peaks"           : 2,
+            "binning_size"      : 0.05,
+            "gain_min"          : 0.8,
+            "gain_max"          : 1.8,
+            "x_min"             : -3,
+            "x_max"             : 5
+        },
+        "ChargeLossPlot":
+        {
+            "skip_id_list"      : [0,1,2,45],
+            "skip_id_baseline"  : -1,
+            "histequ"           : false,
+            "gray_palette"      : false
+        },
+        "ChargeLossSkewnessProcess":
+        {
+            "use_overscan"      : false,
+            "id_skip_reference" : 1,
+            "id_skip_start"     : 2,
+            "id_skip_end"       : -1,
+            "skip_step"         : 20,
+            "kcl_threshold"     : 3.2,
+            "kcl_n_sig"         : 8,
+            "display"           : true
+        },
+        "FFTNoisePlot":
+        {
+        },
+        "RNvsNskipsPlot":
+        {
+            "n_skips_per_block" : 50,
+            "is_blank"          : false
+        },
+        "ClusterFinder":
+        {
+            "spr_threshold"        : {"EXT1": [null,10,30], "EXT2":[null,10,30], "EXT3":[null,10,30], "EXT4":[null,10,30]},
+            "spr_image"            : "mean_compressed_pedestal_subtracted_e",
+            "skip_rows"            : [],
+            "skip_cols"            : [],
+            "only_cls_seed"        : true,
+            "method"               : 0,
+            "max_nearest_neighbor" : 2
+        },
+        "BuildClusterMask":
+        {
+            "hot_rows"          : [],
+            "hot_cols"          : [],
+            "cluster_size_min"  : 1,
+            "cluster_DX_min"    : 1,
+            "cluster_DY_min"    : 1,
+            "cluster_E_min"     : 100,
+            "cluster_box_E_min" : 100000000,
+            "N_col_pre"         : 0,
+            "N_col_post"        : 0,
+            "N_row_pre"         : 0,
+            "N_row_post"        : 0,
+            "mask_cluster_column": false
+        },
+        "ApplySelectionCuts":
+        {
+            "cols"  : [],
+            "rows"  : []
+        },
+        "GaussianFitProcess":
+        {
+            "image"           : "mean_compressed_pedestal_subtracted",
+            "in_overscan"     : true,
+            "hist_nbins_method" : "freedman",
+            "skip_rows"       : [],
+            "in_trim_mean"    : true,
+            "n_sigma"         : 5
+        }
+    }
+}

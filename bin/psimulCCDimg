@@ -1,0 +1,235 @@
+#!/usr/bin/env python3 
+""":script:`simulCCDimages` -- Simulate a CCD image 
+============================================================
+
+.. script:: simulCCDimages -c config.file [ [-d] [-p] [-n] [-a] [-s] ]
+      :platform: Unix
+      :synopsis: given a Geant4-based DAMIC-M simulation, simulCCDimages 
+                 mimics the detector's response, as well as the cluster 
+                 reconstruction:
+                    * detector response:
+                        - electron diffusion
+                        - pixelization
+                        - pixel noise
+                        - dark current, and
+                        - saturation
+
+
+      .. moduleauthor:: Nuria Castello-Mor <castello@ifca.unican.es>
+      .. date::14/01/2020
+
+"""
+
+import sys 
+
+### To avoid ROOT help print out
+if not '-h' in sys.argv and not '--help'in sys.argv:
+    from pysimdamicm.utils.config import Config
+    from pysimdamicm import __commit__
+
+
+########################################################################################
+########################################################################################
+if __name__ == '__main__':
+
+    import argparse
+    from argparse import Action
+    import os
+    
+    parser = argparse.ArgumentParser()
+
+    # Helper class to allow list json options (without introducing
+    # the positional arguments)
+    class PrintJSON(Action):
+        def __init__(self,option_strings,dest,default=False,required=False,help=None):
+            super().__init__(option_strings=option_strings,
+                    dest=dest,
+                    nargs=0,
+                    const=True,
+                    default=default,
+                    required=required,
+                    help=help)
+        def __call__(self, parser, namespace, values, option_string=None):
+            _ = Config()
+            quit()
+            parser.exit()
+
+
+
+    #### MANDATORY ARGUMENTS
+    ##################################################
+    parser.add_argument("jsonfile",
+            action="store",
+            help="JSON configuration file. Run `psimulCCDimg  --json help` to list configuration parameters")
+
+    #### OPTIONAL
+    ##################################################
+    parser.add_argument("--g4file",
+            action="store",
+            dest="g4file",
+            nargs='+',
+            help="Relative/Absolute path to geant4 input file(s)")
+
+    #### OPTIONAL
+    ##################################################
+    parser.add_argument("--dir",
+            action="store",
+            dest="g4dir",
+            help="DEPRECATED (DO NOT USE)")
+
+    parser.add_argument("--g4out",
+            action="store",
+            dest="g4out",
+            default=".",
+            help="Relative or absolute path for the output directory")
+
+
+    #### BOOLEAN ARGUMENTS FOR DEBUG
+    ##################################################
+    parser.add_argument("--debug",
+            action="store_true",
+            dest="DebugMode",
+            help="Increase output verbosity for debug mode (include interactive plots for cluster reconstruction process)")
+
+    parser.add_argument("--dparam",
+            action="store",
+            dest="DebugParam",
+            default="Edep",
+            help="Parameter for the color code on the image plot, for debug mode.")
+
+    parser.add_argument("--cls-pix-min",
+            action="store",
+            dest="cls_pix_min",
+            type=int,
+            default=int(3),
+            help="[ONLY DEBUG MODE] Minimum pixel size to zoom in a cluster.")
+    
+    parser.add_argument("--event",
+            action="store",
+            dest="event_to_debug",
+            nargs='+',
+            type=int,
+            default=None,
+            help="[ONLY DEBUG MODE] Plot debug plot onfly for this event")
+
+    parser.add_argument("--dlevel",
+            action="store",
+            dest="debug_level",
+            type=int,
+            default=int(1),
+            help="[Deprecated] Level of the debug.")
+
+    parser.add_argument("--verbose",
+            action="store_true",
+            dest="PrintMode",
+            help="[Deprecated] Increase output verbosity.")
+
+    #### CONFIGURATION HELP: PRINT INFO ABOUT CONFIGURATION PARAMETERS 
+    ###############################################################################
+    parser.add_argument("--json",
+            #action="store_true",
+            action=PrintJSON,
+            dest="jsonhelp",
+            help="Print description for each parameter on the JSON configuration file.")
+    
+    #### Adding the possibility to process a set of files, as a single simulation
+    parser.add_argument("--altogether",
+            action="store_true",
+            dest="altogether",
+            help="Process all input files as a single simulation")
+    #### Adding the possibility to process a set of files, as a single simulation
+    parser.add_argument("-o",
+            action="store",
+            dest="rootname",
+            help="Name for the output ROOT file")
+
+
+    arg = parser.parse_args()
+    
+    from pysimdamicm.scripts import simulCCDimg
+    from glob import glob
+
+    # Check config file exist
+    if not os.path.exists(arg.jsonfile):
+        raise AttributeError("""\033[1;31m psimulCCDimg: The file "{}" do not exist \033[1;m""".format(arg.jsonfile))
+
+    simulCCDimg.__debugs__=arg.DebugMode    
+    if simulCCDimg.__debugs__:
+        print(" -------------- DEBUG MODE ")
+    simulCCDimg.__verbose__=arg.PrintMode
+    if simulCCDimg.__verbose__:
+        print(" -------------- VERBOSE MODE ")
+    simulCCDimg.__debug_level__=arg.debug_level
+    simulCCDimg.__debug_param__=arg.DebugParam
+
+    ### Load CONFIGURATION from JSON file
+    config = Config(arg.jsonfile)
+    config.activate_configuration()
+    
+    ########################################################################
+    ###
+    if arg.g4dir is not None:
+        msm = "\n--dir is DEPRECATED.\n Use only g4file where the argument is now "
+        msm+= "a relative or absolute path to the file(s). \n For instance, "
+        msm+= "--g4file  ../Compton/Am241/Compton*root"
+        raise AttributeError("""\033[1;31m {} \033[1;m""".format(msm))
+    
+    ### g4file is a list of files, get path directory from them
+    arg.g4dir = os.path.abspath(os.path.commonpath(arg.g4file))
+    
+    ### output directory 
+    if arg.g4out is None:
+        arg.g4out = arg.g4dir
+    else:
+        arg.g4out = os.path.abspath(arg.g4out)
+
+    
+    ### input directory
+    config.configuration["in_root"]["in_dir_path"]    = arg.g4dir
+    ### output directory
+    config.configuration["out_root"]["out_dir_path"]  = arg.g4out
+
+
+    if arg.altogether:
+        ## Process all files in once
+        config.configuration["in_root"]["root_file_name"] = arg.g4file
+        outfile = "{}/{}_{}".format(
+                arg.g4out,config.configuration["out_root"]["prefix_root_name"],__commit__)
+        
+        config.configuration["rootfiles"]={"in":arg.g4file,"out": arg.rootname}
+
+        print("")
+ 
+        simulCCDimg.main(config,arg.cls_pix_min,arg.event_to_debug)
+
+    else:
+        ## Process all files one by one as independent simulations
+        for g4file in arg.g4file:
+            infile = os.path.abspath(g4file)
+            ### infile
+            config.configuration["in_root"]["root_file_name"] = os.path.split(infile)[-1]
+       
+            ### output root file
+            #       add the git commit number to the output file
+            outfile = "{}/{}_{}_{}".format(
+                    arg.g4out,
+                    config.configuration["out_root"]["prefix_root_name"],
+                    __commit__,
+                    config.configuration["in_root"]["root_file_name"])
+   
+            # Check g4file exists
+            if not os.path.exists(infile):
+                raise AttributeError("""\033[1;31m psimulCCDimg: The file "{}" do not exist \033[1;m""".format(infile))
+        
+            config.configuration["rootfiles"]={"in":[infile], "out":outfile}
+        
+            print("")
+            print(" -- INFO. Input root file: ", infile)
+            print(" -- INFO. Output root file: ", outfile)
+        
+            simulCCDimg.main(config,arg.cls_pix_min,arg.event_to_debug)
+
+            print("")
+            print("  -------------- Done!")
+
+

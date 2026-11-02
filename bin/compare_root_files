@@ -1,0 +1,472 @@
+#!/usr/bin/env python3
+"""Compare the TTree contents of two ROOT files using PyROOT only."""
+
+from __future__ import annotations
+
+import argparse
+import math
+import sys
+from pathlib import Path
+from typing import Any
+
+import ROOT
+
+
+def get_trees(
+    directory: ROOT.TDirectory,
+    prefix: str = "",
+) -> dict[str, ROOT.TTree]:
+    """Recursively collect all TTrees from a ROOT directory."""
+
+    trees: dict[str, ROOT.TTree] = {}
+
+    for key in directory.GetListOfKeys():
+        object_name = key.GetName()
+        obj = key.ReadObj()
+
+        full_name = f"{prefix}/{object_name}" if prefix else object_name
+
+        if obj.InheritsFrom("TTree"):
+            trees[full_name] = obj
+        elif obj.InheritsFrom("TDirectory"):
+            trees.update(get_trees(obj, full_name))
+
+    return trees
+
+
+def branch_type(branch: ROOT.TBranch) -> str:
+    """Return a readable type description for a branch."""
+
+    class_name = branch.GetClassName()
+    if class_name:
+        return class_name
+
+    leaves = branch.GetListOfLeaves()
+    if leaves and leaves.GetEntries() > 0:
+        return leaves.At(0).GetTypeName()
+
+    return branch.ClassName()
+
+
+def convert_value(value: Any) -> Any:
+    """Convert common PyROOT values into standard Python objects."""
+
+    if value is None:
+        return None
+
+    if isinstance(value, (bool, int, float, str, bytes)):
+        return value
+
+    cpp_name = getattr(type(value), "__cpp_name__", "")
+
+    if "string" in cpp_name:
+        return str(value)
+
+    # Handle std::vector and similar C++ containers.
+    if hasattr(value, "size") and hasattr(value, "__getitem__"):
+        try:
+            return tuple(
+                convert_value(value[index])
+                for index in range(int(value.size()))
+            )
+        except Exception:
+            pass
+
+    # Handle Python-compatible array-like objects.
+    if hasattr(value, "__len__") and hasattr(value, "__getitem__"):
+        try:
+            return tuple(
+                convert_value(value[index])
+                for index in range(len(value))
+            )
+        except Exception:
+            pass
+
+    # Handle scalar C++ proxies.
+    try:
+        return value.item()
+    except Exception:
+        pass
+
+    try:
+        return int(value)
+    except Exception:
+        pass
+
+    try:
+        return float(value)
+    except Exception:
+        pass
+
+    return repr(value)
+
+
+def read_branch_value(
+    tree: ROOT.TTree,
+    branch_name: str,
+) -> Any:
+    """Read the current branch value after calling TTree.GetEntry()."""
+
+    try:
+        return convert_value(getattr(tree, branch_name))
+    except Exception:
+        pass
+
+    branch = tree.GetBranch(branch_name)
+    if branch is None:
+        raise RuntimeError(f"Branch not found: {branch_name}")
+
+    leaves = branch.GetListOfLeaves()
+    if leaves is None or leaves.GetEntries() == 0:
+        raise RuntimeError(
+            f"Cannot extract value from branch: {branch_name}"
+        )
+
+    values = []
+
+    for leaf_index in range(leaves.GetEntries()):
+        leaf = leaves.At(leaf_index)
+
+        length = int(leaf.GetLen())
+        leaf_count = leaf.GetLeafCount()
+
+        if leaf_count is not None:
+            length = int(leaf_count.GetValue())
+
+        leaf_values = tuple(
+            leaf.GetValue(index)
+            for index in range(length)
+        )
+
+        if len(leaf_values) == 1:
+            leaf_values = leaf_values[0]
+
+        values.append(leaf_values)
+
+    if len(values) == 1:
+        return values[0]
+
+    return tuple(values)
+
+
+def values_equal(
+    value_a: Any,
+    value_b: Any,
+    rtol: float,
+    atol: float,
+) -> bool:
+    """Recursively compare scalar values and nested tuples."""
+
+    if isinstance(value_a, tuple) or isinstance(value_b, tuple):
+        if not isinstance(value_a, tuple):
+            return False
+        if not isinstance(value_b, tuple):
+            return False
+        if len(value_a) != len(value_b):
+            return False
+
+        return all(
+            values_equal(item_a, item_b, rtol, atol)
+            for item_a, item_b in zip(value_a, value_b)
+        )
+
+    if isinstance(value_a, float) or isinstance(value_b, float):
+        try:
+            float_a = float(value_a)
+            float_b = float(value_b)
+        except (TypeError, ValueError):
+            return value_a == value_b
+
+        if math.isnan(float_a) and math.isnan(float_b):
+            return True
+
+        if rtol == 0.0 and atol == 0.0:
+            return float_a == float_b
+
+        return math.isclose(
+            float_a,
+            float_b,
+            rel_tol=rtol,
+            abs_tol=atol,
+        )
+
+    return value_a == value_b
+
+
+def parse_ignored_branches(
+    values: list[str],
+) -> set[tuple[str, str]]:
+    """Parse TREE:BRANCH specifications from the command line."""
+
+    ignored: set[tuple[str, str]] = set()
+
+    for value in values:
+        if ":" not in value:
+            raise ValueError(
+                f"Invalid ignored branch specification: {value!r}. "
+                "Use TREE:BRANCH."
+            )
+
+        tree_name, branch_name = value.split(":", 1)
+        ignored.add((tree_name, branch_name))
+
+    return ignored
+
+
+def compare_tree(
+    tree_name: str,
+    tree_a: ROOT.TTree,
+    tree_b: ROOT.TTree,
+    rtol: float,
+    atol: float,
+    max_differences: int,
+    ignored_branches: set[tuple[str, str]],
+) -> bool:
+    """Compare two TTrees entry by entry."""
+
+    print(f"\nTree: {tree_name}")
+
+    if tree_a.GetEntries() != tree_b.GetEntries():
+        print(
+            "  DIFFERENT NUMBER OF ENTRIES: "
+            f"{tree_a.GetEntries()} != {tree_b.GetEntries()}"
+        )
+        return False
+
+    print(f"  Entries: {tree_a.GetEntries()}")
+
+    branches_a = {
+        branch.GetName(): branch
+        for branch in tree_a.GetListOfBranches()
+    }
+    branches_b = {
+        branch.GetName(): branch
+        for branch in tree_b.GetListOfBranches()
+    }
+
+    names_a = set(branches_a)
+    names_b = set(branches_b)
+
+    only_a = sorted(names_a - names_b)
+    only_b = sorted(names_b - names_a)
+
+    success = True
+
+    if only_a:
+        print(f"  Branches only in file A: {only_a}")
+        success = False
+
+    if only_b:
+        print(f"  Branches only in file B: {only_b}")
+        success = False
+
+    common_branches = sorted(names_a & names_b)
+
+    branches_to_compare = []
+
+    for branch_name in common_branches:
+        if (tree_name, branch_name) in ignored_branches:
+            print(f"  SKIPPED metadata branch: {branch_name}")
+            continue
+
+        type_a = branch_type(branches_a[branch_name])
+        type_b = branch_type(branches_b[branch_name])
+
+        if type_a != type_b:
+            print(
+                f"  TYPE MISMATCH {branch_name}: "
+                f"{type_a} != {type_b}"
+            )
+            success = False
+            continue
+
+        branches_to_compare.append(branch_name)
+
+    number_of_differences = 0
+
+    for entry in range(tree_a.GetEntries()):
+        tree_a.GetEntry(entry)
+        tree_b.GetEntry(entry)
+
+        for branch_name in branches_to_compare:
+            try:
+                value_a = read_branch_value(tree_a, branch_name)
+                value_b = read_branch_value(tree_b, branch_name)
+            except Exception as error:
+                print(
+                    f"  ERROR reading {branch_name}, "
+                    f"entry {entry}: {error}"
+                )
+                success = False
+                number_of_differences += 1
+                continue
+
+            if values_equal(value_a, value_b, rtol, atol):
+                continue
+
+            print(f"  MISMATCH: {branch_name}")
+            print(f"    Entry : {entry}")
+            print(f"    File A: {value_a}")
+            print(f"    File B: {value_b}")
+
+            success = False
+            number_of_differences += 1
+
+            if number_of_differences >= max_differences:
+                print(
+                    f"  Stopping after {max_differences} differences."
+                )
+                return False
+
+    if success:
+        print("  All compared branches are equal.")
+
+    return success
+
+
+def compare_files(
+    filename_a: Path,
+    filename_b: Path,
+    rtol: float,
+    atol: float,
+    max_differences: int,
+    ignored_branches: set[tuple[str, str]],
+) -> bool:
+    """Compare every TTree contained in two ROOT files."""
+
+    file_a = ROOT.TFile.Open(str(filename_a), "READ")
+    file_b = ROOT.TFile.Open(str(filename_b), "READ")
+
+    if not file_a or file_a.IsZombie():
+        raise RuntimeError(f"Cannot open {filename_a}")
+
+    if not file_b or file_b.IsZombie():
+        raise RuntimeError(f"Cannot open {filename_b}")
+
+    trees_a = get_trees(file_a)
+    trees_b = get_trees(file_b)
+
+    names_a = set(trees_a)
+    names_b = set(trees_b)
+
+    success = True
+
+    only_a = sorted(names_a - names_b)
+    only_b = sorted(names_b - names_a)
+
+    if only_a:
+        print(f"Trees only in file A: {only_a}")
+        success = False
+
+    if only_b:
+        print(f"Trees only in file B: {only_b}")
+        success = False
+
+    common_trees = sorted(names_a & names_b)
+
+    print(f"Common TTrees: {common_trees}")
+
+    for tree_name in common_trees:
+        tree_success = compare_tree(
+            tree_name=tree_name,
+            tree_a=trees_a[tree_name],
+            tree_b=trees_b[tree_name],
+            rtol=rtol,
+            atol=atol,
+            max_differences=max_differences,
+            ignored_branches=ignored_branches,
+        )
+
+        success = success and tree_success
+
+    file_a.Close()
+    file_b.Close()
+
+    return success
+
+
+def parse_arguments() -> argparse.Namespace:
+    """Parse command-line arguments."""
+
+    parser = argparse.ArgumentParser(
+        description="Compare ROOT TTrees using PyROOT only."
+    )
+
+    parser.add_argument("file_a", type=Path)
+    parser.add_argument("file_b", type=Path)
+
+    parser.add_argument(
+        "--rtol",
+        type=float,
+        default=0.0,
+        help="Relative tolerance for floating-point values.",
+    )
+
+    parser.add_argument(
+        "--atol",
+        type=float,
+        default=0.0,
+        help="Absolute tolerance for floating-point values.",
+    )
+
+    parser.add_argument(
+        "--max-differences",
+        type=int,
+        default=20,
+        help="Stop after this number of differences.",
+    )
+
+    parser.add_argument(
+        "--ignore-branch",
+        action="append",
+        default=[],
+        metavar="TREE:BRANCH",
+        help=(
+            "Ignore one branch during comparison. "
+            "The option can be repeated."
+        ),
+    )
+
+    return parser.parse_args()
+
+
+def main() -> int:
+    """Run the ROOT-file comparison."""
+
+    args = parse_arguments()
+
+    if not args.file_a.is_file():
+        print(f"File not found: {args.file_a}", file=sys.stderr)
+        return 2
+
+    if not args.file_b.is_file():
+        print(f"File not found: {args.file_b}", file=sys.stderr)
+        return 2
+
+    try:
+        ignored_branches = parse_ignored_branches(
+            args.ignore_branch
+        )
+    except ValueError as error:
+        print(error, file=sys.stderr)
+        return 2
+
+    success = compare_files(
+        filename_a=args.file_a,
+        filename_b=args.file_b,
+        rtol=args.rtol,
+        atol=args.atol,
+        max_differences=args.max_differences,
+        ignored_branches=ignored_branches,
+    )
+
+    if success:
+        print("\nRESULT: ROOT files contain equal TTree data.")
+        return 0
+
+    print("\nRESULT: differences were found.")
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

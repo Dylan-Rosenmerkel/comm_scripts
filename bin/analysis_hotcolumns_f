@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Last revistion: 05/12/2024
+@author: elenamunoz
+"""
+import sys 
+import click
+
+### To avoid ROOT help print out
+if not '-h' in sys.argv and not '--help'in sys.argv:
+    # Simulation to detect hot columns in a CCD image
+    import numpy as np
+    #import matplotlib.pyplot as plt
+    from astropy.io import fits
+    import ROOT
+    from array import array
+
+def extract_data(fits_path, charge_range):
+    """
+    Processes the FITS file and extracts necessary data.
+
+    Returns:
+    - non_masked_data_all: Non-masked pixels (all values).
+    - non_masked_data_ranged: Non-masked pixels within the charge range.
+    """
+    with fits.open(fits_path) as fits_file:
+        clsmask_data = fits_file['CLSMASK'].data
+        pedsubtracted_data = fits_file['PEDSUBTRACTED'].data
+
+    clsmask_data = clsmask_data.astype(int)
+    in_range = (pedsubtracted_data >= charge_range[0]) & (pedsubtracted_data <= charge_range[1])
+    not_masked = clsmask_data == 0
+
+    non_masked_data_all = np.where(not_masked, pedsubtracted_data, np.nan)
+    non_masked_data_ranged = np.where(in_range & not_masked, pedsubtracted_data, np.nan)
+
+    return non_masked_data_all, non_masked_data_ranged
+
+
+def calculate_normalized_values(non_masked_data_ranged, non_masked_data_all):
+    """
+    Calculates normalized values for each column.
+
+    Returns:
+    - normalized_values: Normalized proportion of pixels in range per column.
+    - pixels_in_range_per_column: Number of pixels in range per column.
+    """
+    total_columns = non_masked_data_ranged.shape[1]
+    pixels_in_range_per_column = np.nansum(~np.isnan(non_masked_data_ranged), axis=0)
+    total_non_masked_per_column = np.nansum(~np.isnan(non_masked_data_all), axis=0)
+
+    # Avoid division by zero
+    normalized_values = np.zeros(total_columns, dtype=float)
+    valid_columns = total_non_masked_per_column > 0
+    normalized_values[valid_columns] = pixels_in_range_per_column[valid_columns] / total_non_masked_per_column[valid_columns]
+
+    return normalized_values, pixels_in_range_per_column
+
+
+def detect_hot_columns_iterative(normalized_values):
+    """
+    Detects hot columns by iteratively identifying columns with significant differences in normalized values.
+
+    Args:
+        normalized_values (numpy.ndarray): Normalized values representing column data.
+
+    Returns:
+        tuple:
+            - hot_columns_detected (list): Indices of detected hot columns.
+            - threshold_values (list): Thresholds used for detection.
+            - threshold_final_value (float): The final threshold value.
+            - all_differences (list): Differences calculated in each iteration.
+    """
+    remaining_events = np.copy(normalized_values)
+    hot_columns_detected = []
+    threshold_values = []
+    all_differences = []  # To store differences at each iteration    
+    while True:
+        sorted_counts = np.sort(remaining_events)
+        differences = sorted_counts[1:] - sorted_counts[:-1]
+        all_differences.append(differences)  # Store differences        
+        if len(differences) == 0 or np.max(differences) <= 0:
+            break        
+        
+        max_diff_index = np.argmax(differences)
+        threshold_value = sorted_counts[max_diff_index + 1]
+        mean_count = np.mean(normalized_values)        
+        
+        if threshold_value >= mean_count:
+            current_hot_columns = np.where(remaining_events >= threshold_value)[0]
+            hot_columns_detected.extend(current_hot_columns)
+            threshold_values.append(threshold_value)
+        else:
+            break        
+        
+        remaining_events[current_hot_columns] = 0    
+        
+    threshold_final_value = np.min(threshold_values) if threshold_values else 0
+    return hot_columns_detected, threshold_values, threshold_final_value, all_differences
+    
+
+def plot_sorted_normalized(normalized_values, filename="sorted_normalized_values.png"):
+    sorted_values = np.sort(normalized_values)
+    
+    c = ROOT.TCanvas("cn","cn",1200,750)
+    x = array('d',range(len(sorted_values)))
+    y = array('d',sorted_values)
+    tg = ROOT.TGraph(len(x), x, y)
+    tg.GetHistogram().SetTitle("Sorted Normalized Values (Cumulative Distribution);Index;Normalized Values")
+    tg.SetMarkerStyle(21)
+    tg.Draw("APL")
+    c.SetGridy()
+    c.SaveAs(filename)
+    input("press enter")
+
+
+def plot_pixels(normalized_values, pixels_in_range_per_column, normalized_filename="normalized_values_vs_columns.png", pixel_count_filename="pixel_count_vs_columns.png"):
+    
+    c = ROOT.TCanvas("cn","cn",1200,750)
+    x = array('d',range(len(pixels_in_range_per_column)))
+    y = array('d',pixels_in_range_per_column)
+    tg = ROOT.TGraph(len(x), x, y)
+    tg.GetHistogram().SetTitle("Pixels in Range per Column;Column Index;Pixels in Range")
+    tg.SetMarkerStyle(21)
+    tg.Draw("APL")
+    c.SetGridy()
+    c.SaveAs(pixel_count_filename)
+    c.Update()
+    input("press enter")
+
+    c2 = ROOT.TCanvas("cn2","cn2",1200,750)
+    x = array('d',range(len(normalized_values)))
+    y = array('d',normalized_values)
+    tg = ROOT.TGraph(len(x), x, y)
+    tg.GetHistogram().SetTitle("Normalized Values per Column;Column Index;Normalized Values")
+    tg.SetMarkerStyle(21)
+    tg.Draw("APL")
+    c2.SetGridy()
+    c2.SaveAs(normalized_filename)
+    c2.Update()
+    input("press enter")
+
+
+def plot_differences_between_sorted(normalized_values, filename="differences_between_sorted_values.png"):
+    """
+    Plots the differences between normalized values once sorted.
+    """
+    sorted_values = np.sort(normalized_values)
+    differences = sorted_values[1:] - sorted_values[:-1]
+
+    c = ROOT.TCanvas("cn","cn",1200,750)
+    x = array('d',range(1, len(sorted_values)))
+    y = array('d',differences)
+    tg = ROOT.TGraph(len(x), x, y)
+    tg.GetHistogram().SetTitle("Differences Between Consecutive Sorted Normalized Values;Index;Differences Between Sorted Values")
+    tg.SetMarkerStyle(21)
+    tg.Draw("APL")
+    c.SetGridy()
+    c.SaveAs(filename)
+    c.Update()
+    input("press enter")
+
+   
+    
+def group_consecutives(data):
+    result = []
+    temp = []
+    for i in range(len(data)):
+        if i == 0 or data[i] == data[i-1] + 1:
+            temp.append(data[i])
+        else:
+            if len(temp) > 1:
+                result.append([temp[0], temp[-1]])
+            else:
+                result.extend(temp)
+            temp = [data[i]]
+    if len(temp) > 1:
+        result.append([temp[0], temp[-1]])
+    else:
+        result.extend(temp)
+
+    return result
+    
+    
+    
+    
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Processes a FITS file and detects hot columns.")
+    parser.add_argument('-f', '--file', type=str, required=True, help="Path to the FITS file.")
+    parser.add_argument('-q', '--charge_range', type=float, nargs=2, default=(0.77, 3.77), metavar=('MIN_VALUE', 'MAX_VALUE'),
+                        help="Charge value range (default 0.77 to 3.77).")
+
+    args = parser.parse_args()
+
+    # Extract processed data
+    non_masked_all, non_masked_ranged = extract_data(fits_path=args.file, charge_range=args.charge_range)
+
+    # Calculate normalized values
+    normalized_values, pixels_in_range_per_column = calculate_normalized_values(non_masked_data_ranged=non_masked_ranged, non_masked_data_all=non_masked_all)
+
+    # Detect hot columns
+    hot_columns_detected, threshold_values, threshold_final_value, all_differences = detect_hot_columns_iterative(normalized_values)
+
+    # Display results in the terminal
+    print("\n--- Detected Hot Columns ---")
+
+    # Ensure the hot columns are sorted
+    hot_columns_sorted = sorted(hot_columns_detected)
+
+    # Group consecutive columns
+    grouped_hot_columns = group_consecutives(hot_columns_sorted)
+
+    print(f"Detected hot columns: {grouped_hot_columns}")
+    print(f"Final threshold value: {threshold_final_value:.4f}")
+     
+
+    # Plot distributions
+    plot_sorted_normalized(normalized_values, filename=f"{args.file.split('.')[0]}_sorted_normalized_values.png")
+    plot_differences_between_sorted(normalized_values, filename=f"{args.file.split('.')[0]}_differences_between_sorted_values.png")
+    plot_pixels(normalized_values=normalized_values, pixels_in_range_per_column=pixels_in_range_per_column,
+                normalized_filename=f"{args.file.split('.')[0]}_normalized_values_vs_columns.png", pixel_count_filename=f"{args.file.split('.')[0]}_pixel_count_vs_columns.png")
+                
+                
+              

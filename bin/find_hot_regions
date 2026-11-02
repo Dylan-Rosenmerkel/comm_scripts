@@ -1,0 +1,373 @@
+#!/usr/bin/env python3
+
+import sys
+import click
+MPIX = 3.61849e-10 # pixel mass in kg
+
+### To avoid ROOT help print out
+if not '-h' in sys.argv and not '--help'in sys.argv:
+    from astropy.io import fits
+    import ROOT
+    import numpy as np
+    from array import array
+    from glob import glob
+    
+    from scipy import stats
+    from scipy import signal
+    import pandas as pd
+
+    ROOT.gStyle.SetOptFit(1111)
+
+@click.command(help="Evaluate the density of events per column to estimate hot columns")
+@click.option("-i","--infile", help="(file) or list of fits files (in units of electrons); or a common pattern for a list of root files")
+@click.option("-e","--ext",help="Data and Header extension ID (tuple). Data assumed to be in electron units",type=(int,int),default=(0,0))
+@click.option("-c","--cols",help="Tuple with the range of columns to be evaluated",type=(int,int),default=(8,6151))
+@click.option("-s","--sel",help="Charge selection range (in units of electrons) to count events",type=(float,float),default=(0.8,10.023))
+@click.option("-m","--mask",help="Fits file Extension Name for the mask",type=str,default="CLSMASK")
+@click.option("-r","--rowrange",help="Tuple with the range of rows to be evaluated",type=(int,int),default=None)
+@click.option("--rebin",help="Factor to rebin the distribution due to low statistics",type=int,default=1)
+@click.option("--nsigma",help="Number of sigmas from 0 to identify hot columns",type=float,default=4)
+@click.option("--addovs",help="Include overscan cols region given by this tuple",type=(int,int),default=None)
+@click.option("--addpre",help="Include prescan cols region given by this tuple",type=(int,int),default=None)
+@click.option("--axis",help="Search for hot region along 'row' or 'col'",type=str,default="col")
+@click.option("--silent",help="Set for batch plot mode",type=bool,default=False)
+@click.option("--tpix",help="Time in seconds to read a pixel (assuming continuous readout)",type=float,default=None)
+@click.option("--scan",help="Scan the event rate for a range of nsigma values, (min,max,n); if n is 1, then nsigma will be used",type=(float,float,int),default=(6.5,0.1,1))
+@click.option("--xfit",help="Region of cols|rows to use for the underlying fitting",type=(int,int),default=(None,None))
+@click.option("--fitfunc",help="Function name (pol0, pol1, pol2, ...) to fit the underlying continuum",type=str,default="pol2")
+def main(infile,ext,cols,sel,mask,rowrange,rebin,nsigma,addovs,addpre,axis,silent,tpix,scan,xfit,fitfunc):
+    rates   = []
+    nsigmas = []
+    
+    # pixel mass and timing, to convert counts into e-/day/kg
+    if tpix is not None:
+        global MPIX
+        MASS = 2.33/1000 * 0.0015 * 0.0015 * 0.0675 #kg/cm3 * cm*cm*cm = kg
+        # in units of (kg-day)
+        MPIX = MASS * (tpix/60/60/24)
+    
+    # values of nsigma to scan
+    if int(scan[2])==int(1):
+        nsigma_list = [nsigma]
+        dsigma  = 0.0
+    else:
+        nsigma_list = np.linspace(scan[0],scan[1],scan[2])
+        dsigma  = np.diff(nsigma_list)[1]
+    
+    # fitting region
+    xfit = list(xfit)
+    if xfit[0] is None:
+        xfit[0] = cols[0]
+    if xfit[1] is None:
+        xfit[1] = cols[1]
+
+    for i,nsigma in enumerate(nsigma_list):
+        if axis=="col":
+            res = main_col(infile,ext,cols,sel,mask,rowrange,rebin,nsigma,addovs,addpre,xfit,silent,fitfunc)
+        elif axis=="row":
+            res = main_row(infile,ext,cols,sel,mask,rowrange,rebin,nsigma,addovs,addpre)
+        rates.append( res )
+        nsigmas.append( nsigma )
+    
+    if int(scan[2])>1:
+        c = ROOT.TCanvas("c1",f"With steps of size {dsigma}")
+        th = ROOT.TGraph(len(rates), array('d',nsigmas), array('d',rates) )
+        th.SetMarkerStyle(20)
+        th.SetMarkerSize(0.7)
+        th.GetHistogram().SetXTitle("number of sigmas")
+        th.GetHistogram().SetYTitle("cumulative event rate")
+        th.Draw("APL")
+        c.Update()
+        c.Draw()
+        input("press enter")
+
+    return
+
+
+def main_col(infile,ext,cols,sel,mask,rowrange,rebin,nsigma,addovs,addpre,xfit,silent,fitfuncname):
+
+    lof = glob(infile)
+    if len(lof)==0:
+        raise IOError(f"No fits file with patter {infile}")
+
+    Nbins = (cols[1]-cols[0])+1
+    
+    ############################################################################3
+    # Cumulative number of events along columns
+    ############################################################################3
+    events   = np.zeros(Nbins)
+    Npix     = np.zeros(Nbins)
+    mNpix    = 0 
+    for i,f in enumerate(lof):
+        d = fits.getdata(f,ext=ext[0]).astype(float)
+        nrows,ncols = d.shape
+        # mask events not passing the threshold
+        clsmask = fits.getdata(f,extname=mask) if mask is not None else np.zeros_like(d).astype(bool)
+        if addovs is not None:
+            clsmask[:,addovs] = False
+        if addpre is not None:
+            clsmask[:,addpre] = False
+
+        fmask = np.logical_or(clsmask, np.logical_or(d<sel[0],d>=sel[1]))
+        if rowrange is not None:
+            nrows   = rowrange[1]+1-rowrange[0]
+            Npix   += rowrange[1]+1-rowrange[0]
+            mNpix  += np.sum( fmask[rowrange[0]:rowrange[1]+1,:], axis=0)[cols[0]:cols[1]+1]
+            mcls    = np.sum( clsmask[rowrange[0]:rowrange[1]+1,:], axis=0)[cols[0]:cols[1]+1]
+            events += np.ma.sum(np.logical_not(fmask)[rowrange[0]:rowrange[1]+1,:],axis=0)[cols[0]:cols[1]+1] /(nrows-mcls) *nrows
+        else:
+            Npix   += d.shape[0]
+            mNpix  += np.sum( fmask, axis=0)[cols[0]:cols[1]+1]
+            mcls    = np.sum( clsmask, axis=0)[cols[0]:cols[1]+1]
+            events += np.ma.sum(np.logical_not(fmask),axis=0)[cols[0]:cols[1]+1] /(nrows-mcls) *nrows
+
+    # aplicar el filtro para buscar underlying continua, instead of fitting a pol
+    #yhat   = signal.savgol_filter(events,51,2)
+    yrehat = signal.savgol_filter(events,15,5)
+
+    thyhat = ROOT.TH1D("hyhat","hyhat",Nbins,cols[0]-0.5,cols[1]+0.5)
+    thyhat.SetLineColor(ROOT.kBlue)
+    thyhat.SetLineStyle(9)
+    thyhat.SetLineWidth(2)
+    th = ROOT.TH1D("hot_cols","hot_cols",Nbins,cols[0]-0.5,cols[1]+0.5)
+    for i,(yi,yhati) in enumerate(zip(events,yrehat)):
+        th.SetBinContent(i+1,yi)
+        thyhat.SetBinContent(i+1,yhati)
+    
+    thyhat.Rebin(rebin)
+    th.Rebin(rebin)
+    th.GetXaxis().SetTitle("columns")
+    if mask is not None:
+        th.GetYaxis().SetTitle("counts [w/o cls]")
+    else:
+        th.GetYaxis().SetTitle("counts [w cls]")
+
+    # fitting a polynomial signal of degree 2
+    fitfunc = ROOT.TF1("fitfunc",fitfuncname,xfit[0]-0.5,xfit[1]+0.5)
+    fitfunc.SetLineColor(2)
+    thyhat.Fit(fitfunc,"Q0 LMER")
+    
+    c = ROOT.TCanvas("c1","Cumulative distribution of events alon columns ")
+    th.Draw("HIST")
+    thyhat.Draw("HIST same")
+    fitfunc.SetRange(cols[0],cols[1])
+    fitfunc.Draw("same")
+    c.Update()
+    #input("c1: Cumulative distribution of events along columns ...")
+    
+    ############################################################################3
+    # subtract fitted underlying model to data
+    ############################################################################3
+    sth = ROOT.TH1D("hot_cols","hot_cols",Nbins,cols[0]-0.5,cols[1]+0.5)
+    sth.GetYaxis().SetTitle("subtracted counts")
+    sth.GetXaxis().SetTitle("columns")
+    sth.Rebin(rebin)
+    revents = []
+    events  = []
+    for i in range(1,th.GetNbinsX()):
+        sth.SetBinContent(i, th.GetBinContent(i) - fitfunc.Eval(th.GetBinCenter(i)))
+        revents.append( sth.GetBinContent(i) )
+        events.append( th.GetBinContent(i) )
+
+    # fit underlying continue which should be consistent with 0
+    zero = ROOT.TF1("nocharge","pol0",cols[0]-0.5,cols[1]+0.5)
+    zero.SetLineColor(ROOT.kAzure+2)
+    sth.Fit(zero,"Q0 LMER")
+
+    # detect hot columns via mean and std values
+    ##################################################################3
+    _revents = revents[xfit[0]:xfit[1]]
+    z_scores = stats.zscore(_revents)
+    _revents = np.array(_revents)
+    qmean = np.mean( _revents[np.abs(z_scores)<3.0] )
+    qstd  = np.std( _revents[np.abs(z_scores)<3.0] )
+    ymin  = np.min( _revents[np.abs(z_scores)<3.0] )
+    ymax  = np.max( _revents[np.abs(z_scores)<3.0] )
+    #qmean = stats.mstats.trimmed_mean(revents,limits=(0.1,0.9),relative=True)
+    #qstd  = stats.tstd(revents,limits=np.percentile(revents,[0.1,0.9]))
+    #ymin = -nsigma*qstd
+    #ymax = nsigma*qstd
+    print(" mean: ",qmean)
+    print(" range: ",ymin,ymax)
+    print(" std: ", qstd)
+
+    c2 = ROOT.TCanvas("c2","Subtracted distribution of events along columns")
+    sth.Draw("HIST")
+    lines = []
+    for yvalue,color,style in zip( [qmean+nsigma*qstd, qmean-nsigma*qstd, nsigma*qstd,-nsigma*qstd],
+            #[-nsigma*qstd,nsigma*qstd,zero.GetParameter(0)-nsigma*qstd,zero.GetParameter(0)+nsigma*qstd],
+            [ROOT.kGreen+2,ROOT.kGreen+1,ROOT.kAzure+2,ROOT.kAzure+2],[2,2,9,9]):
+        lines.append( ROOT.TLine(cols[0]-0.5,yvalue,cols[1]+0.5,yvalue) )
+        lines[-1].SetLineStyle(style)
+        lines[-1].SetLineColor(color)
+        lines[-1].Draw("SAME")
+
+    hot_cols = abs(np.array(revents)-qmean) >= nsigma*qstd
+    hot_cols_id = np.arange(cols[0],cols[1])
+    tlines = []
+    ishotcol = []
+    for i,ishot in enumerate(hot_cols):
+        if not ishot:
+            continue
+        if not (hot_cols_id[i] >= xfit[0]  and hot_cols_id[i]<= xfit[1]):
+            continue
+        tlines.append(ROOT.TLine(hot_cols_id[i],min(revents),hot_cols_id[i],abs(5*min(revents))))
+        tlines[-1].SetLineStyle(10)
+        tlines[-1].SetLineColor(2)
+        tlines[-1].Draw("SAME")
+        ishotcol.append( hot_cols_id[i] )
+        ## all pixels in the column will be masked
+        mNpix[i] = Npix[i]
+        
+
+    # write to output file, counts, num. sig from zero/mean
+    df = pd.DataFrame({ 
+        'cols': hot_cols_id,
+        'hotcol': hot_cols,
+        'sub_counts': revents,
+        'counts': events,
+        'n_sigmas': abs(np.array(revents)-qmean)/qstd
+        })
+    df.to_csv(f"{lof[0].replace('.fits','_HotCols.csv').replace('.fz','_HotCols.csv')}",index=False)
+    
+    # Display hot columns in WADERS format for direct use to the JSON file
+    if not silent:
+        print(f"Identify hot columns: {group_consecutives(ishotcol)}")
+    c2.Update()
+    c2.Draw()
+    
+    npix_included = (np.sum(Npix) - np.sum(mNpix)) * MPIX
+    results = np.ma.array(events, mask=hot_cols).sum() / npix_included 
+
+    if not silent:
+        #input("Subtracted distribution of events along columns ...")
+        input("press enter")
+
+    return results
+
+def group_consecutives(data):
+    result = []
+    temp = []
+    for i in range(len(data)):
+        if i == 0 or data[i] == data[i-1] + 1:
+            temp.append(data[i])
+        else:
+            if len(temp) > 1:
+                result.append([temp[0], temp[-1]])
+            else:
+                result.extend(temp)
+            temp = [data[i]]
+    if len(temp) > 1:
+        result.append([temp[0], temp[-1]])
+    else:
+        result.extend(temp)
+
+    return result
+
+def main_row(infile,ext,cols,sel,mask,rowrange,rebin,nsigma,addovs,addpre):
+
+    lof = glob(infile)
+    if len(lof)==0:
+        raise IOError(f"No fits file with patter {infile}")
+
+    Nbins = (cols[1]-cols[0])+1
+    
+    ############################################################################3
+    # Cumulative number of events along columns
+    ############################################################################3
+    events = np.zeros(Nbins)
+    for i,f in enumerate(lof):
+        d = fits.getdata(f,ext=ext[0]).astype(float)
+        # mask events not passing the threshold
+        clsmask = fits.getdata(f,extname=mask) if mask is not None else np.zeros_like(d).astype(bool)
+        if addovs is not None:
+            clsmask[:,addovs] = False
+        if addpre is not None:
+            clsmask[:,addpre] = False
+
+        fmask = np.logical_or(clsmask, np.logical_or(d<sel[0],d>=sel[1]))
+        if rowrange is not None:
+            events += np.ma.sum(np.ma.array(d, mask=fmask)[:,rowrange[0]:rowrange[1]+1],axis=1)[cols[0]:cols[1]+1]
+        else:
+            events += np.ma.sum(np.ma.array(d, mask=fmask),axis=1)[cols[0]:cols[1]+1]
+
+    th = ROOT.TH1D("hot_cols","hot_cols",Nbins,cols[0]-0.5,cols[1]+0.5)
+    for i,yi in enumerate(events):
+        th.SetBinContent(i+1,yi)
+
+    th.Rebin(rebin)
+    th.GetXaxis().SetTitle("rowss")
+    if mask is not None:
+        th.GetYaxis().SetTitle("counts [w/o cls]")
+    else:
+        th.GetYaxis().SetTitle("counts [w cls]")
+   
+    fitfunc = ROOT.TF1("fitfunc","pol2",cols[0]-0.5,cols[1]+0.5)
+    fitfunc.SetLineColor(2)
+    th.Fit(fitfunc,"Q0 LMER")
+    
+    c = ROOT.TCanvas()
+    th.Draw("HIST")
+    fitfunc.Draw("same")
+    c.Update()
+    input("Cumulative distribution of events along columns ...")
+    
+    ############################################################################3
+    # subtract fitted underlying model to data
+    ############################################################################3
+    sth = ROOT.TH1D("hot_rows","hot_rows",Nbins,cols[0]-0.5,cols[1]+0.5)
+    sth.GetYaxis().SetTitle("subtracted counts")
+    sth.GetXaxis().SetTitle("columns")
+    sth.Rebin(rebin)
+    revents = []
+    events  = []
+    for i in range(1,th.GetNbinsX()):
+        sth.SetBinContent(i, th.GetBinContent(i) - fitfunc.Eval(th.GetBinCenter(i)))
+        revents.append( sth.GetBinContent(i) )
+        events.append( th.GetBinContent(i) )
+
+    # fit underlying continue which should be consistent with 0
+    zero = ROOT.TF1("nocharge","pol0",cols[0]-0.5,cols[1]+0.5)
+    zero.SetLineColor(ROOT.kAzure+2)
+    sth.Fit(zero,"Q0 LMER")
+
+    # detect hot columns via mean and std values
+    qmean = stats.mstats.trimmed_mean(revents,limits=(0.1,0.9),relative=True)
+    qstd  = stats.tstd(revents,limits=np.percentile(revents,[0.1,0.9]))
+    ymin = -nsigma*qstd
+    ymax = nsigma*qstd
+    print(" mean: ",qmean)
+    print(" range: ",ymin,ymax)
+    print(" std: ", qstd)
+
+    c = ROOT.TCanvas()
+    sth.Draw("HIST")
+    lines = []
+    for yvalue,color,style in zip([-nsigma*qstd,nsigma*qstd,zero.GetParameter(0)-nsigma*qstd,zero.GetParameter(0)+nsigma*qstd],
+            [ROOT.kGreen+2,ROOT.kGreen+1,ROOT.kAzure+2,ROOT.kAzure+2],[2,2,9,9]):
+        lines.append( ROOT.TLine(cols[0]-0.5,yvalue,cols[1]+0.5,yvalue) )
+        lines[-1].SetLineStyle(style)
+        lines[-1].SetLineColor(color)
+        lines[-1].Draw("SAME")
+        
+    c.Update()
+    input("Subtracted distribution of events along columns ...")
+
+    # write to output file, counts, num. sig from zero/mean
+    df = pd.DataFrame({ 
+        'rows': np.linspace(cols[0],cols[1],Nbins-1).astype(int),
+        'sub_counts': revents,
+        'counts': events,
+        'n_sigmas': abs(np.array(events)-qmean)/qstd,
+        'hotrow': (abs(np.array(events)-qmean)/qstd>nsigma*qstd).astype(int)
+        })
+    df.to_csv(f"{lof[0].replace('.fits','_HotRows.csv').replace('.fz','_HotRows.csv')}",index=False)
+
+
+
+    return
+
+########################################################################################
+if __name__=='__main__':
+    main()
+

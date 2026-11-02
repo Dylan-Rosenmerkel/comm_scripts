@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+import sys
+import click
+
+### To avoid ROOT help print out
+if not '-h' in sys.argv and not '--help'in sys.argv:
+    from dateutil import parser
+    from glob import glob
+    from array import array
+    from astropy.io import fits
+    import click
+    import numpy as np
+    import ROOT
+    from datetime import datetime
+    import pandas as pd
+    
+    from pysimdamicm.utils.root_plot_styles import get_moskita_style as Style
+    style = Style(False,False,False)
+    style.cd()
+    ROOT.gROOT.ForceStyle()
+
+    COLORS = [ROOT.kRed+1,ROOT.kAzure-3]
+    STYLE = [22,21]
+    
+    ROOT.gROOT.SetBatch(1)
+
+@click.command(help="Evolution plots for moskita setup")
+@click.option("-m","--mode",help="Type of plots to generate: evolution (default) | background | dark-current",type=str,default="evolution")
+@click.option("-i","--infiles", help="List of fits files; A pattern fits file name can also be given")
+@click.option("--hext",help="Extension ID to get parameters from header",type=int,default=0)
+@click.option("--outdir",help="Output directory for the pdf plots",type=str,default="/media/T9/MOSKITA/dqm_MOD89")
+@click.option("--beamon",help="Set to plot the spectrum for images taken during beam ON, otherwise spectrum duing beam OFF",type=bool,default=False)
+@click.option("--exclude",help="Excludion region as an string to be included in the creation of the background plot, ex. to exclude serial register events ' && !(DY==1&&DX>2) && !(DY==2&&DX>10)' ",type=str,default="")
+def main(mode,infiles,hext,outdir,beamon,exclude):
+    if mode=="evolution":
+        main_evolution(infiles,hext,outdir)
+    else:
+        main_background(infiles,outdir,beamon,exclude)
+    return
+
+def main_background(infiles,outdir,beamon,exclude,Nbins=50,Emin=1.0,Emax=500,minos="/media/T9/MOSKITA/documentation/HESpectra_10keV_1MeV_sensei_MINOS.csv"):
+    ROOT.gStyle.SetOptStat(0)
+    lof = glob(infiles)
+    
+    # load data from minos
+    minos = pd.read_csv(minos)
+    hminos = ROOT.TGraph(len(minos.E), array('d',minos.E.values),array('d',minos.rate.values))
+    hminos.SetLineColor(ROOT.kRed+1)
+    hminos.SetMarkerColor(ROOT.kRed+1)
+    hminos.SetMarkerStyle(2)
+    hminos.SetMarkerSize(1.5)
+
+    # fraction of pixels that are included in the analysis: ALL - HOT COLS - PRE-SCAN - OVERSCAN
+    number_of_hot_columns = 163 + 120
+    CF_due_hot_cols = (6200-number_of_hot_columns) / 6200.0
+    Npix = 3200*515
+    Si_density_kg_cm3 = 0.00233
+    pixel_mass_kg = 3.5386875e-10 #0.0015*0.0015*0.0675*2.330
+    pixel_mass_g  = 3.5386875e-7
+    total_mass = Npix * pixel_mass_kg
+    seconds_to_day = 1/(60*60*24)
+
+    clusters = ROOT.TChain("clustersRec")
+    info = ROOT.TChain("info")
+    texp_kg_day = 0
+    for i,f in enumerate(sorted(lof)):
+        _ = clusters.Add(f)
+        _ = info.Add(f)
+        _ = info.GetEntry(i)
+    
+        # total exposure in seconds fore each input file
+        print(" readout time", info.total_exposure )
+        print(" texp [days]: ", (info.total_exposure/2 * (Npix+1) * CF_due_hot_cols) * seconds_to_day )
+    
+        texp_kg_day +=  (info.total_exposure/2 * (Npix+1) * CF_due_hot_cols) * seconds_to_day * pixel_mass_kg
+        print(" exposure in grams*day: ", texp_kg_day )
+
+    
+    c = ROOT.TCanvas("c","c",900,1100)
+    c.Divide(1,3)
+    ttext = ROOT.TLatex()
+    ttext.SetTextSize(0.031)
+    ttext.SetTextFont(72)
+    ttext.DrawLatexNDC(0.24,0.97, f"MOD89: {datetime.now().strftime('%D %H:%M:%S')} ({len(lof)} images)")
+
+    leg = ROOT.TLegend(0.4,0.78,0.8,0.95)
+    leg.SetTextSize(0.08)
+    leg.SetTextFont(132)
+    hist = []
+    beamon_selection = " && ppcol>0.00001 " if beamon else " && ppcol ==0"
+
+    print( beamon_selection )
+    for i,(nbins,emin,emax) in enumerate([[220,1.0,12.0],[120,10.0,500.0],[200,1.0,1000.0]]):
+        _ = clusters.GetEntry(0)
+        if hasattr(clusters,"excluded"):
+            cluster_selection = "!excluded"+beamon_selection+exclude
+        else:
+            cluster_selection = "has_seed"+beamon_selection+exclude
+        
+        print(f"Spectrum has been created with the following selection {cluster_selection}")
+        clusters.Draw(f"Energy>>h{i}({nbins},{emin},{emax})",cluster_selection,"P GOFF")
+        hist.append(ROOT.gDirectory.Get(f"h{i}"))
+        hist[-1].SetMarkerSize(0.5)
+        hist[-1].GetXaxis().SetTitle("Energy [keV]")
+        hist[-1].GetYaxis().SetTitle("Rate [d.r.u.]")
+        hist[-1].Sumw2()
+        # scale data to dru
+        hist[-1].Scale( 1/texp_kg_day * nbins/(emax-emin)  )
+        
+        pad = c.cd(i+1)
+        if i==0:
+            ROOT.gPad.SetTopMargin(0.1)
+        else:
+            ROOT.gPad.SetTopMargin(0.01)
+
+        ROOT.gPad.SetBottomMargin(0.2)
+        hist[-1].Draw("PE")
+        if i==0:
+            gauss = ROOT.TF1("Co-KB1","gaus(0)+pol1(3)",2,12.0)
+            gauss.SetParLimits(0,0.001,1e8)
+            gauss.SetParameter(1,8.0)
+            gauss.SetParLimits(1,7.7,8.3)
+            gauss.SetParameter(2,0.07)
+            gauss.SetParLimits(2,0.03,0.1)
+            gauss.SetLineColor(2)
+            hist[-1].Fit(gauss,"LMER")
+            hist[-1].Fit(gauss,"LMER")
+
+            gauss.SetNpx(500)
+            gauss.Draw("same")
+
+        if i==2:
+            leg.AddEntry(hist[-1],"MOD89 (LHC)","PL")
+            hminos.Draw("P SAME")
+            leg.AddEntry(hminos,"Sensei standard shield (MINOS)","P")
+            leg.Draw("same")
+
+        pad.SetLogy()
+        pad.Update()
+
+    c.cd()
+    c.SaveAs(f"{outdir}/moskita_HESpectra.pdf")
+
+    return
+
+def main_evolution(infiles,hext,outdir):
+    
+    ## list of files to plot
+    lof = sorted(list(glob(infiles)))
+    # checking if files have been found
+    if len(lof)==0:
+        raise("IOError: file(s) not found with pattern {}".format(infiles))
+
+    Xkeypar = 'MEIMGID'
+    keypars = ["MEGAIN","MESIG","MEDC"]
+    YRANGE  = [(205,245),(0.19,0.22),(0.001,0.025)]
+    extensions = [2,3]
+    keypar_labels = ["calibration [ADU/e^{-}]","#sigma_{0} [e^{-}/pix]","dc [e^{-}/pix/day] (w/o clusters)"]
+    results = {}
+    for par in keypars:
+        results[par] = {}
+        for ext in extensions:
+            results[par][ext] = {'x':[],'y':[],'e':[],'binning':[],'texp':[]}
+        for file in sorted(lof):
+            if file.__contains__("ext0_waders"):
+                ext = 2 
+            elif file.__contains__("ext1_waders"):
+                ext = 3
+            else:
+                print(f"WARNING: {file} does not contain 'ext0_waders' neither 'ext1_waders'. It is not included")
+                continue
+            results[par][ext]['x'].append( int(fits.getval(file,f"{Xkeypar}{ext}",ext=hext)) )
+            results[par][ext]['y'].append( float(fits.getval(file,f"{par}{ext}",ext=hext)) )
+            results[par][ext]['e'].append( float(fits.getval(file,f"E{par}{ext}",ext=hext)) )
+            if par in ["MEDC"]:
+                results[par][ext]['binning'].append(float(fits.getval(file,"NBINROW",ext=hext))*float(fits.getval(file,"NBINCOL",ext=hext)))
+                texp = (parser.parse(fits.getval(file,'DATEEND',ext=hext)) - parser.parse(fits.getval(file,'DATESTART',ext=hext))).total_seconds()/2. + float(fits.getval(file,'EXPOSURE',ext=hext))
+                results[par][ext]['texp'].append( texp )
+    
+    for par in keypars:
+        for ext in extensions:
+            for key in results[par][ext].keys():
+                results[par][ext][key] = np.array( results[par][ext][key] )
+
+    ### Go from ADU to e- units
+    get_error = lambda a,x,ex,y,ey: np.sqrt( (a*ex/y)**2 + (a*x*ey/y**2)**2 * ey**2 )
+    for ext in extensions:
+        ### SIGMA: convert ADU to electron units
+        #results["MESIG"][ext]["e"] = get_error(1.0,results["MESIG"][ext]["y"],results["MESIG"][ext]["e"],results["MEGAIN"][ext]["y"],results["MEGAIN"][ext]["e"]) 
+        results["MESIG"][ext]["y"] = results["MESIG"][ext]["y"] / results["MEGAIN"][ext]["y"]
+        results["MESIG"][ext]["e"] = results["MESIG"][ext]["e"] / results["MEGAIN"][ext]["y"]
+      
+        ### DARK CURRENT: convert ADU/bin/img to e/pix/day
+        SF = 84600. / results["MEDC"][ext]['binning'] / results["MEDC"][ext]['texp']
+        results["MEDC"][ext]['e'] = get_error(SF,results["MEDC"][ext]['y'],results["MEDC"][ext]['e'],results["MEGAIN"][ext]['y'],results["MEGAIN"][ext]['e'])
+        results["MEDC"][ext]['y'] = results["MEDC"][ext]['y'] / results["MEGAIN"][ext]['y'] * SF
+        #results["MEDC"][ext]['e'] = results["MEDC"][ext]['e'] / results["MEGAIN"][ext]['y'] * SF
+
+    graphs = []
+    c = ROOT.TCanvas(par,par,1000,1100)
+    legend = ROOT.TLegend(0.90,0.88,0.96,0.96)
+    #legend.SetNColumns(2)
+    #legend.SetTextSize(0.022)
+    c.Divide(1,3,1e-3,1e-3)
+    ttext = ROOT.TLatex()
+    ttext.SetTextSize(0.031)
+    ttext.SetTextFont(72)
+    ttext.DrawLatexNDC(0.30,0.97, f"MOD89: {datetime.now().strftime('%D %H:%M:%S')}")
+    for j,par in enumerate(keypars):
+        dopt = "A PE "
+        c.cd(j+1)
+        # share x-axis
+        ROOT.gPad.SetBottomMargin(0.1)
+        ROOT.gPad.SetTopMargin(0.09)
+        if j==0:
+            ROOT.gPad.SetTopMargin(0.13)
+        elif j+1==len(keypars):
+            ROOT.gPad.SetTopMargin(0.04)
+            ROOT.gPad.SetBottomMargin(0.2)
+
+        for i,ext in enumerate(extensions):
+            graphs.append(ROOT.TGraphErrors(len(results[par][ext]['x']),
+                                            array('d',results[par][ext]['x']),
+                                            array('d',results[par][ext]['y']),
+                                            array('d',np.zeros_like(results[par][ext]['x'])),
+                                            array('d',results[par][ext]['e'])))
+            graphs[-1].GetHistogram().SetDirectory(0)
+            if j+1==len(keypars):
+                graphs[-1].GetHistogram().GetXaxis().SetTitle("image number")
+
+            graphs[-1].GetHistogram().GetYaxis().SetTitle(keypar_labels[j])
+            graphs[-1].GetHistogram().GetYaxis().SetRangeUser(YRANGE[j][0],YRANGE[j][1])
+            graphs[-1].SetMarkerColor(COLORS[i])
+            graphs[-1].SetLineColor(COLORS[i])
+            graphs[-1].SetMarkerStyle(STYLE[i])
+            graphs[-1].SetMarkerSize(1)
+        
+            graphs[-1].Draw(dopt) 
+            dopt = "PE SAME"
+            
+
+            # add legend only for the first plot
+            if j==0:
+                legend.AddEntry(graphs[-1], f"ext {ext}", "P")
+
+        c.Update()
+    c.cd(0)
+    legend.Draw("same")
+    c.cd()
+    c.SaveAs(f"{outdir}/moskita_evolution_plots.pdf")
+
+    #c.Draw()
+    #input("....")
+    
+    return
+
+########################################################################################
+if __name__=='__main__':
+    main()
+

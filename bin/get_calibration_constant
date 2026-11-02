@@ -1,0 +1,291 @@
+#!/usr/bin/env python3
+import click
+import sys
+
+### To avoid ROOT help print out
+if not '-h' in sys.argv and not '--help'in sys.argv:
+    import ROOT
+    from array import array
+    import numpy as np
+    from glob import glob
+    from astropy.io import fits
+
+
+def get_histe(infile,hist_e,inADU,gain,cols=(8,-1),rows=(0,-1),ext=0):
+
+    lof = glob(infile)
+    if inADU:
+        CF = 1/gain
+    else:
+        CF = 1.0
+
+    for f in lof:
+        d = fits.getdata(f,ext).astype(float)[rows[0]:rows[1],cols[0]:cols[1]]
+        for qij in d.flatten():
+            _ = hist_e.Fill(qij*CF)
+
+    return hist_e
+
+@click.command(help="Script to fit gaussian peaks to the reconstructed image")
+@click.option("-f","--infile",help="Input fits file with the calibrated data",type=str)
+@click.option("--inadu",help="If input data is in ADUs",type=bool,default=False)
+@click.option("-r","--root",help="Input root file with the reconstructed clusters", type=str)
+@click.option("-k","--gain",help="Calibration estimated with the two first gaussian peaks", type=float)
+@click.option("--ne",help="Minimum and maximum number of electrons to be fitted", type=(int,int), default=(0,1350))
+@click.option("--de",help="Binning size in units of ADU", type=float, default=0.05)
+@click.option("--display",help="Display the best fit to each peak", type=bool, default=False)
+@click.option("--cols",help="For --infile option, the range of cols to be included", type=(int,int), default=(8,-1))
+@click.option("--rows",help="For --infile option, the range of rows to be included", type=(int,int), default=(0,-1))
+@click.option("--erange",help="Delta energy range for the spectral window fit: mu +/- erange",type=(float,float), default=(0.35,0.5))
+@click.option("--ext",help="Fits extension for data", type=int, default=0)
+@click.option("-o","--output", help="Output directory",type=str,default='.')
+def main(infile,inadu,root,gain,ne,de,display,cols,rows,erange,ext,output):
+
+    _isbatch = ROOT.gROOT.IsBatch()
+    if display:
+        ROOT.gROOT.SetBatch(0)
+    else:
+        ROOT.gROOT.SetBatch(1)
+    
+    if infile is None:
+        f = ROOT.TFile.Open(root)
+        clusters = f.Get("clustersRec")
+        # from peak ne_ini to ne
+        ne_ini, ne = ne
+        # energy distribution in units of e- assuming calibration at 1 e-
+        _ = clusters.Draw(f"pixels_E*1000/3.74>>hist_e({int(ne/de)},{ne_ini},{ne})","","GOFF norm")
+    else:
+        ne_ini, ne = ne
+        hist_e = ROOT.TH1D("hist_e","hist_e",int(ne/de),ne_ini-3,ne+3)
+        hist_e = get_histe(infile,hist_e,inadu,gain,cols=cols,rows=rows, ext=ext)
+    
+    hist_e = ROOT.gDirectory.Get("hist_e")
+    hist_e.GetXaxis().SetTitle("n_{e-}")
+    hist_e.GetYaxis().SetTitle(f"Counts")
+    hist_e.SetDirectory(0)
+    hist_e.Sumw2()
+
+    gauss     = []
+    centers   = []
+    e_centers = []
+    mu = ne_ini-1
+    fopt = "LEMRQ0"
+    x_num_electron = []
+    sigma = []
+    e_sigma = []
+    
+    for i in range(ne_ini,ne+1):
+        x_min = (mu+1) - erange[0]
+        x_max = (mu+1) + erange[1]
+        gauss.append( ROOT.TF1(f"ne_{i}","gaus",x_min,x_max) )
+        gauss[-1].SetParLimits(1,x_min,x_max)
+        gauss[-1].SetParLimits(2,0.01,1.0)
+        gauss[-1].SetLineColor(2)
+        hist_e.Fit(gauss[-1],fopt)
+        #fopt="+LEMRQ"
+        
+        # sometimes the fitting mayit goes wrong, try again
+        if gauss[-1].GetParameter(1)-mu > 2:
+            gauss[-1].SetParLimits(1,x_min,x_max)
+            hist_e.Fit(gauss[-1],fopt)
+
+        mu = gauss[-1].GetParameter(1)
+        
+        centers.append( gain*gauss[-1].GetParameter(1) )
+        e_centers.append( gain*gauss[-1].GetParError(1) )
+        x_num_electron.append( i )
+
+        sigma.append( gauss[-1].GetParameter(2)/gain )
+        e_sigma.append( gauss[-1].GetParError(2)/gain)
+
+
+    # --------------------------------------------------------------------------------------
+    c2 = ROOT.TCanvas()
+    hist_e.Draw("HIST")
+    for f in gauss:
+        f.Draw("same") 
+    c2.SetLogy()
+
+    if display:
+        c2.Update()
+        c2.Draw()
+    else:
+        c2.Update()
+        fname = output+"/"+infile.split("/")[-1].split(".")[0]+"_FittedGauss.png"
+        c2.SaveAs(fname)
+   
+    # --------------------------------------------------------------------------------------
+    c = ROOT.TCanvas()
+    ROOT.gStyle.SetOptFit(1111)
+    x = x_num_electron
+    centers = centers
+    e_centers = e_centers
+    g = ROOT.TGraphErrors(len(centers), 
+            array('d',x),
+            array('d',centers),
+            array('d',np.zeros_like(x)),
+            array('d',e_centers)
+            )
+
+    g.GetHistogram().GetXaxis().SetTitle("n_{e^{-}}")
+    g.GetHistogram().GetYaxis().SetTitle("#mu_{n_{e^{-}}} [ADU/e^{-}]")
+    pol1 = ROOT.TF1("fitfunc","pol1",0,ne)
+    pol1.SetLineColor(2)
+    pol1.SetParameter(0,0)
+    pol1.SetParLimits(1,0,2*gain)
+    pol1.SetParameter(1,gain)
+
+    g.Fit(pol1,"EMR0")
+    g.SetMarkerStyle(21)
+    g.SetMarkerSize(0.8)
+    g.Draw("A PE1")
+    pol1.Draw("same")
+    c.Update()
+
+    stat_box = g.FindObject("stats")
+    stat_box.SetX1NDC(0.18)
+    stat_box.SetY1NDC(0.60)
+    stat_box.SetX2NDC(0.50)
+    stat_box.SetY2NDC(0.80)
+    stat_box.Draw()
+    c.Update()
+
+    if display:
+        c.Update()
+        c.Draw()
+    else:
+        fname = output+"/"+infile.split("/")[-1].split(".")[0]+"_calibration_ne.png"
+        c.SaveAs(fname)
+  
+
+    # --------------------------------------------------------------------------------------
+    c9 = ROOT.TCanvas()
+    y_fit = []
+    x_fit = []
+    for i,ne_i in enumerate(x_num_electron):
+        if ne_i<1:
+            continue
+        #y_fit.append(pol1.Eval(ne_i) / centers[i] - 1)
+        y_fit.append( pol1.Eval(ne_i)-centers[i] )
+        x_fit.append(ne_i)
+
+    g9 = ROOT.TGraph(len(x_fit),
+            array('d',x_fit),
+            array('d',y_fit)
+            )
+
+    g9.GetHistogram().GetXaxis().SetTitle("n_{e^{-}}")
+    #g9.GetHistogram().GetYaxis().SetTitle("#mu_{n_{e}}^{fit}/#mu_{n_{e}} - 1")
+    g9.GetHistogram().GetYaxis().SetTitle("#mu_{n_{e}}^{fit} - #mu_{n_{e}} [ADU/e^{-}]")
+    g9.GetHistogram().GetYaxis().SetTitleOffset(1.4)
+
+    g9.SetMarkerStyle(21)
+    g9.SetMarkerSize(0.8)
+    g9.Draw("A PE1")
+    c9.Update()
+
+    if display:
+        c9.Update()
+        c9.Draw()
+    else:
+        fname = output+"/"+infile.split("/")[-1].split(".")[0]+"_mu_fiducial_residuals_ne.png"
+        c9.SaveAs(fname)
+  
+
+
+
+
+
+    # --------------------------------------------------------------------------------------
+    cs = ROOT.TCanvas()
+    cs.cd()
+    ROOT.gStyle.SetOptFit(1111)
+    x = x_num_electron
+    centers = centers
+    e_centers = e_centers
+    gs = ROOT.TGraphErrors(len(centers), 
+            array('d',x),
+            array('d',sigma),
+            array('d',np.zeros_like(x)),
+            array('d',e_sigma)
+            )
+
+    gs.GetHistogram().GetXaxis().SetTitle("n_{e^{-}}")
+    gs.GetHistogram().GetYaxis().SetTitle("#sigma_{n_{e^{-}}} [ADU]")
+    gs.GetHistogram().GetYaxis().SetTitleOffset(1.31)
+    pol1 = ROOT.TF1("fitfunc","pol1",0,ne)
+    pol1.SetLineColor(2)
+    pol1.SetParameter(0,0)
+    pol1.SetParLimits(1,0,2*gain)
+    pol1.SetParameter(1,gain)
+
+    gs.Fit(pol1,"EMR0")
+    gs.SetMarkerStyle(21)
+    gs.SetMarkerSize(0.8)
+    gs.Draw("A PE1")
+    pol1.Draw("same")
+    cs.Update()
+
+    stat_box = gs.FindObject("stats")
+    stat_box.SetX1NDC(0.18)
+    stat_box.SetY1NDC(0.60)
+    stat_box.SetX2NDC(0.50)
+    stat_box.SetY2NDC(0.80)
+    stat_box.Draw()
+    cs.Update()
+
+    if display:
+        cs.Update()
+        cs.Draw()
+    else:
+        fname = output+"/"+infile.split("/")[-1].split(".")[0]+"_sigma_ne.png"
+        cs.SaveAs(fname)
+
+    # --------------------------------------------------------------------------------------
+    cnew = ROOT.TCanvas()
+    dy = np.diff(centers)
+    e_centers = e_centers
+    gdif = ROOT.TGraphErrors(len(dy), 
+            array('d',x[:-1]),
+            array('d',dy),
+            array('d',np.zeros_like(dy)),
+            array('d',e_centers[:-1])
+            )
+    gdif.GetHistogram().GetXaxis().SetTitle("n_{e^{-}}")
+    gdif.GetHistogram().GetYaxis().SetTitle("#mu_{n_{e}}-#mu_{n_{e}-1} [ADU/e^{-}]")
+    gdif.GetHistogram().GetYaxis().SetTitleOffset(1.25)
+    gdif.SetMarkerStyle(21)
+    gdif.SetMarkerSize(0.8)
+
+    p1 = ROOT.TF1("fitfunc","pol1",0,ne)
+    p1.SetLineColor(2)
+    p1.SetParameter(0,0)
+    p1.SetParLimits(1,0,2*gain)
+    p1.SetParameter(1,gain)
+
+    gdif.Fit(p1,"EMR0")
+    gdif.Draw("A PE1")
+    p1.Draw("same")
+    cnew.Update()
+
+    stat_n = gdif.FindObject("stats")
+    stat_n.SetX1NDC(0.18)
+    stat_n.SetY1NDC(0.60)
+    stat_n.SetX2NDC(0.50)
+    stat_n.SetY2NDC(0.80)
+    stat_n.Draw()
+    cs.Update()
+
+    cnew.Update()
+    if display:
+        cnew.Update()
+        cnew.Draw()
+        input()
+
+
+    return
+########################################################################################
+if __name__=='__main__':
+    main()
+
+
