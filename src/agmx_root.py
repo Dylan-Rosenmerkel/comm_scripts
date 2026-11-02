@@ -268,14 +268,21 @@ def tasks_for_run(run_dir, root_dir="root"):
 
 def curve_file(curve, stem):
     """the g(n) file for an image: curve is a gain_vs_charge JSON (used for every image) or a run_WADERs
-    gain_vs_charge/ folder, where 'image_<stem>' (per-image curve) is preferred if per_image, else
-    'module_<ACM id>' (pooled curve)"""
+    gain_vs_charge/ folder, where 'image_<stem>' (per-image curve) is preferred if per_image, then the curve of the
+    image's gain period ('module_<ACM id>_period<k>', run_WADERs --gain-periods auto; the one whose image list holds
+    this image), else 'module_<ACM id>' (pooled curve)"""
     if curve is None or os.path.isfile(curve):
         return curve
     path, per_image = (curve[:-len(":per-image")], True) if curve.endswith(":per-image") else (curve, False)
     acm = naming.acm_id(stem)
-    cands = ([f"image_{stem}"] if per_image else []) + [f"module_{acm or stem}"]
-    return next((f for f in (os.path.join(path, c + "_gain_vs_charge.json") for c in cands) if os.path.isfile(f)), None)
+    if per_image and os.path.isfile(os.path.join(path, f"image_{stem}_gain_vs_charge.json")):
+        return os.path.join(path, f"image_{stem}_gain_vs_charge.json")
+    for f in sorted(glob.glob(os.path.join(path, f"module_{acm or stem}_period*_gain_vs_charge.json"))):
+        with open(f) as fh:
+            if any(naming.image_stem(i) == stem for i in json.load(fh).get("images", [])):
+                return f
+    f = os.path.join(path, f"module_{acm or stem}_gain_vs_charge.json")
+    return f if os.path.isfile(f) else None
 
 
 def _job(a):
