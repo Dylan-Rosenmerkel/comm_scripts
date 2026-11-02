@@ -41,21 +41,20 @@ all images of a module) or a whole run (composite, summary). So:
 | composite (MakeComposite_Fe55_Clusters_Extensions.cc) | step 3c | stays external (LSM repo, not ours); driver calls it | unchanged |
 | naming.py, pair_energy.py | helpers | `pysimdamicm/utils/` | ε(T) used by the energy |
 
-## The ordering problem with gain correction
+## Gain correction: one pass (done)
 
-The gain curve is measured from calibrated pixels of all images of a module, but the correction has to be in
-place before clustering. Options:
-
-- A. Two passes of panaSKImg: pass 1 without ClusterFinder (calibrated images only), measure g(n) per module,
-  pass 2 from the saved calibrated images with `GainNonlinearityProcess` + ClusterFinder/aGMX.
-  Needs panaSKImg to start from a saved `*_waders.fits` (check whether an input mode exists; else add one).
-- B. One pass as today, then re-cluster only (what run_WADERs does now with root_agmx_gaincorr).
-
-A is cleaner and avoids pedestal/calibration twice if pass 2 reads the saved images. Proposal: A.
+The g(n) curve is measured from the RAW images (gain_vs_charge uses autoconfig's own pedestal and gain), so it
+can be measured before panaSKImg runs. `GainNonlinearityProcess` (after CalibrationProcess) attaches the curve;
+ClusterFinder corrects the energies of the clusters it found with exactly the formula of `gain_vs_charge apply`
+(WADERs clusters), or converts the image before clustering (A_GMX), as run_WADERs does. No second pass.
 
 ## Steps
 
 0. ✔ Editable copy on `waders-integration`.
+   ✔ (2026-11-02) WADERs/doc/comm_scripts_additions.md: GainNonlinearityProcess, bin/gain_vs_charge (with the
+   g(n), nonlinearity and new A(n) plots), ClusterFinder `algorithm: "agmx"` (+ `agmx` options) and
+   `spr_threshold_auto`; comm_scripts modules synced into pysimdamicm/comm/ by utils/sync_to_waders.py.
+   Validated on L2 image 9 EXT1 (see that file). Merge request style: additive, defaults unchanged.
 1. A development environment that imports `WADERs/` (e.g. a clone of `damic` with `pip install -e WADERs`),
    so the production `damic` env is not changed. Check panaSKImg on one image gives identical output.
 2. `GainNonlinearityProcess` (smallest, self-contained). Regression: cluster energies equal to
@@ -68,8 +67,7 @@ A is cleaner and avoids pedestal/calibration twice if pass 2 reads the saved ima
 
 ## Open questions
 
-- Upstream or internal? If the aim is a merge request to the DAMIC-M gitlab, keep changes additive (new
-  modules, new process names, defaults unchanged) and follow pysimdamicm style; if internal, we can refactor.
+- Decided: merge request to the DAMIC-M gitlab, so changes stay additive (new modules, new options, defaults unchanged).
 - g(n) incoherent combination still depends on image order (open item); fix before it becomes a process.
 - Dependencies: numba (aGMX), scipy versions in the panaSKImg environment.
 - The comm_scripts GitHub repo is private; this branch contains pysimdamicm code. Push only if that is fine.
