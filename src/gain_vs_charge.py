@@ -45,6 +45,7 @@ Usage:
          OUTDIR/NAME_gain_vs_charge.png
          OUTDIR/NAME_nonlinearity.png   measured charge - peak number vs measured charge,
                                         reference gain g(0) of the curve (A(n)/g(0) - n)
+         OUTDIR/NAME_adu_of_n.png       A(n) = integral of g (the curve the correction inverts) and A(n) - g(0) n
   gain_vs_charge.py apply MODEL.json CLUSTERS.root... -o OUTDIR
       -> OUTDIR/<same name>.root with pixels_E and Energy recomputed with g(n)
 (`measure` is the default: gain_vs_charge.py IMAGES... -o OUTDIR also works.)
@@ -899,6 +900,58 @@ def plot_nonlinearity(results, path, title):
     plt.close(fig)
 
 
+def plot_adu(results, path, title):
+    """One column per extension: A(n), the ADU of a pixel with n electrons (top), and A(n) - g(0) n (bottom).
+
+    results: output of measure(); writes the PNG to path. Points: A(n) as the trapezoid integral of the
+    measured local gains (as nonlinearity()); line: the model's A(n) (the table the correction inverts),
+    dashed: g(0) n (a constant gain); dotted vertical: the highest measured charge.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    names = sorted(results)
+    fig, axs = plt.subplots(2, len(names), figsize=(4.4 * len(names), 6.6), squeeze=False, sharex="col",
+                            gridspec_kw=dict(height_ratios=(1.4, 1)))
+    for k, name in enumerate(names):
+        top, bot = axs[0, k], axs[1, k]
+        r = results[name]
+        if not r.get("ok"):
+            top.text(0.5, 0.5, "no reliable curve", ha="center", va="center", transform=top.transAxes)
+            top.set_title(name)
+            for a_ in (top, bot):
+                a_.set_xticks([]); a_.set_yticks([])
+            continue
+        m = r["model"]
+        g0 = float(g_of(0.0, m))
+        nmax = float(r["n_max_measured"])
+        grid = np.linspace(0, 1.3 * nmax, 400)
+        Ag = np.array([_adu(v, m) for v in grid])
+        good = [p for p in r["points"] if p["significant"]]
+        n = np.array([p["n"] for p in good]); g = np.array([p["g"] for p in good])
+        if n.size:
+            Ap = np.empty_like(n); Ap[0] = g[0] * n[0]
+            Ap[1:] = Ap[0] + np.cumsum(0.5 * (g[1:] + g[:-1]) * np.diff(n))
+            top.plot(n, Ap, "o", ms=4, color="#1f5fbf", label="from the measured local gains")
+            bot.plot(n, Ap - g0 * n, "o", ms=4, color="#1f5fbf")
+        top.plot(grid, Ag, color="0.2", lw=1.3, label=f"A(n), {model_form(m)} model")
+        top.plot(grid, g0 * grid, color="#d1495b", ls="--", lw=1.0, label=f"g(0) n, g(0) = {g0:.4f}")
+        bot.plot(grid, Ag - g0 * grid, color="0.2", lw=1.3)
+        bot.axhline(0, color="#d1495b", ls="--", lw=1.0)
+        for a_ in (top, bot):
+            a_.axvline(nmax, color="0.5", ls=":", lw=0.8)
+            a_.grid(alpha=0.3)
+        top.set_title(f"{name}: A(1000) = {_adu(1000.0, m):.1f} ADU", fontsize=10)
+        top.set_ylabel("A(n) [ADU]")
+        bot.set_ylabel("A(n) $-$ g(0) n [ADU]")
+        bot.set_xlabel("electrons in the pixel n")
+        top.legend(fontsize=7.5, loc="upper left")
+    fig.suptitle(f"ADU of a pixel with n electrons, A(n) = $\\int_0^n g$: {title}", fontsize=11)
+    plt.tight_layout(rect=(0, 0, 1, 0.95))
+    plt.savefig(path, dpi=90)
+    plt.close(fig)
+
+
 def plot(results, path, title):
     """Plot g(n) of every extension: absolute [ADU/e-] (left) and relative to g(0) (right).
 
@@ -1086,6 +1139,7 @@ def main():
                        "extensions": res}, fh, indent=1)
         plot(res, os.path.join(args.outdir, f"{name}_gain_vs_charge.png"), name)
         plot_nonlinearity(res, os.path.join(args.outdir, f"{name}_nonlinearity.png"), name)
+        plot_adu(res, os.path.join(args.outdir, f"{name}_adu_of_n.png"), name)
         print(f"-> {jpath}")
     else:
         apply(args.model, args.rootfiles, args.outdir, anchor=args.anchor, temperature=args.temperature)
