@@ -667,10 +667,14 @@ class Diffusion(DigitizeProcess):
                 e_after  = E_eff[i]
                 qf_val = (e_after / e_before) if (kind == "NR" and e_before > 0) else 1.0
                 print(f"{i:5d} | {pdg[i]:>12d} | {kind:>3} | {e_before:15.3f} | {e_after:15.3f} | {qf_val:6.3f} | {n_obs_e[i]:15.3f}")
-
         ### Quenching End ###
 
         n_obs_e = n_obs_e.astype(int)
+
+        # DEBUG: charge generation before PCC
+        if getattr(hits, "debug_capture", False):
+            hits.debug_Neh_created = np.asarray(n_obs_e, dtype=int).copy()
+            hits.debug_Eion_eV = np.asarray(hits.Edep, dtype=float).copy()
 
         if self.apply_pcc == 1:
             z_um = hits.z *(u.mm/u.um)  # Convert mm to microns
@@ -693,6 +697,10 @@ class Diffusion(DigitizeProcess):
                 if not hasattr(Diffusion, 'pcc_debug_printed') and np.any(low_z_mask):
                     print("n_obs_e (after):", n_obs_e[low_z_mask][:10])
                     Diffusion.pcc_debug_printed = True
+
+        # DEBUG: charge available for transport after PCC
+        if getattr(hits, "debug_capture", False):
+            hits.debug_Neh_collected = np.asarray(n_obs_e, dtype=int).copy()
 
 
         ##########DIFFUSION PROCESS ###################################################################
@@ -987,27 +995,36 @@ class Diffusion(DigitizeProcess):
         n_obs_e[n_obs_e < 0] = 0
         n_obs_e = pd.Series(n_obs_e)
 
+        # DEBUG: charge generation before PCC
+        if getattr(hits, "debug_capture", False):
+            hits.debug_Neh_created = np.asarray(n_obs_e, dtype=int).copy()
+            hits.debug_Eion_eV = np.asarray(hits.Edep, dtype=float).copy()
+            
         if self.apply_pcc == 1:
-             z_um = hits.z *(u.mm/u.um)  # Convert mm to microns
-             #print("[PCC] Applied to hits at z (µm):", z_um[:10])
-             eps = self.eps_func(z_um)
-             # Identify hits in the PCC transition region
-             low_z_mask = (z_um >= 663.0) & (z_um <= 669.0)
-
-             # If debug is enabled, and first time this region appears, print BEFORE scaling
-             if getattr(self, 'pcc_debug', 0) == 1:
+            z_um = hits.z *(u.mm/u.um)  # Convert mm to microns
+            #print("[PCC] Applied to hits at z (µm):", z_um[:10])
+            eps = self.eps_func(z_um)
+            # Identify hits in the PCC transition region
+            low_z_mask = (z_um >= 663.0) & (z_um <= 669.0)
+            
+            # If debug is enabled, and first time this region appears, print BEFORE scaling
+            if getattr(self, 'pcc_debug', 0) == 1:
                 if not hasattr(Diffusion, 'pcc_debug_printed') and np.any(low_z_mask):
-                       print(f"[PCC DEBUG] Found {np.sum(low_z_mask)} hits with z ∈ [663, 669] µm")
-                       print("z_um[:10]:", z_um[low_z_mask][:10])
-                       print("eps[:10]:", eps[low_z_mask][:10])
-                       print("n_obs_e (before):", n_obs_e[low_z_mask][:10])
-
-             n_obs_e = np.round(n_obs_e * eps).astype(int)
-             # If debug is enabled, print AFTER scaling (once)
-             if getattr(self, 'pcc_debug', 0) == 1:
+                    print(f"[PCC DEBUG] Found {np.sum(low_z_mask)} hits with z ∈ [663, 669] µm")
+                    print("z_um[:10]:", z_um[low_z_mask][:10])
+                    print("eps[:10]:", eps[low_z_mask][:10])
+                    print("n_obs_e (before):", n_obs_e[low_z_mask][:10])
+            
+            n_obs_e = np.round(n_obs_e * eps).astype(int)
+            # If debug is enabled, print AFTER scaling (once)
+            if getattr(self, 'pcc_debug', 0) == 1:
                 if not hasattr(Diffusion, 'pcc_debug_printed') and np.any(low_z_mask):
-                     print("n_obs_e (after):", n_obs_e[low_z_mask][:10])
-                     Diffusion.pcc_debug_printed = True
+                    print("n_obs_e (after):", n_obs_e[low_z_mask][:10])
+                    Diffusion.pcc_debug_printed = True
+
+        # DEBUG: charge available for transport after PCC
+        if getattr(hits, "debug_capture", False):
+            hits.debug_Neh_collected = np.asarray(n_obs_e, dtype=int).copy()
 
         ##########DIFFUSION PROCESS ###################################################################
         ## Only if the process is active in the json file, i.e., if "only_pair_creation is equal" = 0

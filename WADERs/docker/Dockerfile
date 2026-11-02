@@ -67,8 +67,9 @@ RUN cd  /software \
     && pip3 install click --user \
     && python3 setup.py install --user
 
-RUN cp /software/pysimdamicm/pysimdamicm/json/*json /home/wuser/.local/lib/python3.10/site-packages/pysimdamicm-7.2.0-py3.10.egg/pysimdamicm/json
-RUN cp /software/pysimdamicm/pysimdamicm/data/p100* /home/wuser/.local/lib/python3.10/site-packages/pysimdamicm-7.2.0-py3.10.egg/pysimdamicm/data
+
+RUN cp /software/pysimdamicm/pysimdamicm/json/*json /home/wuser/.local/lib/python3.10/site-packages/pysimdamicm-8.1.0-py3.10.egg/pysimdamicm/json
+RUN cp /software/pysimdamicm/pysimdamicm/data/* /home/wuser/.local/lib/python3.10/site-packages/pysimdamicm-8.1.0-py3.10.egg/pysimdamicm/data
 
 ENV HOME=/home/wuser
 ENV PATH=${PATH}:/home/wuser/.local/bin:/home/wuser/workdir

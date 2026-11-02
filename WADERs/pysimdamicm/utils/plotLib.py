@@ -36,7 +36,7 @@ particle_colors_cmap = [
         ]
 particle_colors = lambda pdg: particle_colors_cmap[abs(pdg)%len(particle_colors_cmap)]
 
-particle_markers_list = ['P','v', '^', '<', '>', '8', 's', 'p', '*', 'h', 'H', 'o', 'd','D','+','4']
+particle_markers_list = ['P','v', '^', '<', '>', 'D', 's', 'p', '*', 'h', 'H', 'o', 'd','D','+','4']
 particle_markers = lambda pdg: particle_markers_list[abs(pdg)%len(particle_markers_list)]
 
 
