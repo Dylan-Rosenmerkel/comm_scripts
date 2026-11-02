@@ -1257,72 +1257,222 @@ class CalibrationProcess(SKImageProcess):
         """
         super().__init__()
         self._per_amp = False
-
         self.__silent__ = False
         self.image = "mean_compressed_pedestal_subtracted"
-        self.gain  = 5.3*u.ADC/u.e
+
+        # NO default: must be given by the user (json) or taken from the dark current fit
+        #   number          -> constant model (ADU/e-)
+        #   [a, b, c, ...]  -> ADU = a + b*e + c*e^2 + ...
+        #   {amp: number | list}
+        self.gain  = 1 * u.ADC/u.e
+        self.offset = 0.0
+        self.valid_range = None
         self.from_dc_fit = False
         
         self.create_ttree = False
         ### 
-        self.__units__.update({'gain':1,'from_dc_fit':1, 'create_ttree':1})
+        self.__units__.update({'gain':1,'offset':1,'valid_range':1,'from_dc_fit':1, 'create_ttree':1})
     
+
+class CalibrationProcess(SKImageProcess):
+    """The image will be calibrated: from ADC to electrons.
+
+    Calibration curve (fit of the position of each peak, in ADU, vs. the number of electrons):
+
+            ADU = offset + g*e + c2*e^2 + c3*e^3 + ...
+
+    `gain` (what goes in the json):
+      - a number g: linear model, ADU = offset + g*e           (g in ADU/e-)
+      - a list/tuple [g, c2, c3, ...]: polynomial model from first order,
+        with units  g: ADU/e-,  c2: ADU/e-^2,  c3: ADU/e-^3, ...
+        so that the number g is equivalent to the list [g]
+      - a dict {amplifier: number | list}: one of the above per amplifier
+
+    `offset` (optional, separate from `gain`): constant term of the curve in ADU, i.e. the
+    position of the zero-electron peak (p0 of the fit). It is NOT part of the `gain` list.
+      - a number, or a dict {amplifier: number}. Default 0.
+
+    `valid_range` (optional): range of electrons [e_min, e_max] where the polynomial is
+    supported by the fitted peaks (it is written by get_calibration_constant).
+      - a list [e_min, e_max], or a dict {amplifier: [e_min, e_max]}. Default None.
+      Inside the range the polynomial is inverted; outside it the curve is continued
+      linearly with the slope of the polynomial at the edge (continuous in value and
+      slope), so any ADU value (negative noise, saturated pixels, ...) gives a finite,
+      monotonic result. With None the polynomial is inverted over the whole axis, which
+      fails (RuntimeError) for ADU values beyond the extremum of the polynomial.
+      Only used for polynomial models (more than one coefficient in `gain`).
+
+    The input image must be in ADU (pedestal subtracted); the output is in e-.
+    Default is gain=1, offset=0 (e = ADU).
+    The polynomial is only supported by the data in the range of the fitted peaks.
+    """
+    __sequence_id__ = 25
+    __name__ = 'CalibrationProcess'
+
+    # internal settings of the polynomial inversion (not user parameters)
+    _MAX_ITER = 50
+    _TOL = 1e-9
+
+    def __init__(self):
+        """
+        """
+        super().__init__()
+        self._per_amp = False
+
+        self.__silent__ = False
+        self.image = "mean_compressed_pedestal_subtracted"
+        self.gain  = 1
+        self.offset = 0.0
+        self.valid_range = None
+        self.from_dc_fit = False
+
+        self.create_ttree = False
+        ### 
+        self.__units__.update({'gain':1,'offset':1,'valid_range':1,'from_dc_fit':1, 'create_ttree':1})
+
+    def _adu_to_e(self, adu, coeffs, erange=None):
+        """ADU = poly(e)  ->  e = poly^-1(ADU).
+
+        Inside `erange` the polynomial is inverted with Newton starting from the linear
+        solution; outside it is continued linearly with the slope at the edge.
+        `erange` None: the polynomial is inverted everywhere.
+        """
+        from numpy.polynomial import polynomial as P
+        adu = np.asarray(adu, dtype=float)
+        e = (adu - coeffs[0]) / coeffs[1]
+        if coeffs.size == 2:
+            return e
+        dcoeffs = P.polyder(coeffs)
+
+        if erange is None:
+            lo, hi = -np.inf, np.inf
+        else:
+            lo, hi = float(erange[0]), float(erange[1])
+            if not (np.isfinite(lo) and np.isfinite(hi) and lo < hi):
+                raise ValueError(f"{self.__name__}: invalid valid_range {erange}")
+            if np.any(P.polyval(np.linspace(lo, hi, 2001), dcoeffs) <= 0):
+                raise ValueError(f"{self.__name__}: the calibration polynomial is not monotonic "
+                                 f"in its valid range {erange}")
+
+        out = e.copy()
+        inside = np.ones(adu.shape, dtype=bool)
+        if np.isfinite(lo):
+            a_lo, s_lo = P.polyval(lo, coeffs), P.polyval(lo, dcoeffs)
+            below = adu < a_lo
+            out[below] = lo + (adu[below] - a_lo) / s_lo
+            inside &= ~below
+        if np.isfinite(hi):
+            a_hi, s_hi = P.polyval(hi, coeffs), P.polyval(hi, dcoeffs)
+            above = adu > a_hi
+            out[above] = hi + (adu[above] - a_hi) / s_hi
+            inside &= ~above
+
+        if inside.any():
+            x, y = np.clip(e[inside], lo, hi), adu[inside]
+            for _ in range(self._MAX_ITER):
+                step = (P.polyval(x, coeffs) - y) / P.polyval(x, dcoeffs)
+                x = np.clip(x - step, lo, hi)
+                if np.max(np.abs(step)) < self._TOL:
+                    break
+            else:
+                raise RuntimeError(f"{self.__name__}: the inversion of the polynomial calibration did not converge")
+            out[inside] = x
+        return out
+
     def execute_process(self,rawdata):
         """
         """
-        # GET calibratrion value from FitDarkCurrentProcess or from user config
+        # GET calibration value from FitDarkCurrentProcess or from user config
         ################################################################################
-        def get_gain_value(execute_process_in_amp,gain,from_dc_fit):
-            if from_dc_fit and "MEGAIN{}".format(execute_process_in_amp) in u._tohdr:
-                # using value from fit
-                gain_value  = np.round(u._tohdr["MEGAIN{}".format(execute_process_in_amp)][0],4)
-            else:
-                if type(gain)==dict:
-                    # when coming from DQM not all ampl will have its gain, so this should be set to be 1
-                    try:
-                        gain_value = gain[execute_process_in_amp]
-                    except KeyError:
-                        print(f" WARNING: Calibration set to 1 {execute_process_in_amp} is not found in calibration dictionary ")
-                        gain_value = 1
-                else:
-                    gain_value = gain
-            return gain_value
+        def get_gain_value(amp_name, gain, from_dc_fit):
+            if from_dc_fit and f"MEGAIN{amp_name}" in u._tohdr:
+                return np.round(u._tohdr[f"MEGAIN{amp_name}"][0],4)
+            if type(gain)==dict:
+                # when coming from DQM not all ampl will have its gain, so this should be set to be 1
+                try:
+                    return gain[amp_name]
+                except KeyError:
+                    print(f" WARNING: Calibration set to 1 {amp_name} is not found in calibration dictionary ")
+                    return 1
+            return gain
+
+        def get_offset_value(amp_name, offset):
+            if type(offset)==dict:
+                return offset.get(amp_name, 0.0)
+            return offset
+
+        def get_range_value(amp_name, valid_range):
+            if type(valid_range)==dict:
+                return valid_range.get(amp_name, None)
+            return valid_range
 
         if not self.__silent__:
             print("Process <CalibrationProcess> INFO.")
-        
-        #### BUILD CALIBRATION MATRIX 
+
+        #### IMAGE TO CALIBRATE
         ################################################################################
         itype = rawdata.get_image_attribute_name(self.image)
-        calibration_image = np.zeros(getattr(rawdata,itype).shape)
-        results = {}
+        try:
+            image_to_cal = getattr(rawdata,itype)
+        except AttributeError:
+            raise IOError(f"{self.__name__}: Image does not exists")
+        data = np.ma.getdata(image_to_cal).astype(float)
+
+        #### CALIBRATE EACH AMPLIFIER REGION
+        ################################################################################
+        calibrated = np.zeros_like(data)
         for amp_name in rawdata.amplifier.keys():
-            val = float(get_gain_value(amp_name,self.gain,self.from_dc_fit))
-            calibration_image += (1/val)*np.logical_not(rawdata.amplifier[amp_name]['mask_full_extension']).astype(float)
-            # update results
-            results.update({'calibration':val,'ADC2e':val})
+            value  = get_gain_value(amp_name, self.gain, self.from_dc_fit)
+            offset = float(get_offset_value(amp_name, self.offset))
+            erange = get_range_value(amp_name, self.valid_range)
+            region = np.logical_not(rawdata.amplifier[amp_name]['mask_full_extension'])
+            if region.shape != data.shape:
+                raise IOError(f"{self.__name__}: Unexpected error, calibration mask and image has not the same shape")
+
+            # orders: [g, c2, c3, ...]  (a number g is the list [g])
+            if isinstance(value, (list, tuple, np.ndarray)):
+                orders = np.array(value, dtype=float).ravel()
+                is_poly = orders.size > 1
+            else:
+                orders = np.array([float(value)])
+                is_poly = False
+            if orders.size < 1 or not np.all(np.isfinite(orders)) or orders[0] == 0 or not np.isfinite(offset):
+                raise ValueError(f"{self.__name__}: invalid calibration for '{amp_name}': gain={value}, offset={offset} "
+                                 "(needs finite values and a non-zero first coefficient)")
+            coeffs = np.concatenate(([offset], orders))      # [offset, g, c2, c3, ...]
+
+            calibrated[region] = self._adu_to_e(data[region], coeffs, erange if is_poly else None)
+
+            # first order term = gain in ADU/e- (slope of the curve at 0 e-)
+            val = float(orders[0])
+            if is_poly:
+                for k, ck in enumerate(orders, start=1):
+                    u._tohdr.update({f"CAL{amp_name}{k}": (float(ck), f"calibration poly coeff e^{k}: ADU = off + sum c_k e^k")})
+                if erange is not None:
+                    u._tohdr.update({f"CAL{amp_name}R0": (float(erange[0]), "calibration valid range, min e-"),
+                                     f"CAL{amp_name}R1": (float(erange[1]), "calibration valid range, max e-")})
+            if is_poly or offset != 0:
+                u._tohdr.update({f"CAL{amp_name}0": (offset, "calibration offset in ADU (zero-e- peak position)")})
+            if not self.__silent__:
+                if is_poly or offset != 0:
+                    terms = [f"{offset:g}"] + [f"{c:g}*e^{k}" for k,c in enumerate(orders, start=1)]
+                    print(f"    amplifier/ccd {amp_name}: ADU = " + " + ".join(terms)
+                          + (f"   (valid for {erange[0]:g} <= e- <= {erange[1]:g}, linear outside)" if is_poly and erange is not None else ""))
+                else:
+                    print(f"    amplifier/ccd {amp_name} with gain of {val} ADC/e-")
+
             rawdata.execute_process_in_amp = amp_name
-            rawdata.set_image_by_attribute_name(None,None,**results)
+            rawdata.set_image_by_attribute_name(None,None,**{'calibration':val,'ADC2e':val})
             #### update calibration/gain in the u singleton
             u.set_gain(amp_name,val)
             #### add parameter to the fits file header
-            u._tohdr.update({f"GAIN_{amp_name}": (val,"calibration constant ADU/e")})
-            if not self.__silent__:
-                print(f"    amplifier/ccd {amp_name} with gain of {val} ADC/e-")
+            u._tohdr.update({f"GAIN_{amp_name}": (val,"calibration constant ADU/e (first order term)")})
 
+        setattr(rawdata,"{}_e".format(itype), calibrated)
 
-        ## APPLY CALIBRATION MATRIX TO IMAGE
-        try:
-            image_to_cal = getattr(rawdata,rawdata.get_image_attribute_name(self.image))
-        except AttributeError:
-            raise IOError(f"{self.__name__}: Image does not exists")
-        if image_to_cal.shape != calibration_image.shape:
-            raise IOError(f"{self.__name__}: Unexpected error, calibration matrix and image has not the same shape")
-
-        setattr(rawdata,"{}_e".format(itype), np.array((image_to_cal * calibration_image).data))
-        
         if self.create_ttree:
             self.save_images_as_root(rawdata)
+
 
 ##############################################################################################
 #

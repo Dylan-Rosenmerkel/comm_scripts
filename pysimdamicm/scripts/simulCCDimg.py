@@ -269,6 +269,12 @@ def main(config,NPIX_MIN=3,event_to_debug=None,Nmax=-999):
 
                     hits = G4HitCollection(event_tuple,reg_evt,mask=mask_img,z_offset=z_offset)
                     hits.AddCoordSimulatedEvent(reg_sim)
+                    selected_event = (
+                            event_to_debug is None
+                            or int(abs_evt) in np.atleast_1d(event_to_debug).astype(int)
+                            )
+                    hits.debug_capture = bool(__debugs__ and selected_event)
+
                     setattr(hits,'outfile',config.configuration["rootfiles"]["out"])
 
                     ### detector response for this hit collection
@@ -295,6 +301,29 @@ def main(config,NPIX_MIN=3,event_to_debug=None,Nmax=-999):
                     if not hits.killed:
                         ### if debug mode plot image, and individual process signals
                         debug_plots(hits,Npix_min=NPIX_MIN,only_this_event=event_to_debug)
+                        ## DEBUG: Plot only events with >= 2 clusters and z below threshold
+                        #z_max_um = 660.0   # Change this threshold (in micrometers)
+                        #n_clusters = len(getattr(hits, "cluster_mask", {}))
+                        #z_um = np.asarray(hits.g4_posz, dtype=float) / u.um
+                        #E_total_keV = np.sum(hits.g4_Edep) / 1000.0  # eV -> keV
+
+                        #if (
+                        #        __debugs__
+                        #        and n_clusters > 2
+                        #        and z_um.size > 0
+                        #        and np.all(z_um > z_max_um)
+                        #        ):
+                        #    print(
+                        #            f"[DEBUG] Event {int(abs_evt)}, CCD {int(ccd)}: "
+                        #            f"{n_clusters} clusters, "
+                        #            f"z = [{z_um.min():.1f}, {z_um.max():.1f}] um"
+                        #            )
+                        #    
+                        #    debug_plots(
+                        #            hits,
+                        #            Npix_min=NPIX_MIN,
+                        #            only_this_event=event_to_debug
+                        #            )
 
                         ##### Add pixelized (event,ccd)
                         evt_pixelized.append(PixelizedEvent(hits))

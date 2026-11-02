@@ -1702,6 +1702,567 @@ class G4HitCollection(object):
         #### SET THE VARIABLE TO BE CLUSTERIZED
         self.__attr_to_clusterize__+="_noise"
 
+
+    def DrawStages(self, margin=1.0, min_span=3.0,
+                   max_points=80000, max_table_hits=8,
+                   alert_distance_px=7.0, show=True, saveas=None):
+        """Geant4 -> Neh -> PCC -> diffusion -> pixelization.
+
+        ROI: bounding box of the collected, pixelized charge (panel 5).
+        Panels 1--5 share interactive zoom/pan and fixed square frames.
+        The display is read-only: it does not alter reconstructed hits.
+
+        x/y are in detector pixels; z and sigma labels are in micrometers.
+        Photon markers in panel 1 are taken from CCDOut hits, not from
+        the incident primary particle recorded in EventOut.
+        """
+        import matplotlib as mpl
+        import matplotlib.pyplot as plt
+        from matplotlib.colors import LogNorm, Normalize
+        from matplotlib.patches import Ellipse
+        from matplotlib.ticker import MaxNLocator, MultipleLocator
+
+        # ----------------------------------------------------------
+        # 0. Data and consistency checks
+        # ----------------------------------------------------------
+        needed = (
+            'g4_posx', 'g4_posy', 'g4_posz', 'g4_Edep', 'g4_pdg',
+            'debug_Neh_created', 'debug_Neh_collected',
+            'x', 'y', 'x_pixel', 'y_pixel', 'N_carried_charges_pixel'
+        )
+        missing = [name for name in needed if not hasattr(self, name)]
+        if missing:
+            raise RuntimeError('DrawStages: missing ' + ', '.join(missing))
+
+        pitch_x = float(u.ccd_pixel_size_x)  # mm / pixel
+        pitch_y = float(u.ccd_pixel_size_y)  # mm / pixel
+        x0 = np.asarray(self.g4_posx, dtype=float).ravel() / pitch_x
+        y0 = np.asarray(self.g4_posy, dtype=float).ravel() / pitch_y
+        z_um = np.asarray(self.g4_posz, dtype=float).ravel() / u.um
+        edep_eV = np.asarray(self.g4_Edep, dtype=float).ravel()
+        pdg = np.asarray(self.g4_pdg, dtype=int).ravel()
+        neh_created = np.asarray(self.debug_Neh_created, dtype=int).ravel()
+        neh_survived = np.asarray(self.debug_Neh_collected, dtype=int).ravel()
+
+        ndep = len(x0)
+        if ndep == 0:
+            print('[DrawStages] Event without Geant4 depositions.')
+            return
+        if any(len(a) != ndep for a in
+               (y0, z_um, edep_eV, pdg, neh_created, neh_survived)):
+            raise ValueError('DrawStages: original-hit arrays are not aligned.')
+        if not (np.all(np.isfinite(x0)) and np.all(np.isfinite(y0))):
+            raise ValueError('DrawStages: non-finite Geant4 x/y positions.')
+        if np.any(neh_created < 0) or np.any(neh_survived < 0):
+            raise ValueError('DrawStages: negative charge count.')
+        if np.any(neh_survived > neh_created):
+            raise ValueError('DrawStages: more collected than created charges.')
+
+        x_diff = np.asarray(self.x, dtype=float).ravel() / pitch_x
+        y_diff = np.asarray(self.y, dtype=float).ravel() / pitch_y
+        n_transport = int(neh_survived.sum())
+        if x_diff.size != n_transport or y_diff.size != n_transport:
+            raise ValueError(
+                'DrawStages: transported charges do not match '
+                'debug_Neh_collected. Check capture before diffusion.'
+            )
+        
+        xp = np.asarray(self.x_pixel, dtype=int).ravel()
+        yp = np.asarray(self.y_pixel, dtype=int).ravel()
+        qp = np.asarray(self.N_carried_charges_pixel, dtype=float).ravel()
+        if xp.size != yp.size or xp.size != qp.size:
+            raise ValueError('DrawStages: pixelized arrays are not aligned.')
+
+        # ----------------------------------------------------------
+        # 1. Alert: radial distance from EACH charge's own Geant4 hit
+        # ----------------------------------------------------------
+        if alert_distance_px <= 0:
+            raise ValueError('alert_distance_px must be positive.')
+        origin_id = np.repeat(np.arange(ndep, dtype=np.int64), neh_survived)
+        displacement_px = np.hypot(
+            x_diff - x0[origin_id], y_diff - y0[origin_id]
+        )
+        escaped = displacement_px >= alert_distance_px
+        n_escaped = int(np.count_nonzero(escaped))
+        n_origins_escaped = int(np.unique(origin_id[escaped]).size)
+        max_displacement_px = (
+            float(np.max(displacement_px)) if displacement_px.size else 0.0
+        )
+
+        #########################################################################
+        #n_lost = int(neh_created.sum() - n_transport)
+        #if n_lost <= 0:
+        #    return
+        #if max_displacement_px<7.0:
+        #    return
+        #########################################################################
+
+        # sigma_xy is stored per charge, in mm, in deposition order.
+        sigma_dep_um = np.full(ndep, np.nan, dtype=float)
+        if hasattr(self, 'sigma_xy'):
+            sigma_charge = np.asarray(self.sigma_xy, dtype=float).ravel()
+            if sigma_charge.size == n_transport:
+                starts = np.cumsum(np.r_[0, neh_survived])[:-1]
+                good = neh_survived > 0
+                sigma_dep_um[good] = sigma_charge[starts[good]] / u.um
+
+        # ----------------------------------------------------------
+        # 2. Common ROI: pixel edges of active charges from panel 5
+        # ----------------------------------------------------------
+        active = np.isfinite(qp) & (qp > 0)
+        if np.any(active):
+            ixlo = int(np.min(xp[active]))
+            ixhi = int(np.max(xp[active])) + 1
+            iylo = int(np.min(yp[active]))
+            iyhi = int(np.max(yp[active])) + 1
+        else:
+            # If there are no collected pixels, use original deposits.
+            ixlo = int(np.floor(x0.min()))
+            ixhi = int(np.floor(x0.max())) + 1
+            iylo = int(np.floor(y0.min()))
+            iyhi = int(np.floor(y0.max())) + 1
+
+        margin_px = max(0, int(np.ceil(margin)))
+        side = max(ixhi - ixlo, iyhi - iylo,
+                   int(np.ceil(min_span)), 1) + 2 * margin_px
+        pxmin = int(np.floor((ixlo + ixhi - side) / 2.0))
+        pymin = int(np.floor((iylo + iyhi - side) / 2.0))
+        pxmax = pxmin + side
+        pymax = pymin + side
+        xlim = (pxmin, pxmax)
+        ylim = (pymin, pymax)
+
+        image = np.zeros((side, side), dtype=float)
+        in_roi = ((xp >= pxmin) & (xp < pxmax) &
+                  (yp >= pymin) & (yp < pymax))
+        np.add.at(image,
+                  (yp[in_roi] - pymin, xp[in_roi] - pxmin), qp[in_roi])
+        q_in_view = float(qp[in_roi].sum())
+
+        # Size encodes the original z coordinate in panel 2.
+        finite_z = z_um[np.isfinite(z_um)]
+        zlo = float(finite_z.min()) if finite_z.size else 0.0
+        zhi = float(finite_z.max()) if finite_z.size else 0.0
+        if zhi > zlo:
+            z_frac = np.clip((z_um - zlo) / (zhi - zlo), 0, 1)
+        else:
+            z_frac = np.full(ndep, 0.5)
+        z_sizes = 15.0 + 75.0 * np.nan_to_num(z_frac, nan=0.5)
+
+        survival = np.divide(
+            neh_survived, neh_created,
+            out=np.full(ndep, np.nan, dtype=float),
+            where=neh_created > 0
+        )
+        n_lost = int(neh_created.sum() - n_transport)
+
+        # Explicit PDG counts, so a missing photon is not a styling artefact.
+        n_electron = int(np.count_nonzero(pdg == 11))
+        n_photon = int(np.count_nonzero(pdg == 22))
+        n_photon_edep = int(np.count_nonzero((pdg == 22) & (edep_eV > 0)))
+
+        # ----------------------------------------------------------
+        # 3. Publication-inspired style and fixed 2 x 3 layout
+        # ----------------------------------------------------------
+        style = {
+            'text.usetex': False,
+            'font.family': 'serif',
+            'font.serif': ['STIXGeneral', 'DejaVu Serif'],
+            'mathtext.fontset': 'stix',
+            'axes.linewidth': 0.8,
+            'axes.edgecolor': '#282828',
+            'axes.facecolor': 'white',
+            'figure.facecolor': 'white',
+            'savefig.facecolor': 'white',
+            'xtick.direction': 'in',
+            'ytick.direction': 'in',
+            'xtick.top': True,
+            'ytick.right': True,
+        }
+        with mpl.rc_context(style):
+            fig = plt.figure(figsize=(18.5, 10.5), constrained_layout=False)
+            gs = fig.add_gridspec(
+                2, 3, left=0.055, right=0.975,
+                bottom=0.080, top=0.885,
+                wspace=0.22, hspace=0.28
+            )
+
+            spatial_axes, bar_axes = [], []
+            for k in range(5):
+                sub = gs[k // 3, k % 3].subgridspec(
+                    1, 2, width_ratios=(22, 1), wspace=0.09
+                )
+                ax = fig.add_subplot(
+                    sub[0],
+                    sharex=spatial_axes[0] if spatial_axes else None,
+                    sharey=spatial_axes[0] if spatial_axes else None
+                )
+                cax = fig.add_subplot(sub[1])
+                spatial_axes.append(ax)
+                bar_axes.append(cax)
+            ax0, ax1, ax2, ax3, ax4 = spatial_axes
+            cb0, cb1, cb2, cb3, cb4 = bar_axes
+            cb3.set_axis_off()
+            ax5 = fig.add_subplot(gs[1, 2])
+            ax5.set_axis_off()
+
+            # ------------------------------------------------------
+            # Panel 1: CCDOut deposition energy / particle identity
+            # ------------------------------------------------------
+            has_energy = edep_eV > 0
+            if np.any(has_energy):
+                emin = max(float(edep_eV[has_energy].min()), 1e-9)
+                emax = max(float(edep_eV[has_energy].max()), emin * (1 + 1e-8))
+                energy_norm = LogNorm(vmin=emin, vmax=emax)
+
+                # Draw electrons first; photons last so they stay visible.
+                codes = sorted(np.unique(pdg), key=lambda c: c == 22)
+                for code in codes:
+                    mask = (pdg == code) & has_energy
+                    if not np.any(mask):
+                        continue
+                    if code == 11:
+                        marker, label, size = 'o', r'$e^-$ (PDG 11)', 24
+                    elif code == -11:
+                        marker, label, size = '^', r'$e^+$ (PDG -11)', 32
+                    elif code == 22:
+                        marker, label, size = 's', r'$\gamma$ (PDG 22)', 75
+                    else:
+                        marker = particle_markers(int(code))
+                        label, size = f'PDG {int(code)}', 28
+                    
+                    ax0.scatter(
+                        x0[mask], y0[mask], c=edep_eV[mask],
+                        cmap='viridis', norm=energy_norm,
+                        marker=marker, s=size,
+                        edgecolors='#a62464' if code == 22 else '#1f1f1f',
+                        linewidths=1.15 if code == 22 else 0.25,
+                        alpha=0.96 if code == 22 else 0.85,
+                        rasterized=True,
+                        zorder=8 if code == 22 else 3,
+                        label=label
+                    )
+                bar = fig.colorbar(
+                    mpl.cm.ScalarMappable(norm=energy_norm, cmap='viridis'),
+                    cax=cb0
+                )
+                bar.set_label(r'$E_{\mathrm{dep}}$ [eV]', fontsize=10)
+            else:
+                cb0.set_axis_off()
+
+            # Photons with zero Edep cannot appear on a log Edep scale:
+            # show them as hollow magenta squares nevertheless.
+            gamma_zero = (pdg == 22) & ~has_energy
+            if np.any(gamma_zero):
+                ax0.scatter(
+                    x0[gamma_zero], y0[gamma_zero],
+                    marker='s', s=82, facecolors='none',
+                    edgecolors='#a62464', linewidths=1.3,
+                    rasterized=True, zorder=9,
+                    label=r'$\gamma$, $E_{\mathrm{dep}}\leq0$ (PDG 22)'
+                )
+            if np.any(has_energy) or np.any(gamma_zero):
+                ax0.legend(loc='upper left', fontsize=12, frameon=False,
+                           markerscale=0.9, labelspacing=0.25)
+            ax0.set_title('1. Geant4 deposited energy\n'
+                          f'{edep_eV.sum()/1e3:.2f} keV', fontsize=12)
+
+            # ------------------------------------------------------
+            # Panel 2: generated Neh, marker area encodes z
+            # ------------------------------------------------------
+            m = neh_created > 0
+            if np.any(m):
+                n_norm = LogNorm(vmin=1,
+                                 vmax=max(1 + 1e-8, float(neh_created[m].max())))
+                ax1.scatter(
+                    x0[m], y0[m], c=neh_created[m], s=z_sizes[m],
+                    cmap='plasma', norm=n_norm, edgecolors='#222222',
+                    linewidths=0.18, alpha=0.88, rasterized=True, zorder=3
+                )
+                bar = fig.colorbar(
+                    mpl.cm.ScalarMappable(norm=n_norm, cmap='plasma'), cax=cb1
+                )
+                bar.set_label(r'$N_{eh}$ / deposition', fontsize=10)
+            else:
+                cb1.set_axis_off()
+            if np.any(~m):
+                ax1.scatter(x0[~m], y0[~m], marker='x', s=13,
+                            color='0.55', linewidths=0.55)
+            ax1.text(
+                0.025, 0.022,
+                f'Marker size: $z$ ({zlo:.1f}–{zhi:.1f} µm)',
+                transform=ax1.transAxes, fontsize=13,
+                ha='left', va='bottom',
+                bbox=dict(facecolor='white', edgecolor='none', alpha=0.75)
+            )
+            ax1.set_title('2. Charge generation (no diffusion)\n'
+                          f'{neh_created.sum():,} pairs', fontsize=12)
+
+            # ------------------------------------------------------
+            # Panel 3: after PCC
+            # ------------------------------------------------------
+            m = neh_created > 0
+            if np.any(m):
+                sizes = 14 + 65 * np.sqrt(
+                    neh_survived[m] / max(1, int(neh_survived.max()))
+                )
+                ax2.scatter(
+                    x0[m], y0[m], c=survival[m], s=sizes,
+                    cmap='cividis', norm=Normalize(0, 1),
+                    edgecolors='#222222', linewidths=0.18,
+                    alpha=0.93, rasterized=True, zorder=3
+                )
+                bar = fig.colorbar(
+                    mpl.cm.ScalarMappable(norm=Normalize(0, 1), cmap='cividis'),
+                    cax=cb2
+                )
+                bar.set_label(r'$N_{\mathrm{col}}/N_{\mathrm{gen}}$', fontsize=10)
+            else:
+                cb2.set_axis_off()
+            if np.any(~m):
+                ax2.scatter(x0[~m], y0[~m], marker='x', s=13,
+                            color='0.55', linewidths=0.55)
+            ax2.set_title('3. Charge after PCC\n'
+                          f'Collected {n_transport:,} | Lost {n_lost:,}',
+                          fontsize=12)
+
+            # ------------------------------------------------------
+            # Panel 4: transport and sigma min/max
+            # ------------------------------------------------------
+            step = max(1, int(np.ceil(max(n_transport, 1) / max_points)))
+            ax3.scatter(
+                x_diff[::step], y_diff[::step],
+                s=3.2, color='#d74d70', alpha=0.26,
+                edgecolors='none', rasterized=True, zorder=3,
+                label='Diffused'
+            )
+            ax3.scatter(
+                x0, y0, s=8, color='#161616', alpha=0.58,
+                edgecolors='none', rasterized=True, zorder=4,
+                label='Depositions'
+            )
+
+            good_sigma = ((neh_survived > 0) &
+                          np.isfinite(sigma_dep_um) & (sigma_dep_um >= 0))
+            valid_idx = np.flatnonzero(good_sigma)
+            if valid_idx.size:
+                i_min = valid_idx[np.argmin(sigma_dep_um[valid_idx])]
+                i_max = valid_idx[np.argmax(sigma_dep_um[valid_idx])]
+                plotted = set()
+                for i, kind, color, ls in (
+                    (i_min, 'min', '#254a8d', '--'),
+                    (i_max, 'max', '#c46b13', ':'),
+                ):
+                    if int(i) in plotted:
+                        continue
+                    plotted.add(int(i))
+                    radius_mm = float(sigma_dep_um[i]) * u.um
+                    label = rf'$\sigma_{{{kind}}}$ = {sigma_dep_um[i]:.2f} µm'
+                    if radius_mm == 0:
+                        ax3.scatter([x0[i]], [y0[i]], marker='+', s=105,
+                                    linewidths=1.4, color=color, zorder=7,
+                                    label=label)
+                    else:
+                        ax3.add_patch(Ellipse(
+                            (x0[i], y0[i]),
+                            width=2 * radius_mm / pitch_x,
+                            height=2 * radius_mm / pitch_y,
+                            facecolor='none', edgecolor=color,
+                            linewidth=1.4, linestyle=ls,
+                            alpha=0.95, zorder=6, label=label
+                        ))
+            ax3.legend(loc='upper left', fontsize=12, frameon=False,
+                       markerscale=0.85, labelspacing=0.25, ncols=2)
+            suffix = f' (shown {x_diff[::step].size:,})' if step > 1 else ''
+            ax3.set_title('4. After diffusion\n'
+                          f'{n_transport:,} charges{suffix}', fontsize=12)
+
+            # ------------------------------------------------------
+            # Panel 5: actual pixel charge, no reconstruction grouping
+            # ------------------------------------------------------
+            masked = np.ma.masked_where(image <= 0, image)
+            cmap = mpl.colormaps['viridis'].copy()
+            cmap.set_bad('white', alpha=0)
+            im = ax4.imshow(
+                masked, origin='lower',
+                extent=(pxmin, pxmax, pymin, pymax),
+                interpolation='nearest', cmap=cmap,
+                vmin=0, vmax=max(1., float(image.max())), zorder=2
+            )
+            bar = fig.colorbar(im, cax=cb4)
+            bar.set_label(r'Charge [$e^-$/pixel]', fontsize=10)
+            ax4.set_title('5. Pixelization (no noise)\n'
+                          f'{qp.sum():,.0f} $e^-$ ({q_in_view:,.0f} in ROI)',
+                          fontsize=12)
+
+            # ------------------------------------------------------
+            # Panel 6: diagnostics + explicit PDG summary + alert
+            # ------------------------------------------------------
+            ax5.set_title('6. Per-deposition diagnostics', fontsize=12)
+            chosen = np.argsort(edep_eV)[::-1][:max_table_hits]
+            table_rows = []
+            for i in chosen:
+                sig = (f'{sigma_dep_um[i]:.2f}'
+                       if np.isfinite(sigma_dep_um[i]) else '—')
+                table_rows.append([
+                    str(i), str(int(pdg[i])), f'{edep_eV[i]:.1f}',
+                    f'{int(neh_created[i])}', f'{int(neh_survived[i])}',
+                    f'{z_um[i]:.1f}', sig
+                ])
+            table = ax5.table(
+                cellText=table_rows,
+                colLabels=['Hit', 'PDG', 'E [eV]', 'Ngen',
+                           'Ncol', 'z [µm]', 'σ [µm]'],
+                cellLoc='center', colLoc='center',
+                bbox=(0.0, 0.47, 1.0, 0.45)
+            )
+            table.auto_set_font_size(False)
+            table.set_fontsize(8.2)
+            for (r, c), cell in table.get_celld().items():
+                cell.set_linewidth(0.35)
+                if r == 0:
+                    cell.set_facecolor('#eef0f2')
+                    cell.get_text().set_weight('bold')
+
+            ncls = getattr(self, 'Ncls', None)
+            cluster_note = f'  |  clusters: {int(ncls)}' if ncls is not None else ''
+            info_text = (
+                f'Geant4: {ndep:,} hits  |  $E_{{dep}}$: '
+                f'{edep_eV.sum()/1e3:.2f} keV{cluster_note}\n'
+                f'$N_{{eh}}$: {neh_created.sum():,} generated → '
+                f'{n_transport:,} collected\n'
+                f'Pixelized charge: {qp.sum():,.0f} $e^-$ '
+                f'({n_transport - qp.sum():,.0f} not pixelized)\n'
+                f'CCDOut PDG: $e^-$ (11) = {n_electron:,}; '
+                f'$\\gamma$ (22) = {n_photon:,} '
+                f'({n_photon_edep:,} with $E_{{dep}}>0$)'
+            )
+            ax5.text(0.02, 0.425, info_text, transform=ax5.transAxes,
+                     va='top', ha='left', fontsize=9.0, linespacing=1.24)
+
+            if n_escaped:
+                warning_text = (
+                    f'ALERT: {n_escaped:,} charges displaced '
+                    f'≥ {alert_distance_px:g} pixels '
+                    f'({n_origins_escaped:,} origins)\n'
+                    f'Max. displacement: {max_displacement_px:.2f} pixels'
+                )
+                warning_color, warning_bg = '#a82728', '#fff3f1'
+            else:
+                warning_text = (
+                    f'OK: no charge displaced ≥ {alert_distance_px:g} pixels\n'
+                    f'Max. displacement: {max_displacement_px:.2f} pixels'
+                )
+                warning_color, warning_bg = '#326044', '#f2f8f3'
+            ax5.text(
+                0.02, 0.035, warning_text,
+                transform=ax5.transAxes, va='bottom', ha='left',
+                fontsize=14.0, color=warning_color, fontweight='bold',
+                bbox=dict(boxstyle='round,pad=0.35',
+                          facecolor=warning_bg, edgecolor=warning_color,
+                          linewidth=0.65)
+            )
+
+            # ------------------------------------------------------
+            # 4. Common axes: integer pixel boundaries; fixed frame
+            # ------------------------------------------------------
+            for ax in spatial_axes:
+                ax.set_xlim(*xlim)
+                ax.set_ylim(*ylim)
+                ax.set_aspect('auto')
+                ax.set_box_aspect(1)  # fixed square subplot *box*
+                ax.xaxis.set_major_locator(
+                    MaxNLocator(nbins=5, integer=True)
+                )
+                ax.yaxis.set_major_locator(
+                    MaxNLocator(nbins=5, integer=True)
+                )
+                ax.xaxis.set_minor_locator(MultipleLocator(1))
+                ax.yaxis.set_minor_locator(MultipleLocator(1))
+                ax.set_axisbelow(ax is not ax4)  # pixel borders on heatmap
+                ax.grid(which='major', color='#637081',
+                        alpha=0.15, linewidth=0.45)
+                ax.grid(which='minor', color='#637081',
+                        alpha=0.15, linewidth=0.45)
+                ax.set_xlabel('X [pixel]', fontsize=16)
+                ax.set_ylabel('Y [pixel]', fontsize=16)
+                ax.tick_params(axis='both', which='major',
+                               labelsize=14, length=5, width=0.8,
+                               direction='in', top=True, right=True)
+                ax.tick_params(axis='both', which='minor',
+                               length=0, labelbottom=False, labelleft=False)
+                for spine in ax.spines.values():
+                    spine.set_color('#282828')
+                    spine.set_linewidth(0.8)
+
+            for cax in (cb0, cb1, cb2, cb4):
+                cax.tick_params(axis='y', labelsize=8.5,
+                                direction='in', length=3, width=0.7)
+                cax.yaxis.label.set_fontsize(18)
+
+            fig.suptitle(
+                f'Detector response | Event {int(self.event)}, '
+                f'CCD {int(self.ccd)} | '
+                f'$z$ = {zlo:.1f}–{zhi:.1f} µm',
+                fontsize=18, y=0.975
+            )
+
+            # ------------------------------------------------------
+            # 5. Synchronize toolbar zoom/pan while keeping square ROI
+            # ------------------------------------------------------
+            busy = {'value': False}
+
+            def _enforce_square(changed_ax, dimension):
+                if busy['value']:
+                    return
+                left, right = changed_ax.get_xlim()
+                bottom, top = changed_ax.get_ylim()
+                wx, wy = abs(right - left), abs(top - bottom)
+                if np.isclose(wx, wy, rtol=1e-10, atol=1e-10):
+                    return
+                busy['value'] = True
+                try:
+                    if dimension == 'x':
+                        cy = (bottom + top) / 2.0
+                        changed_ax.set_ylim(cy - wx / 2.0, cy + wx / 2.0)
+                    else:
+                        cx = (left + right) / 2.0
+                        changed_ax.set_xlim(cx - wy / 2.0, cx + wy / 2.0)
+                finally:
+                    busy['value'] = False
+
+            for ax in spatial_axes:
+                ax.callbacks.connect(
+                    'xlim_changed',
+                    lambda changed_ax: _enforce_square(changed_ax, 'x')
+                )
+                ax.callbacks.connect(
+                    'ylim_changed',
+                    lambda changed_ax: _enforce_square(changed_ax, 'y')
+                )
+
+            # Move colorbars relative to the actual square axes frames.
+            fig.canvas.draw()
+            colorbar_gap = 0.006  # fraction of figure width
+            for ax, cax in ((ax0, cb0), (ax1, cb1),
+                            (ax2, cb2), (ax4, cb4)):
+                pos = ax.get_position()
+                cbpos = cax.get_position()
+                cax.set_position([
+                    pos.x1 + colorbar_gap,
+                    pos.y0,
+                    cbpos.width,
+                    pos.height
+                ])
+
+            if saveas is not None:
+                fig.savefig(saveas, dpi=220)
+            if show:
+                plt.show()
+                plt.close(fig)
+            else:
+                return fig
+
     def Draw(self,Npix_min,only_this_event=None,box_size=300):
         """
         Plot for degub
@@ -1719,6 +2280,11 @@ class G4HitCollection(object):
         if only_this_event is not None:
             if self.event not in only_this_event:
                 return
+	
+		# NEW DEBUG PIPELINE
+        if getattr(self, "debug_capture", False):
+            self.DrawStages()
+            return
 
         if not hasattr(self, 'roi'):
             self.mode = 'cropped-image'

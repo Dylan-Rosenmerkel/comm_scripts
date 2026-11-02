@@ -1,291 +1,854 @@
 #!/usr/bin/env python3
-import click
-import sys
+"""
+Single-electron peak calibration of a CCD (DAMIC-like) from the pixel charge
+spectrum.  Only numpy + scipy + matplotlib (+ astropy to read FITS files).
+No ROOT, no uproot.
 
-### To avoid ROOT help print out
-if not '-h' in sys.argv and not '--help'in sys.argv:
-    import ROOT
-    from array import array
-    import numpy as np
-    from glob import glob
+Method
+  1. Pixel charge histogram, built file by file (no need to hold all data).
+  2. Peak tracking: the pedestal (n=0) is fitted first; peak n=1 is searched at
+     mu_0 + k (k = estimated or user-given spacing); every new peak updates the
+     local line (the gain) used to predict the next one.  The initial spacing
+     is estimated with a periodogram unless --no-auto is given (then -k is used
+     as is).
+  3. Every peak is fitted by Poisson maximum likelihood with an INTEGRATED-bin
+     Gaussian model (expected counts = N*[Phi(x_hi)-Phi(x_lo)]), so the result
+     does not depend on the bin width.  With few counts (< --min-counts-sigma)
+     sigma is fixed to the sigma(n) trend and only N and mu are fitted.
+  4. Refinement: a robust global polynomial mu(n) is fitted to the good peaks
+     and ALL peaks (also the ones that failed) are refitted with the window
+     centred on the prediction.  Repeated until no new peak appears.
+  5. Calibration, two models fitted on the same peaks:
+         linear     mu_n = p0 + p1 n
+         quadratic  mu_n = p0 + p1 n + p2 n^2
+         cubic      mu_n = p0 + p1 n + p2 n^2 + p3 n^3
+     with their residuals, and the resolution sigma_n^2 = sigma0^2 + c n
+     (optionally + d n^2 when a gain drift makes it significant).
+"""
+import json
+from collections import Counter
+from glob import glob
+from pathlib import Path
+
+import click
+import numpy as np
+
+SQ2PI = np.sqrt(2.0 * np.pi)
+
+
+# ----------------------------------------------------------------------------
+# Data reading -> histogram
+# ----------------------------------------------------------------------------
+def hist_from_fits(pattern, edges, cols, rows, ext):
     from astropy.io import fits
 
+    files = sorted(glob(pattern))
+    if not files:
+        raise click.ClickException(f"No files match '{pattern}'")
+    counts = np.zeros(len(edges) - 1)
+    for f in files:
+        with fits.open(f, memmap=True) as hdul:
+            d = hdul[ext].data[rows[0]:rows[1], cols[0]:cols[1]]
+            counts += np.histogram(np.asarray(d, dtype=np.float32).ravel(),
+                                   bins=edges)[0]
+    return counts, files
 
-def get_histe(infile,hist_e,inADU,gain,cols=(8,-1),rows=(0,-1),ext=0):
 
-    lof = glob(infile)
-    if inADU:
-        CF = 1/gain
+# ----------------------------------------------------------------------------
+# Initial estimate: peak spacing and pedestal position
+# ----------------------------------------------------------------------------
+def estimate_spacing(x, counts, k, gmin, gmax, xmax):
+    """Rayleigh periodogram of log(1+N) after removing the smooth trend."""
+    dx = x[1] - x[0]
+    w = np.log1p(counts)
+    size = max(3, int(3 * k / dx))
+    w = w - np.convolve(w, np.ones(size) / size, mode="same")
+
+    # The pedestal region (x < k*gmax) is excluded: its huge amplitude biases
+    # the periodogram towards the upper end of the search range.
+    m = (x < xmax) & (x > k * gmax)
+    xs, ws = x[m], w[m]
+
+    grid = np.linspace(gmin * k, gmax * k, 4000)
+    z = (np.exp(-2j * np.pi * xs[None, :] / grid[:, None]) * ws[None, :]).sum(axis=1)
+    i = int(np.argmax(np.abs(z)))
+    s = grid[i]
+
+    # pedestal position: candidate (mod s) closest to the global maximum
+    x0 = (-np.angle(z[i]) * s / (2 * np.pi)) % s
+    x0 = x0 + np.round((x[np.argmax(counts)] - x0) / s) * s
+    return s, x0
+
+
+# ----------------------------------------------------------------------------
+# Single-peak fit: Poisson likelihood + Gaussian integrated over each bin
+# ----------------------------------------------------------------------------
+def _fit_once(xs, ys, dx, pred, s, free, sg_start, ntot):
+    """One fit (free or fixed sigma).  Returns (dict, None) or (None, reason)."""
+    from scipy.optimize import minimize
+    from scipy.special import ndtr
+
+    xl, xh = xs - dx / 2, xs + dx / 2
+    N0 = ntot
+    mu0 = float(np.clip(np.dot(xs, ys) / ntot, pred - 0.3 * s, pred + 0.3 * s))
+
+    def unpack(q):
+        return N0 * q[0], pred + s * q[1], (s * q[2] if free else sg_start)
+
+    def terms(q):
+        N, mu, sg = unpack(q)
+        zl, zh = (xl - mu) / sg, (xh - mu) / sg
+        p = ndtr(zh) - ndtr(zl)
+        phl, phh = np.exp(-0.5 * zl ** 2) / SQ2PI, np.exp(-0.5 * zh ** 2) / SQ2PI
+        E = N * p + 1e-12
+        dE = [p, N * (phl - phh) / sg]
+        if free:
+            dE.append(N * (zl * phl - zh * phh) / sg)
+        return N, mu, sg, E, np.array(dE)
+
+    def fun(q):
+        N, mu, sg, E, dE = terms(q)
+        nll = np.sum(E - ys * np.log(E))
+        g = (dE @ (1.0 - ys / E)) * np.array([N0, s, s][:len(dE)])
+        return nll, g
+
+    q0 = [1.1, (mu0 - pred) / s] + ([min(max(sg_start / s, 0.04), 0.4)] if free else [])
+    bounds = [(1e-3, 5.0), (-0.3, 0.3)] + ([(0.03, 0.45)] if free else [])
+    r = minimize(fun, q0, jac=True, method="L-BFGS-B", bounds=bounds)
+    if not np.all(np.isfinite(r.x)):
+        return None, "no convergence"
+    N, mu, sg, E, dE = terms(r.x)
+
+    if E.sum() < 0.5 * ntot:
+        return None, "collapsed fit"
+    if free and r.x[2] > 0.44:
+        return None, "sigma at limit"
+    I = (dE / E) @ dE.T
+    try:
+        cov = np.linalg.inv(I)
+    except np.linalg.LinAlgError:
+        return None, "no information"
+    d = np.diag(cov)
+    if not np.all(np.isfinite(d)) or np.any(d <= 0):
+        return None, "no information"
+    return dict(mu=mu, emu=float(np.sqrt(d[1])), sg=sg,
+                esg=float(np.sqrt(d[2])) if free else np.nan,
+                amp=N * dx / (SQ2PI * sg), free=free,
+                edge=bool(abs(r.x[1]) > 0.29)), None
+
+
+def fit_peak(x, y, dx, pred, s, sg_prior, win, min_counts, min_counts_sigma):
+    """Fit one peak.  With enough counts sigma is free; if that fit fails or
+    there are few counts, sigma is fixed to the trend value sg_prior."""
+    # the window always spans >= 5 bins, even with coarse bins
+    m = np.abs(x - pred) < max(win * s, 2.5 * dx)
+    if m.sum() < 4:
+        return None, "too few bins"
+    xs, ys = x[m], y[m]
+    ntot = ys.sum()
+    if ntot < min_counts:
+        return None, "too few counts"
+    sg_fix = float(np.clip(sg_prior, 0.05 * s, 0.4 * s))
+    reason = None
+    if ntot >= min_counts_sigma:
+        res, reason = _fit_once(xs, ys, dx, pred, s, True, sg_fix, ntot)
+        if res is not None:
+            return res, None
+    res, reason2 = _fit_once(xs, ys, dx, pred, s, False, sg_fix, ntot)
+    return (res, None) if res is not None else (None, reason or reason2)
+
+
+# ----------------------------------------------------------------------------
+# Predictions
+# ----------------------------------------------------------------------------
+def forward_predict(n, ns, mus, x0, s0):
+    """Prediction during the sweep: pedestal -> n=1 at mu_0 + k -> line through
+    the last peaks (two peaks already give a gain estimate); quadratic with >=12."""
+    if len(ns) >= 2:
+        t = np.asarray(ns[-30:], float) - ns[-1]
+        deg = 1 if len(t) < 12 else 2
+        c = np.polyfit(t, mus[-30:], deg)
+        pred = np.polyval(c, n - ns[-1])
+        slope = np.polyval(np.polyder(c), n - ns[-1])
+    elif len(ns) == 1:
+        pred, slope = mus[0] + (n - ns[0]) * s0, s0
     else:
-        CF = 1.0
-
-    for f in lof:
-        d = fits.getdata(f,ext).astype(float)[rows[0]:rows[1],cols[0]:cols[1]]
-        for qij in d.flatten():
-            _ = hist_e.Fill(qij*CF)
-
-    return hist_e
-
-@click.command(help="Script to fit gaussian peaks to the reconstructed image")
-@click.option("-f","--infile",help="Input fits file with the calibrated data",type=str)
-@click.option("--inadu",help="If input data is in ADUs",type=bool,default=False)
-@click.option("-r","--root",help="Input root file with the reconstructed clusters", type=str)
-@click.option("-k","--gain",help="Calibration estimated with the two first gaussian peaks", type=float)
-@click.option("--ne",help="Minimum and maximum number of electrons to be fitted", type=(int,int), default=(0,1350))
-@click.option("--de",help="Binning size in units of ADU", type=float, default=0.05)
-@click.option("--display",help="Display the best fit to each peak", type=bool, default=False)
-@click.option("--cols",help="For --infile option, the range of cols to be included", type=(int,int), default=(8,-1))
-@click.option("--rows",help="For --infile option, the range of rows to be included", type=(int,int), default=(0,-1))
-@click.option("--erange",help="Delta energy range for the spectral window fit: mu +/- erange",type=(float,float), default=(0.35,0.5))
-@click.option("--ext",help="Fits extension for data", type=int, default=0)
-@click.option("-o","--output", help="Output directory",type=str,default='.')
-def main(infile,inadu,root,gain,ne,de,display,cols,rows,erange,ext,output):
-
-    _isbatch = ROOT.gROOT.IsBatch()
-    if display:
-        ROOT.gROOT.SetBatch(0)
-    else:
-        ROOT.gROOT.SetBatch(1)
-    
-    if infile is None:
-        f = ROOT.TFile.Open(root)
-        clusters = f.Get("clustersRec")
-        # from peak ne_ini to ne
-        ne_ini, ne = ne
-        # energy distribution in units of e- assuming calibration at 1 e-
-        _ = clusters.Draw(f"pixels_E*1000/3.74>>hist_e({int(ne/de)},{ne_ini},{ne})","","GOFF norm")
-    else:
-        ne_ini, ne = ne
-        hist_e = ROOT.TH1D("hist_e","hist_e",int(ne/de),ne_ini-3,ne+3)
-        hist_e = get_histe(infile,hist_e,inadu,gain,cols=cols,rows=rows, ext=ext)
-    
-    hist_e = ROOT.gDirectory.Get("hist_e")
-    hist_e.GetXaxis().SetTitle("n_{e-}")
-    hist_e.GetYaxis().SetTitle(f"Counts")
-    hist_e.SetDirectory(0)
-    hist_e.Sumw2()
-
-    gauss     = []
-    centers   = []
-    e_centers = []
-    mu = ne_ini-1
-    fopt = "LEMRQ0"
-    x_num_electron = []
-    sigma = []
-    e_sigma = []
-    
-    for i in range(ne_ini,ne+1):
-        x_min = (mu+1) - erange[0]
-        x_max = (mu+1) + erange[1]
-        gauss.append( ROOT.TF1(f"ne_{i}","gaus",x_min,x_max) )
-        gauss[-1].SetParLimits(1,x_min,x_max)
-        gauss[-1].SetParLimits(2,0.01,1.0)
-        gauss[-1].SetLineColor(2)
-        hist_e.Fit(gauss[-1],fopt)
-        #fopt="+LEMRQ"
-        
-        # sometimes the fitting mayit goes wrong, try again
-        if gauss[-1].GetParameter(1)-mu > 2:
-            gauss[-1].SetParLimits(1,x_min,x_max)
-            hist_e.Fit(gauss[-1],fopt)
-
-        mu = gauss[-1].GetParameter(1)
-        
-        centers.append( gain*gauss[-1].GetParameter(1) )
-        e_centers.append( gain*gauss[-1].GetParError(1) )
-        x_num_electron.append( i )
-
-        sigma.append( gauss[-1].GetParameter(2)/gain )
-        e_sigma.append( gauss[-1].GetParError(2)/gain)
+        pred, slope = x0 + n * s0, s0
+    return float(pred), float(np.clip(slope, 0.5 * s0, 2 * s0))
 
 
-    # --------------------------------------------------------------------------------------
-    c2 = ROOT.TCanvas()
-    hist_e.Draw("HIST")
-    for f in gauss:
-        f.Draw("same") 
-    c2.SetLogy()
+def make_poly_predictor(n, mu, deg, s0, nsig=5.0):
+    """Robust global polynomial mu(n).  Returns (pred_fn, keep) where keep flags
+    the peaks that are not outliers of the polynomial."""
+    n, mu = np.asarray(n, float), np.asarray(mu, float)
+    deg = int(min(deg, max(1, len(n) // 15)))
+    k = np.ones(len(n), bool)
+    for _ in range(4):
+        P = np.polynomial.Polynomial.fit(n[k], mu[k], deg)
+        res = mu - P(n)
+        mad = 1.4826 * np.median(np.abs(res[k] - np.median(res[k])))
+        k = np.abs(res) < nsig * max(mad, 0.02 * s0)
+    dP = P.deriv()
+    return (lambda m: (float(P(m)), float(np.clip(dP(m), 0.5 * s0, 2 * s0)))), k
 
-    if display:
-        c2.Update()
-        c2.Draw()
-    else:
-        c2.Update()
-        fname = output+"/"+infile.split("/")[-1].split(".")[0]+"_FittedGauss.png"
-        c2.SaveAs(fname)
-   
-    # --------------------------------------------------------------------------------------
-    c = ROOT.TCanvas()
-    ROOT.gStyle.SetOptFit(1111)
-    x = x_num_electron
-    centers = centers
-    e_centers = e_centers
-    g = ROOT.TGraphErrors(len(centers), 
-            array('d',x),
-            array('d',centers),
-            array('d',np.zeros_like(x)),
-            array('d',e_centers)
-            )
 
-    g.GetHistogram().GetXaxis().SetTitle("n_{e^{-}}")
-    g.GetHistogram().GetYaxis().SetTitle("#mu_{n_{e^{-}}} [ADU/e^{-}]")
-    pol1 = ROOT.TF1("fitfunc","pol1",0,ne)
-    pol1.SetLineColor(2)
-    pol1.SetParameter(0,0)
-    pol1.SetParLimits(1,0,2*gain)
-    pol1.SetParameter(1,gain)
+def make_sigma_predictor(n, sg, free, keep, s0):
+    ok = free & keep
+    if ok.sum() >= 10:
+        c = np.polyfit(n[ok], sg[ok], 1)
+        return lambda m: float(np.polyval(c, m))
+    v = float(np.median(sg[ok])) if ok.any() else 0.2 * s0
+    return lambda m: v
 
-    g.Fit(pol1,"EMR0")
-    g.SetMarkerStyle(21)
-    g.SetMarkerSize(0.8)
-    g.Draw("A PE1")
-    pol1.Draw("same")
-    c.Update()
 
-    stat_box = g.FindObject("stats")
-    stat_box.SetX1NDC(0.18)
-    stat_box.SetY1NDC(0.60)
-    stat_box.SetX2NDC(0.50)
-    stat_box.SetY2NDC(0.80)
-    stat_box.Draw()
-    c.Update()
-
-    if display:
-        c.Update()
-        c.Draw()
-    else:
-        fname = output+"/"+infile.split("/")[-1].split(".")[0]+"_calibration_ne.png"
-        c.SaveAs(fname)
-  
-
-    # --------------------------------------------------------------------------------------
-    c9 = ROOT.TCanvas()
-    y_fit = []
-    x_fit = []
-    for i,ne_i in enumerate(x_num_electron):
-        if ne_i<1:
+# ----------------------------------------------------------------------------
+# Peak tracking
+# ----------------------------------------------------------------------------
+def track_peaks(x, y, dx, s0, x0, n_ini, n_max, win, maxfail, min_counts,
+                min_counts_sigma, pred_fn=None, sig_fn=None, why=None):
+    keys = ("n", "mu", "emu", "sg", "esg", "amp", "free", "edge")
+    out = {k_: [] for k_ in keys}
+    recent_sg, fails = [], 0
+    for n in range(n_ini, n_max + 1):
+        if pred_fn is not None:
+            pred, s = pred_fn(n)
+        else:
+            pred, s = forward_predict(n, out["n"], out["mu"], x0, s0)
+        if sig_fn is not None:
+            sg_prior = sig_fn(n)
+        else:
+            sg_prior = float(np.median(recent_sg[-15:])) if recent_sg else 0.2 * s0
+        r, reason = fit_peak(x, y, dx, pred, s, sg_prior, win, min_counts, min_counts_sigma)
+        if r is None:
+            if why is not None:
+                why[reason] += 1
+            fails += 1
+            if fails >= maxfail:
+                break
             continue
-        #y_fit.append(pol1.Eval(ne_i) / centers[i] - 1)
-        y_fit.append( pol1.Eval(ne_i)-centers[i] )
-        x_fit.append(ne_i)
+        fails = 0
+        r["n"] = n
+        for k_ in keys:
+            out[k_].append(r[k_])
+        if r["free"]:
+            recent_sg.append(r["sg"])
+    return {k_: np.array(v, float if k_ not in ("free", "edge") else bool)
+            for k_, v in out.items()}
 
-    g9 = ROOT.TGraph(len(x_fit),
-            array('d',x_fit),
-            array('d',y_fit)
-            )
 
-    g9.GetHistogram().GetXaxis().SetTitle("n_{e^{-}}")
-    #g9.GetHistogram().GetYaxis().SetTitle("#mu_{n_{e}}^{fit}/#mu_{n_{e}} - 1")
-    g9.GetHistogram().GetYaxis().SetTitle("#mu_{n_{e}}^{fit} - #mu_{n_{e}} [ADU/e^{-}]")
-    g9.GetHistogram().GetYaxis().SetTitleOffset(1.4)
+# ----------------------------------------------------------------------------
+# Blocks of neighbouring peaks: local gain + common sigma
+# ----------------------------------------------------------------------------
+def fit_blocks(x, y, dx, n, mu, spacing, win, block, min_counts, sg_guess):
+    """Joint fit of `block` consecutive peaks.  Inside a block
+         - the positions follow ONE local line   mu_i = a + g (n_i - n_c)
+         - all peaks share ONE sigma
+         - the amplitude N_i of every peak is free.
+    A single tail peak has too few counts for sigma or for a precise position, but
+    10 peaks do: the local gain g has an error ~13 times smaller than the
+    difference of two consecutive peaks.  Returns a list of dicts with
+    n_center, n_lo, n_hi, sg, esg, gain, egain, a."""
+    from scipy.optimize import minimize
+    from scipy.special import ndtr
 
-    g9.SetMarkerStyle(21)
-    g9.SetMarkerSize(0.8)
-    g9.Draw("A PE1")
-    c9.Update()
+    order = np.argsort(n)
+    n, mu = np.asarray(n, float)[order], np.asarray(mu, float)[order]
+    s = spacing
+    hw = max(win * s, 2.5 * dx)
+    chunks = [np.arange(i, min(i + block, len(n))) for i in range(0, len(n), block)]
+    if len(chunks) > 1 and len(chunks[-1]) < block // 2:
+        chunks[-2] = np.concatenate([chunks[-2], chunks[-1]])
+        chunks.pop()
 
-    if display:
-        c9.Update()
-        c9.Draw()
+    out = []
+    for idx in chunks:
+        wins = []
+        for i in idx:
+            m = np.abs(x - mu[i]) < hw
+            if m.sum() >= 4 and y[m].sum() >= min_counts:
+                wins.append((i, x[m], y[m]))
+        K = len(wins)
+        if K < max(3, block // 2):
+            continue
+        nn = np.array([n[w[0]] for w in wins])
+        tc = float(nn.mean())
+        t = nn - tc
+        if np.ptp(t) < 2:
+            continue
+        N0 = np.array([w[2].sum() for w in wins])
+        g0, a0 = np.polyfit(t, [mu[w[0]] for w in wins], 1)
+        g0 = float(np.clip(g0, 0.5 * s, 1.5 * s))
+
+        # scaled variables: q = [sigma/s, (g-g0)/(0.02 s), (a-a0)/(0.1 s), N_i/N0_i ...]
+        def phys(q):
+            return q[0] * s, g0 + 0.02 * s * q[1], a0 + 0.1 * s * q[2], N0 * q[3:]
+
+        def peak(j, sg, mus, N):
+            xs = wins[j][1]
+            zl, zh = (xs - dx / 2 - mus) / sg, (xs + dx / 2 - mus) / sg
+            p_ = ndtr(zh) - ndtr(zl)
+            phl, phh = np.exp(-0.5 * zl ** 2) / SQ2PI, np.exp(-0.5 * zh ** 2) / SQ2PI
+            E = N * p_ + 1e-12
+            return E, p_, (zl * phl - zh * phh) / sg, (phl - phh) / sg
+
+        def fun(q):
+            sg, g, a, N = phys(q)
+            nll, grad = 0.0, np.zeros_like(q)
+            for j in range(K):
+                E, p_, dsg, dmu = peak(j, sg, a + g * t[j], N[j])
+                w_ = 1.0 - wins[j][2] / E
+                nll += np.sum(E - wins[j][2] * np.log(E))
+                gmu = np.sum(w_ * N[j] * dmu)
+                grad[0] += np.sum(w_ * N[j] * dsg) * s
+                grad[1] += gmu * t[j] * 0.02 * s
+                grad[2] += gmu * 0.1 * s
+                grad[3 + j] = np.sum(w_ * p_) * N0[j]
+            return nll, grad
+
+        q0 = np.concatenate([[min(max(sg_guess(tc) / s, 0.05), 0.4), 0.0, 0.0],
+                             np.full(K, 1.1)])
+        bounds = [(0.03, 0.45), (-5, 5), (-3, 3)] + [(1e-3, 5.0)] * K
+        r = minimize(fun, q0, jac=True, method="L-BFGS-B", bounds=bounds)
+        if not np.all(np.isfinite(r.x)) or r.x[0] > 0.44:
+            continue
+
+        # Fisher information in physical parameters (sigma, g, a, N_j)
+        sg, g, a, N = phys(r.x)
+        I = np.zeros((3 + K, 3 + K))
+        for j in range(K):
+            E, p_, dsg, dmu = peak(j, sg, a + g * t[j], N[j])
+            J = np.vstack([N[j] * dsg, N[j] * dmu * t[j], N[j] * dmu, p_])
+            ix = [0, 1, 2, 3 + j]
+            I[np.ix_(ix, ix)] += (J / E) @ J.T
+        try:
+            cov = np.linalg.inv(I)
+        except np.linalg.LinAlgError:
+            continue
+        if not (np.isfinite(cov[0, 0]) and np.isfinite(cov[1, 1])
+                and cov[0, 0] > 0 and cov[1, 1] > 0):
+            continue
+        out.append(dict(n_center=tc, n_lo=float(nn.min()), n_hi=float(nn.max()),
+                        sg=float(sg), esg=float(np.sqrt(cov[0, 0])),
+                        gain=float(g), egain=float(np.sqrt(cov[1, 1])), a=float(a)))
+    return out
+
+
+def sigma_trend_from_blocks(blocks, default):
+    """Linear trend sigma(n) from the block measurements (weighted)."""
+    if len(blocks) >= 3:
+        nb = np.array([b["n_center"] for b in blocks])
+        sb = np.array([b["sg"] for b in blocks])
+        eb = np.array([b["esg"] for b in blocks])
+        c = np.polyfit(nb, sb, 1, w=1.0 / eb)
+        return lambda m: float(np.polyval(c, m))
+    return default
+
+
+# ----------------------------------------------------------------------------
+# Weighted polynomial fits
+# ----------------------------------------------------------------------------
+def poly_fit(n, mu, e, deg):
+    """Weighted least squares.  Returns dict with parameters, errors (scaled by
+    sqrt(chi2/ndf) when > 1), chi2, ndf, and the error scale factor.  The fit is done
+    in the scaled variable n/nsc for numerical stability (n^3 reaches 1e9)."""
+    nsc = max(float(np.max(np.abs(n))), 1.0)
+    x = n / nsc
+    A = np.vander(x, deg + 1, increasing=True)
+    w = 1.0 / e ** 2
+    cov = np.linalg.inv(A.T @ (A * w[:, None]))
+    p = cov @ (A.T @ (w * mu))
+    chi2 = float(np.sum(((mu - A @ p) / e) ** 2))
+    ndf = len(n) - deg - 1
+    scale = float(np.sqrt(chi2 / ndf)) if ndf > 0 and chi2 / ndf > 1 else 1.0
+    f = nsc ** -np.arange(deg + 1)                 # back to the unscaled parameters
+    return dict(p=p * f, ep=np.sqrt(np.diag(cov)) * scale * f, chi2=chi2, ndf=int(ndf), scale=scale)
+
+
+def _sgn(v):
+    return "+" if v >= 0 else "-"
+
+
+def eq_text(p):
+    """Plain-text equation  mu(n) = p0 + p1 n [+ p2 n^2]."""
+    t = f"mu(n) = {p[0]:.5f} {_sgn(p[1])} {abs(p[1]):.5f} n"
+    if len(p) > 2:
+        t += f" {_sgn(p[2])} {abs(p[2]):.4e} n^2"
+    if len(p) > 3:
+        t += f" {_sgn(p[3])} {abs(p[3]):.4e} n^3"
+    return t
+
+
+def eq_tex(p):
+    """Matplotlib mathtext version of the same equation."""
+    t = f"$\\mu(n)$ = {p[0]:.4f} {_sgn(p[1])} {abs(p[1]):.5f} $n$"
+    if len(p) > 2:
+        m_, e_ = f"{abs(p[2]):.2e}".split("e")
+        t += f" {_sgn(p[2])} {m_}$\\times$10$^{{{int(e_)}}}$ $n^2$"
+    if len(p) > 3:
+        m_, e_ = f"{abs(p[3]):.2e}".split("e")
+        t += f" {_sgn(p[3])} {m_}$\\times$10$^{{{int(e_)}}}$ $n^3$"
+    return t
+
+
+def sigma_model(n, s0, c):
+    return np.sqrt(s0 ** 2 + c * n)
+
+
+def sigma_model2(n, s0, c, d):
+    return np.sqrt(np.maximum(s0 ** 2 + c * n + d * n ** 2, 1e-12))
+
+
+def fit_sigma_blocks(nb, sb, eb, gmax):
+    """sigma^2 = s0^2 + c n   and   sigma^2 = s0^2 + c n + d n^2  fitted on the block
+    sigmas (n scaled by 1000 inside).  Blocks more than 4 sigma off the first fit are
+    clipped (and reported) before the final fits.  Returns None when it cannot fit."""
+    from scipy.optimize import curve_fit
+    if len(nb) < 6:
+        return None
+    x = nb / 1000.0
+    f1 = lambda x_, s0, c1: sigma_model(x_, s0, c1)
+    f2 = lambda x_, s0, c1, d1: sigma_model2(x_, s0, c1, d1)
+    b1 = ([0, 0], [gmax, 4 * gmax ** 2])
+    b2 = ([0, -gmax ** 2, -gmax ** 2], [gmax, 4 * gmax ** 2, 4 * gmax ** 2])
+    try:
+        q, _ = curve_fit(f1, x, sb, p0=[0.2 * gmax, 0.05 * gmax ** 2], sigma=eb,
+                         absolute_sigma=True, bounds=b1)
+        good = np.abs((sb - f1(x, *q)) / eb) < 4.0
+        if good.sum() < 6:
+            good = np.ones(len(x), bool)
+        q1_, c1_ = curve_fit(f1, x[good], sb[good], p0=q, sigma=eb[good], absolute_sigma=True, bounds=b1)
+        q2_, c2_ = curve_fit(f2, x[good], sb[good], p0=[q1_[0], q1_[1], 0.0], sigma=eb[good],
+                             absolute_sigma=True, bounds=b2)
+    except (RuntimeError, ValueError):
+        return None
+    chi1 = float(np.sum(((sb - f1(x, *q1_))[good] / eb[good]) ** 2))
+    chi2 = float(np.sum(((sb - f2(x, *q2_))[good] / eb[good]) ** 2))
+    e2 = np.sqrt(np.diag(c2_))
+    d_sig = abs(q2_[2]) / e2[2] if e2[2] > 0 else 0.0
+    use2 = bool(d_sig > 3.0 and chi1 - chi2 > 9.0)      # extra term only if clearly needed
+    # back to per-electron coefficients
+    p1_ = np.array([q1_[0], q1_[1] / 1000.0])
+    p2_ = np.array([q2_[0], q2_[1] / 1000.0, q2_[2] / 1e6])
+    return dict(p1=p1_, e1=np.sqrt(np.diag(c1_)) * np.array([1, 1 / 1000.0]), chi1=chi1,
+                p2=p2_, e2=e2 * np.array([1, 1 / 1000.0, 1 / 1e6]), chi2=chi2,
+                d_sig=float(d_sig), use2=use2, good=good, ndf=int(good.sum()))
+
+
+# ----------------------------------------------------------------------------
+@click.command(context_settings=dict(help_option_names=["-h", "--help"]),
+               help="Calibrates a CCD by fitting the single-electron peaks "
+                    "(gain = peak spacing).  Linear and quadratic models are "
+                    "fitted and their residuals compared.  No ROOT needed.")
+@click.option("-f", "--infile", type=str, required=True,
+              help="Input FITS file(s) (wildcards allowed)")
+@click.option("--inadu/--no-inadu", default=True, hidden=True,
+              help="Deprecated and ignored: the data are always taken as they are in the file "
+                   "(ADU unless --unit says otherwise).")
+@click.option("--unit", type=str, default="ADU", show_default=True,
+              help="Name of the unit of the numbers in the FITS file (labels only). "
+                   "Slopes are then <unit>/e-.")
+@click.option("-k", "--gain", type=float, default=None,
+              help="Approximate peak spacing (ADU/e-).  Default 1.0")
+@click.option("--no-auto", is_flag=True,
+              help="Do not estimate the spacing with the periodogram: use -k as "
+                   "the initial step (pedestal at the histogram maximum)")
+@click.option("--gain-range", type=(float, float), default=(0.5, 2.0), show_default=True,
+              help="Gain search range, as factors of -k")
+@click.option("--ne", type=(int, int), default=(0, 1000), show_default=True,
+              help="First and last peak (n e-) to fit")
+@click.option("--fit-range", type=(int, int), default=(0, 10**9), show_default=False,
+              help="Range of n used in BOTH calibration fits (default: all). "
+                   "E.g. --fit-range 0 60 to calibrate on the low-n region only")
+@click.option("--de", type=float, default=0.1, show_default=True,
+              help="Bin width = de * k / 2.  The fit (integrated bins) hardly depends "
+                   "on it, but do not make it larger than ~0.2 of the peak spacing")
+@click.option("--win", type=float, default=0.3, show_default=True,
+              help="Fit half-window, in units of the peak spacing")
+@click.option("--min-counts", type=float, default=20, show_default=True,
+              help="Minimum counts inside the window to attempt a fit")
+@click.option("--min-counts-sigma", type=float, default=150, show_default=True,
+              help="Below these counts sigma is fixed to the sigma(n) trend")
+@click.option("--sigma-block", type=int, default=10, show_default=True,
+              help="Number of consecutive peaks per block for the sigma(n) measurement "
+                   "(one common sigma per block; works where single peaks have few counts)")
+@click.option("--poly-deg", type=int, default=3, show_default=True,
+              help="Degree of the global polynomial mu(n) used to predict peaks "
+                   "in the refinement")
+@click.option("--maxfail", type=int, default=30, show_default=True,
+              help="Consecutive failed peaks before stopping the sweep")
+@click.option("--cols", type=(int, int), default=(8, -1), show_default=True)
+@click.option("--rows", type=(int, int), default=(0, -1), show_default=True)
+@click.option("--ext", type=int, default=0, show_default=True, help="FITS extension")
+@click.option("--display", is_flag=True, help="Show the figures on screen")
+@click.option("-o", "--output", type=str, default=".", help="Output directory")
+def main(infile, inadu, unit, gain, no_auto, gain_range, ne, fit_range, de, win, min_counts,
+         min_counts_sigma, sigma_block, poly_deg, maxfail, cols, rows, ext, display, output):
+    import matplotlib
+    if not display:
+        matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from scipy.optimize import curve_fit
+
+    k = gain if gain else 1.0
+    gmin, gmax = gain_range
+    ne_ini, ne_max = ne
+
+    # --- histogram ------------------------------------------------------------
+    dx = de * k * 0.5          # bin width: de * k / 2 (same in every mode)
+    lo, hi = -3 * k, (ne_max + 3) * k * (1.0 if no_auto else gmax)
+    edges = np.arange(lo, hi + dx, dx)
+    xc = 0.5 * (edges[1:] + edges[:-1])
+    counts, files = hist_from_fits(infile, edges, cols, rows, ext)
+    stem = Path(files[0]).stem
+    if counts.sum() == 0:
+        raise click.ClickException("Empty histogram: check -k/--gain-range/--cols/--rows")
+    xmax_data = xc[np.nonzero(counts)[0][-1]]
+
+    # --- starting point ---------------------------------------------------------
+    if no_auto:
+        s0, x0 = k, xc[np.argmax(counts)]
     else:
-        fname = output+"/"+infile.split("/")[-1].split(".")[0]+"_mu_fiducial_residuals_ne.png"
-        c9.SaveAs(fname)
-  
+        s0, x0 = estimate_spacing(xc, counts, k, gmin, gmax, xmax=12 * k * gmax)
+    if dx > 0.2 * s0:
+        click.echo(f"[warning] bin = {dx:.3f} is coarse compared with the spacing "
+                   f"{s0:.3f}; lower --de (e.g. 0.1)", err=True)
+    click.echo(f"Start: spacing = {s0:.4f} {unit}/e-, pedestal at {x0:.3f} {unit}  "
+               f"(data up to {xmax_data:.1f} {unit}, bin = {dx:.3f})")
 
+    # --- 1st pass: sweep pedestal -> n=1 -> ... -----------------------------------
+    why = Counter()
+    pk = track_peaks(xc, counts, dx, s0, x0, ne_ini, ne_max, win, maxfail, min_counts,
+                     min_counts_sigma, why=why)
+    if len(pk["n"]) < 4:
+        raise click.ClickException(f"Fewer than 4 peaks fitted ({dict(why)}); "
+                                   "check -k, --win, --min-counts")
+    n_last = int(pk["n"][-1])
+    click.echo(f"Sweep     : {len(pk['n'])} peaks fitted out of {n_last - ne_ini + 1} "
+               f"(last n = {n_last})")
 
+    # --- refinement: global polynomial + refit of all peaks ------------------------
+    for it in range(4):
+        pred_fn, keep = make_poly_predictor(pk["n"], pk["mu"], poly_deg, s0)
+        sig_fn = make_sigma_predictor(pk["n"], pk["sg"], pk["free"], keep, s0)
+        why = Counter()
+        new = track_peaks(xc, counts, dx, s0, x0, ne_ini, min(ne_max, n_last + 3), win,
+                          10 ** 9, min_counts, min_counts_sigma,
+                          pred_fn=pred_fn, sig_fn=sig_fn, why=why)
+        if len(new["n"]) < 4:
+            break
+        grew = len(new["n"]) > len(pk["n"])
+        pk = new
+        click.echo(f"Refinement {it + 1}: {len(pk['n'])} peaks")
+        if not grew:
+            break
+    # --- sigma(n) in blocks over the WHOLE range; use it as sigma prior for a final refit
+    pred_fn, keep = make_poly_predictor(pk["n"], pk["mu"], poly_deg, s0)
+    spacing = float(np.polyfit(pk["n"][keep], pk["mu"][keep], 1)[0])
+    blocks = fit_blocks(xc, counts, dx, pk["n"][keep], pk["mu"][keep], spacing, win,
+                              sigma_block, min_counts, sig_fn)
+    if len(blocks) >= 3:
+        sig_fn = sigma_trend_from_blocks(blocks, sig_fn)
+        why = Counter()
+        new = track_peaks(xc, counts, dx, s0, x0, ne_ini, min(ne_max, n_last + 3), win,
+                          10 ** 9, min_counts, min_counts_sigma,
+                          pred_fn=pred_fn, sig_fn=sig_fn, why=why)
+        if len(new["n"]) >= 4:
+            pk = new
+            pred_fn, keep = make_poly_predictor(pk["n"], pk["mu"], poly_deg, s0)
+            blocks = fit_blocks(xc, counts, dx, pk["n"][keep], pk["mu"][keep],
+                                      spacing, win, sigma_block, min_counts, sig_fn)
+        click.echo(f"Final fit with measured sigma(n): {len(pk['n'])} peaks, "
+                   f"{len(blocks)} sigma blocks")
+    n, mu, emu, sg, esg, amp = (pk[k_] for k_ in ("n", "mu", "emu", "sg", "esg", "amp"))
+    free, edge = pk["free"], pk["edge"]
+    keep &= ~edge       # a fit stuck at the window edge is not reliable
+    n_try = min(ne_max, n_last + 3) - ne_ini + 1
+    click.echo(f"Result    : {len(n)}/{n_try} peaks fitted, {keep.sum()} good, "
+               f"{free.sum()} with free sigma")
+    if why:
+        click.echo("            failures: " + ", ".join(f"{k_} {v}" for k_, v in why.most_common()))
 
-
-
-    # --------------------------------------------------------------------------------------
-    cs = ROOT.TCanvas()
-    cs.cd()
-    ROOT.gStyle.SetOptFit(1111)
-    x = x_num_electron
-    centers = centers
-    e_centers = e_centers
-    gs = ROOT.TGraphErrors(len(centers), 
-            array('d',x),
-            array('d',sigma),
-            array('d',np.zeros_like(x)),
-            array('d',e_sigma)
-            )
-
-    gs.GetHistogram().GetXaxis().SetTitle("n_{e^{-}}")
-    gs.GetHistogram().GetYaxis().SetTitle("#sigma_{n_{e^{-}}} [ADU]")
-    gs.GetHistogram().GetYaxis().SetTitleOffset(1.31)
-    pol1 = ROOT.TF1("fitfunc","pol1",0,ne)
-    pol1.SetLineColor(2)
-    pol1.SetParameter(0,0)
-    pol1.SetParLimits(1,0,2*gain)
-    pol1.SetParameter(1,gain)
-
-    gs.Fit(pol1,"EMR0")
-    gs.SetMarkerStyle(21)
-    gs.SetMarkerSize(0.8)
-    gs.Draw("A PE1")
-    pol1.Draw("same")
-    cs.Update()
-
-    stat_box = gs.FindObject("stats")
-    stat_box.SetX1NDC(0.18)
-    stat_box.SetY1NDC(0.60)
-    stat_box.SetX2NDC(0.50)
-    stat_box.SetY2NDC(0.80)
-    stat_box.Draw()
-    cs.Update()
-
-    if display:
-        cs.Update()
-        cs.Draw()
+    # --- calibration: linear and quadratic on the SAME peaks -----------------------
+    g_loc = np.polyfit(n[keep], mu[keep], 1)[0]
+    e_eff = np.hypot(emu, 3e-3 * abs(g_loc))   # systematic floor: 0.3 % of one e-
+    sel = keep & (n >= fit_range[0]) & (n <= fit_range[1])
+    if sel.sum() < 5:
+        raise click.ClickException("Fewer than 5 peaks inside --fit-range")
+    lin = poly_fit(n[sel], mu[sel], e_eff[sel], 1)
+    quad = poly_fit(n[sel], mu[sel], e_eff[sel], 2)
+    cub = poly_fit(n[sel], mu[sel], e_eff[sel], 3) if sel.sum() >= 8 else None
+    p0l, p1l = lin["p"]
+    q0, q1, q2 = quad["p"]
+    f_lin = lambda m: p0l + p1l * m
+    f_quad = lambda m: q0 + q1 * m + q2 * m ** 2
+    res_lin, res_quad = mu - f_lin(n), mu - f_quad(n)
+    rms_lin = float(np.sqrt(np.mean(res_lin[sel] ** 2)))
+    rms_quad = float(np.sqrt(np.mean(res_quad[sel] ** 2)))
+    sig_p2 = abs(q2) / quad["ep"][2] if quad["ep"][2] > 0 else np.inf
+    if cub is not None:
+        c0, c1, c2, c3 = cub["p"]
+        f_cub = lambda m: c0 + c1 * m + c2 * m ** 2 + c3 * m ** 3
+        g_cub = lambda m: c1 + 2 * c2 * m + 3 * c3 * m ** 2
+        res_cub = mu - f_cub(n)
+        rms_cub = float(np.sqrt(np.mean(res_cub[sel] ** 2)))
+        sig_p3 = abs(c3) / cub["ep"][3] if cub["ep"][3] > 0 else np.inf
     else:
-        fname = output+"/"+infile.split("/")[-1].split(".")[0]+"_sigma_ne.png"
-        cs.SaveAs(fname)
+        rms_cub, sig_p3 = np.nan, 0.0
+    # preferred model: add a term only when it is significant AND reduces the residuals
+    best = "linear"
+    if sig_p2 > 5 and rms_quad < 0.8 * rms_lin:
+        best = "quadratic"
+    if cub is not None and best == "quadratic" and sig_p3 > 5 and rms_cub < 0.9 * rms_quad:
+        best = "cubic"
+    best_p = {"linear": lin, "quadratic": quad, "cubic": cub}[best]["p"]
+    nlo, nhi = int(n[sel].min()), int(n[sel].max())
+    gain_lo, gain_hi = q1 + q2 * (2 * nlo - 1), q1 + q2 * (2 * nhi - 1)  # local gain
 
-    # --------------------------------------------------------------------------------------
-    cnew = ROOT.TCanvas()
-    dy = np.diff(centers)
-    e_centers = e_centers
-    gdif = ROOT.TGraphErrors(len(dy), 
-            array('d',x[:-1]),
-            array('d',dy),
-            array('d',np.zeros_like(dy)),
-            array('d',e_centers[:-1])
-            )
-    gdif.GetHistogram().GetXaxis().SetTitle("n_{e^{-}}")
-    gdif.GetHistogram().GetYaxis().SetTitle("#mu_{n_{e}}-#mu_{n_{e}-1} [ADU/e^{-}]")
-    gdif.GetHistogram().GetYaxis().SetTitleOffset(1.25)
-    gdif.SetMarkerStyle(21)
-    gdif.SetMarkerSize(0.8)
+    # --- resolution: sigma_n^2 = sigma0^2 + c n (+ d n^2), fitted on the BLOCK sigmas ----
+    ok = keep & free & np.isfinite(esg) & (esg > 0)       # single peaks with free sigma
+    nb = np.array([b["n_center"] for b in blocks])
+    sb = np.array([b["sg"] for b in blocks])
+    eb = np.array([b["esg"] for b in blocks])
+    sfit = fit_sigma_blocks(nb, sb, eb, p1l) if len(blocks) else None
+    if sfit is not None:
+        ps = sfit["p2"] if sfit["use2"] else sfit["p1"]
+        sig0 = float(abs(ps[0]))
+        sig0_e = float((sfit["e2"] if sfit["use2"] else sfit["e1"])[0])
+    else:
+        ps, sig0, sig0_e = None, np.nan, np.nan
+    # cross-check: simple model fitted to the single peaks with free sigma (only the
+    # high-statistics peaks at low n have one), without the block fits
+    try:
+        if ok.sum() >= 5:
+            ps1, cs1 = curve_fit(sigma_model, n[ok], sg[ok], p0=[0.2 * p1l, 0.01 * p1l],
+                                 sigma=esg[ok], absolute_sigma=True,
+                                 bounds=([0, 0], [p1l, p1l * p1l]))
+            sig0_single, sig0_single_e = abs(ps1[0]), float(np.sqrt(cs1[0, 0]))
+        else:
+            sig0_single, sig0_single_e = np.nan, np.nan
+    except (RuntimeError, ValueError):
+        sig0_single, sig0_single_e = np.nan, np.nan
+    # sigma_0 is the width at n = 0: convert to electrons with the gain AT n = 0
+    gain0 = float(best_p[1])
 
-    p1 = ROOT.TF1("fitfunc","pol1",0,ne)
-    p1.SetLineColor(2)
-    p1.SetParameter(0,0)
-    p1.SetParLimits(1,0,2*gain)
-    p1.SetParameter(1,gain)
+    # --- output ----------------------------------------------------------------------
+    def model_dict(m, names, rms):
+        d = dict(chi2=m["chi2"], ndf=m["ndf"], chi2_per_ndf=m["chi2"] / max(m["ndf"], 1),
+                 error_scale=m["scale"], rms_residual=rms)
+        for nm, v, e in zip(names, m["p"], m["ep"]):
+            d[nm], d[nm + "_err"] = float(v), float(e)
+        return d
 
-    gdif.Fit(p1,"EMR0")
-    gdif.Draw("A PE1")
-    p1.Draw("same")
-    cnew.Update()
+    out = dict(input=infile, unit=unit, n_peaks=int(len(n)), n_good=int(keep.sum()),
+               n_sigma_free=int(free.sum()), n_sigma_blocks=int(len(blocks)),
+               fit_range=[nlo, nhi],
+               linear=model_dict(lin, ("p0", "p1"), rms_lin),
+               quadratic=model_dict(quad, ("p0", "p1", "p2"), rms_quad),
+               cubic=(model_dict(cub, ("p0", "p1", "p2", "p3"), rms_cub) if cub is not None else None),
+               p3_significance=float(sig_p3), preferred_model=best,
+               sigma_model_c_only=(dict(sigma0=float(sfit["p1"][0]), c=float(sfit["p1"][1]),
+                                        chi2=sfit["chi1"], ndf=sfit["ndf"]) if sfit else None),
+               sigma_model_c_and_d=(dict(sigma0=float(sfit["p2"][0]), c=float(sfit["p2"][1]),
+                                         d=float(sfit["p2"][2]), d_err=float(sfit["e2"][2]),
+                                         d_significance=sfit["d_sig"], chi2=sfit["chi2"],
+                                         ndf=sfit["ndf"]) if sfit else None),
+               quadratic_gain_at_low_n=gain_lo, quadratic_gain_at_high_n=gain_hi,
+               blocks=blocks, p2_significance=float(sig_p2), sigma0=sig0, sigma0_err=sig0_e,
+               sigma0_in_e=sig0 / gain0 if gain0 else np.nan,
+               sigma0_single_peaks=sig0_single, sigma0_single_peaks_err=sig0_single_e,
+               gain_at_n0=gain0)
+    outdir = Path(output)
+    outdir.mkdir(parents=True, exist_ok=True)
+    base = outdir / stem
+    (outdir / f"{stem}_calibration.json").write_text(json.dumps(out, indent=2))
 
-    stat_n = gdif.FindObject("stats")
-    stat_n.SetX1NDC(0.18)
-    stat_n.SetY1NDC(0.60)
-    stat_n.SetX2NDC(0.50)
-    stat_n.SetY2NDC(0.80)
-    stat_n.Draw()
-    cs.Update()
+    click.echo(f"\nFit range: n = {nlo}..{nhi}  ({sel.sum()} peaks)")
+    click.echo("LINEAR     mu = p0 + p1 n")
+    click.echo(f"   {eq_text(lin['p'])}")
+    click.echo(f"   p0 = {p0l:.5f} +/- {lin['ep'][0]:.5f} {unit}")
+    click.echo(f"   p1 = {p1l:.5f} +/- {lin['ep'][1]:.5f} {unit}/e-   (gain)")
+    click.echo(f"   chi2/ndf = {lin['chi2']:.1f}/{lin['ndf']}   rms residual = {rms_lin:.4f} {unit}")
+    click.echo("QUADRATIC  mu = p0 + p1 n + p2 n^2")
+    click.echo(f"   {eq_text(quad['p'])}")
+    click.echo(f"   p0 = {q0:.5f} +/- {quad['ep'][0]:.5f} {unit}")
+    click.echo(f"   p1 = {q1:.5f} +/- {quad['ep'][1]:.5f} {unit}/e-")
+    click.echo(f"   p2 = {q2:.4e} +/- {quad['ep'][2]:.1e} {unit}/e-^2   ({sig_p2:.1f} sigma)")
+    click.echo(f"   chi2/ndf = {quad['chi2']:.1f}/{quad['ndf']}   rms residual = {rms_quad:.4f} {unit}")
+    click.echo(f"   local gain (p1 + 2 p2 n): {gain_lo:.4f} at n={nlo}  ->  {gain_hi:.4f} at n={nhi}")
+    if cub is not None:
+        click.echo("CUBIC      mu = p0 + p1 n + p2 n^2 + p3 n^3")
+        click.echo(f"   {eq_text(cub['p'])}")
+        click.echo(f"   p3 = {c3:.4e} +/- {cub['ep'][3]:.1e} {unit}/e-^3   ({sig_p3:.1f} sigma)")
+        click.echo(f"   chi2/ndf = {cub['chi2']:.1f}/{cub['ndf']}   rms residual = {rms_cub:.4f} {unit}")
+        click.echo(f"   local gain (p1 + 2 p2 n + 3 p3 n^2): {g_cub(nlo):.4f} at n={nlo}  ->  {g_cub(nhi):.4f} at n={nhi}")
+    if sfit is not None:
+        s1_, s2_ = sfit["p1"], sfit["p2"]
+        click.echo(f"sigma^2 = s0^2 + c n          : s0 = {s1_[0]:.4f} {unit}, c = {s1_[1]:.3e}, "
+                   f"chi2/ndf = {sfit['chi1']:.1f}/{sfit['ndf'] - 2}")
+        click.echo(f"sigma^2 = s0^2 + c n + d n^2  : s0 = {s2_[0]:.4f} {unit}, c = {s2_[1]:.3e}, d = {s2_[2]:.3e} "
+                   f"({sfit['d_sig']:.1f} sigma), chi2/ndf = {sfit['chi2']:.1f}/{sfit['ndf'] - 3}")
+        nclip = int((~sfit["good"]).sum())
+        if nclip:
+            click.echo(f"   ({nclip} sigma block(s) > 4 sigma off the trend were excluded from these fits)")
+        click.echo("   -> " + ("the n^2 term is significant: gain drift / extra variance growing faster than n"
+                              if sfit["use2"] else "no need for an n^2 term: variance grows ~ linearly with n"))
+    if sig0 == sig0:
+        click.echo(f"sigma_0    : {sig0:.4f} +/- {sig0_e:.4f} {unit}  =  {sig0 / gain0:.4f} e-  "
+                   f"(from the {len(blocks)} block fits; true electrons = {unit} / gain at n=0 = {gain0:.4f}, "
+                   f"{best} model)")
+        if sig0_single == sig0_single:
+            click.echo(f"sigma_0    : {sig0_single:.4f} +/- {sig0_single_e:.4f} {unit}  =  "
+                       f"{sig0_single / gain0:.4f} e-  (cross-check: single peaks only, no blocks)")
+    click.echo(f"[note] preferred model: {best.upper()}"
+               + ("  (the response is non-linear)" if best != "linear" else "  (no significant curvature)"))
+    if best == "quadratic" and cub is not None and sig_p3 > 3:
+        click.echo(f"[note] the cubic term is {sig_p3:.1f} sigma but does not clearly improve the rms "
+                   f"({rms_quad:.3f} -> {rms_cub:.3f} {unit}): check the cubic panels before using it")
 
-    cnew.Update()
+    # --- figures -------------------------------------------------------------------------
+    fig1, ax = plt.subplots(figsize=(12, 5))
+    ax.step(xc, np.maximum(counts, 0.1), where="mid", color="k", lw=0.6)
+    for a_, m_, s_ in zip(amp, mu, sg):
+        hw = max(win * p1l, 2.5 * dx)
+        xx = np.linspace(m_ - hw, m_ + hw, 40)
+        ax.plot(xx, a_ * np.exp(-0.5 * ((xx - m_) / s_) ** 2), "r", lw=1)
+    ax.set_yscale("log")
+    ax.set_xlim(lo, mu.max() + 2 * p1l)
+    ax.set_ylim(0.5, counts.max() * 3)
+    ax.set_xlabel(f"charge [{unit}]"); ax.set_ylabel("counts")
+    fig1.tight_layout(); fig1.savefig(f"{base}_FittedGauss.png", dpi=130)
+
+    # figure 2: peak positions, residuals of the three models, normalised residuals
+    fig2, axs2 = plt.subplots(2, 2, figsize=(13, 9.5))
+    a1, a2 = axs2[0]
+    a3, a6 = axs2[1]
+    # figure 3: resolution and local gain
+    fig3, axs3 = plt.subplots(1, 3, figsize=(20, 6))
+    a4, a7, a8 = axs3
+    nn = np.linspace(n.min(), n.max(), 400)
+    shade = lambda a: a.axvspan(nlo, nhi, color="gray", alpha=0.08) if sel.sum() < keep.sum() else None
+    CQ, CC = "limegreen", "darkviolet"
+
+    a1.errorbar(n[keep], mu[keep], e_eff[keep], fmt="s", ms=2.5, lw=0.8, label="peaks")
+    if (~keep).any():
+        a1.plot(n[~keep], mu[~keep], "x", color="C3", label="discarded")
+    a1.plot(nn, f_lin(nn), "r", label="linear")
+    a1.plot(nn, f_quad(nn), "--", color=CQ, lw=1.6, zorder=5, label="quadratic")
+    if cub is not None:
+        a1.plot(nn, f_cub(nn), ":", color=CC, lw=2.0, zorder=6, label="cubic")
+    shade(a1)
+    a1.set_xlabel("$n_{e^-}$"); a1.set_ylabel(f"$\\mu_n$ [{unit}]")
+    a1.set_title("Peak positions and fits\n"
+                 f"linear:     {eq_tex(lin['p'])}\n"
+                 f"quadratic: {eq_tex(quad['p'])}"
+                 + (f"\ncubic:      {eq_tex(cub['p'])}" if cub is not None else ""), fontsize=9)
+    a1.legend()
+
+    a2.errorbar(n[keep], res_lin[keep], e_eff[keep], fmt="s", ms=2.5, lw=0.8)
+    if (~keep).any():
+        a2.plot(n[~keep], res_lin[~keep], "x", color="C3")
+    a2.axhline(0, color="r", lw=1.5)
+    shade(a2)
+    a2.set_xlabel("$n_{e^-}$"); a2.set_ylabel(f"$\\mu_n - \\mu_n^{{\\rm linear}}$ [{unit}]")
+    a2.set_title("Residuals, linear model\n"
+                 f"$\\chi^2$/ndf = {lin['chi2']:.0f}/{lin['ndf']},  rms = {rms_lin:.3f} {unit}")
+
+    # quadratic and cubic residuals together, with their own (much smaller) y-range
+    a3.errorbar(n[keep], res_quad[keep], e_eff[keep], fmt="s", ms=3, lw=0.8, color=CQ,
+                label=f"quadratic: $\\chi^2$/ndf = {quad['chi2']:.0f}/{quad['ndf']}, rms = {rms_quad:.3f}")
+    if cub is not None:
+        a3.errorbar(n[keep], res_cub[keep], e_eff[keep], fmt="o", ms=2.5, lw=0.8, color=CC, alpha=0.8,
+                    label=f"cubic: $\\chi^2$/ndf = {cub['chi2']:.0f}/{cub['ndf']}, rms = {rms_cub:.3f}")
+    a3.axhline(0, color="k", lw=0.8)
+    yl = 1.3 * float(np.percentile(np.abs(res_quad[keep]), 99.5))
+    a3.set_ylim(-yl, yl)
+    shade(a3)
+    a3.set_xlabel("$n_{e^-}$"); a3.set_ylabel(f"$\\mu_n - \\mu_n^{{\\rm model}}$ [{unit}]")
+    a3.set_title("Residuals, quadratic and cubic models")
+    a3.legend(fontsize=8, loc="upper left")
+
+    pull_q = (res_quad / e_eff)[sel]
+    pull_l = (res_lin / e_eff)[sel]
+    pull_c = (res_cub / e_eff)[sel] if cub is not None else None
+    lim = max(4.0, float(np.percentile(np.abs(pull_q), 99)) * 1.2)
+    bins = np.linspace(-lim, lim, 31)
+    a6.hist(pull_q, bins=bins, histtype="stepfilled", color=CQ, alpha=0.45,
+            label=f"quadratic (rms {np.std(pull_q):.2f})")
+    if pull_c is not None:
+        a6.hist(pull_c, bins=bins, histtype="step", color=CC, lw=1.8,
+                label=f"cubic (rms {np.std(pull_c):.2f})")
+    xg = np.linspace(-lim, lim, 200)
+    a6.plot(xg, len(pull_q) * (bins[1] - bins[0]) * np.exp(-0.5 * xg ** 2) / SQ2PI, "k--",
+            lw=1.2, label="N(0,1) reference")
+    a6.plot([], [], " ", label=f"linear: rms {np.std(pull_l):.1f} (off scale)")
+    a6.set_xlabel("residual / error"); a6.set_ylabel("number of peaks per bin")
+    a6.set_title("Normalised residuals")
+    a6.legend(fontsize=8)
+
+    # --- figure 3 -------------------------------------------------------------------
+    a4.errorbar(n[ok], sg[ok], esg[ok], fmt=".", ms=3, lw=0.5, color="0.65",
+                label="single peaks (free sigma)", zorder=1)
+    if len(blocks):
+        good = sfit["good"] if sfit is not None else np.ones(len(nb), bool)
+        xe_s = [nb - np.array([b["n_lo"] for b in blocks]), np.array([b["n_hi"] for b in blocks]) - nb]
+        a4.errorbar(nb[good], sb[good], eb[good], xerr=[x_[good] for x_ in xe_s],
+                    fmt="o", ms=4, lw=1.0, color="C0", zorder=3,
+                    label=f"blocks of {sigma_block} peaks")
+        if (~good).any():
+            a4.errorbar(nb[~good], sb[~good], eb[~good], fmt="x", ms=6, color="C3", zorder=3,
+                        label="excluded (> 4 $\\sigma$ off trend)")
+    if sfit is not None:
+        nsg = np.linspace(nb.min(), nb.max(), 200)     # no extrapolation beyond the data
+        a4.plot(nsg, sigma_model(nsg, *sfit["p1"]), "r", zorder=4,
+                label="$\\sigma^2=\\sigma_0^2+c\\,n$")
+        a4.plot(nsg, sigma_model2(nsg, *sfit["p2"]), "--", color=CC, lw=1.8, zorder=5,
+                label=f"+ $d\\,n^2$  (d = {sfit['p2'][2]:.1e}, {sfit['d_sig']:.1f}$\\sigma$)")
+    a4.set_xlabel("$n_{e^-}$"); a4.set_ylabel(f"$\\sigma_n$ [{unit}]")
+    a4.set_title(f"Resolution:  $\\sigma_0$ = {sig0:.3f} {unit} = {sig0 / gain0:.3f} true e$^-$\n"
+                 f"($\\sigma_0$ / gain at n=0; blocks; {'with' if sfit and sfit['use2'] else 'no'} $n^2$ term)",
+                 fontsize=10)
+    a4.legend(fontsize=8, loc="upper left")
+
+    bg = np.array([b["gain"] for b in blocks])
+    ebg = np.array([b["egain"] for b in blocks])
+    nn2 = np.linspace(n.min(), n.max(), 400)
+    g_quad = lambda x: q1 + q2 * 2 * x            # d mu/dn of the quadratic model
+
+    # (a7) block local gain
+    if len(blocks):
+        xe = [nb - np.array([b["n_lo"] for b in blocks]), np.array([b["n_hi"] for b in blocks]) - nb]
+        a7.errorbar(nb, bg, ebg, xerr=xe, fmt="o", ms=4, lw=1.0, color="C0", zorder=3,
+                    label=f"local line, blocks of {sigma_block} peaks")
+        pad = 0.3 * (np.max(bg + 3 * ebg) - np.min(bg - 3 * ebg))
+        a7.set_ylim(np.min(bg - 3 * ebg) - pad, np.max(bg + 3 * ebg) + pad)
+    a7.axhline(p1l, color="r", label="linear: $p_1$")
+    a7.plot(nn2, g_quad(nn2), "--", color=CQ, lw=1.6, zorder=5, label="quadratic: $p_1+2p_2 n$")
+    if cub is not None:
+        a7.plot(nn2, g_cub(nn2), ":", color=CC, lw=2.2, zorder=6, label="cubic: $p_1+2p_2 n+3p_3 n^2$")
+    a7.set_xlabel("$n_{e^-}$"); a7.set_ylabel(f"local gain [{unit}/e$^-$]")
+    a7.set_title("Local gain from blocks (common $\\sigma$)")
+    a7.legend(fontsize=8)
+
+    # (a8) block local gain minus each model: tests the models against the local slope
+    if len(blocks):
+        a8.errorbar(nb, bg - p1l, ebg, xerr=xe, fmt="o", ms=4, lw=1.0, color="r", alpha=0.6,
+                    label="block gain $-$ linear")
+        a8.errorbar(nb, bg - g_quad(nb), ebg, xerr=xe, fmt="o", ms=4, lw=1.0, color=CQ,
+                    label="block gain $-$ quadratic")
+        if cub is not None:
+            a8.errorbar(nb, bg - g_cub(nb), ebg, fmt="D", ms=3.5, lw=1.0, color=CC,
+                        label="block gain $-$ cubic")
+        a8.axhline(0, color="k", lw=0.8)
+        a8.legend(fontsize=8)
+    a8.set_xlabel("$n_{e^-}$"); a8.set_ylabel(f"local gain $-$ model [{unit}/e$^-$]")
+    a8.set_title("Local gain vs models")
+
+    fig2.tight_layout(); fig2.savefig(f"{base}_calibration_fit.png", dpi=130)
+    fig3.tight_layout(); fig3.savefig(f"{base}_calibration_local.png", dpi=130)
+
     if display:
-        cnew.Update()
-        cnew.Draw()
-        input()
+        plt.show()
 
 
-    return
-########################################################################################
-if __name__=='__main__':
+if __name__ == "__main__":
     main()
-
-
