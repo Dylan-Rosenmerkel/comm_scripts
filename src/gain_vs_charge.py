@@ -870,6 +870,7 @@ def plot_nonlinearity(results, path, title):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    plt.rcParams["text.usetex"] = False      # pysimdamicm's plot style turns LaTeX on; not needed (or installed)
     names = sorted(results)
     fig, axs = plt.subplots(1, len(names), figsize=(4.4 * len(names), 3.9), squeeze=False)
     for ax, name in zip(axs[0], names):
@@ -910,6 +911,7 @@ def plot_adu(results, path, title):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    plt.rcParams["text.usetex"] = False      # pysimdamicm's plot style turns LaTeX on; not needed (or installed)
     names = sorted(results)
     fig, axs = plt.subplots(2, len(names), figsize=(4.4 * len(names), 6.6), squeeze=False, sharex="col",
                             gridspec_kw=dict(height_ratios=(1.4, 1)))
@@ -962,6 +964,7 @@ def plot(results, path, title):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    plt.rcParams["text.usetex"] = False      # pysimdamicm's plot style turns LaTeX on; not needed (or installed)
     fig, ax = plt.subplots(1, 2, figsize=(13, 4.8))
     for k, (name, r) in enumerate(sorted(results.items())):
         if not r.get("points"):
