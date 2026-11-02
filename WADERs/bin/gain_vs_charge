@@ -2,7 +2,7 @@
 """:script:`gain_vs_charge` -- gain as a function of the charge in a pixel, g(n), from skipper-CCD images
 =========================================================================================================
 
-    gain_vs_charge measure IMAGES... -o OUTDIR [--model interpolated|broken|linear] [--combine incoherent|coherent]
+    gain_vs_charge measure IMAGES... -o OUTDIR [--model smooth|interpolated|broken|linear] [--combine incoherent|coherent]
         -> OUTDIR/NAME_gain_vs_charge.json   g(n) points and model per extension (the model_file of the
                                              panaSKImg process GainNonlinearityProcess)
            OUTDIR/NAME_gain_vs_charge.png    g(n), absolute and relative to g(0)

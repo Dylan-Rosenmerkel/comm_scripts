@@ -281,13 +281,15 @@ what it does, per image (gain_dc_split.py --per-ext, always on):
   images of a module are combined. --gain-memory auto: remove the horizontal readout memory before
   measuring. --temperature K: energy per electron epsilon(T) of the corrected and A_GMX energies
   (default 130 K -> 3.7486 eV).
-  --gain-model interpolated (default) | broken | linear | smooth: the form of g(n): monotone
+  --gain-model smooth (default) | interpolated | broken | linear: the form of g(n): monotone
   interpolation through the measured points, two straight lines with a fitted knot, one
   straight line (see gain_vs_charge.py; the straight line does not follow the measured
   curvature, the others do), or smooth: above 200 e- windows of the same width overlapping
   (4x the points) and a weighted fit of g(n) as a cubic in log n through them instead of a
   curve through every point; below 200 e- the standard points, as interpolated (reaches
-  higher charge; same g(0)).
+  higher charge; same g(0)). smooth is the default since 2026-11-02: on 141 Fe-55
+  CCD-images (DM11-26) its K-alpha equals interpolated's within 1 eV on average, and on the
+  Am-241 59.5 keV line (AMtest EXT4) it is closer (-0.32 % instead of -0.57 %).
   --gain-periods auto (default) | off: images of one module are pooled only within a gain
   period. A change of the readout settings between campaigns shifts the gain of all CCDs
   (AMtest 106: 2.5-3.5 % lower from 2026-05-21); pooling both puts two combs on top of each
@@ -404,11 +406,11 @@ def build_parser(full=False):
                     help="measure the gain vs charge per pixel g(n) from the raw images and correct the cluster "
                          "energies inside panaSKImg (GainNonlinearityProcess). MODE: pooled (default: one curve "
                          "per module) or per-image (details: -h -v)")
-    ap.add_argument("--gain-model", choices=("interpolated", "broken", "linear", "smooth"), default="interpolated",
-                    help="with --gain-correction: form of g(n): interpolated (default; monotone interpolation "
-                         "through the measured points), broken (two straight lines, fitted knot), linear, or smooth (overlapping "
-                         "windows and a smooth weighted fit above 200 e-, the standard points below; reaches higher "
-                         "charge)")
+    ap.add_argument("--gain-model", choices=("smooth", "interpolated", "broken", "linear"), default="smooth",
+                    help="with --gain-correction: form of g(n): smooth (default; overlapping windows and a smooth "
+                         "weighted fit above 200 e-, the standard points below; reaches higher charge), "
+                         "interpolated (monotone interpolation through the measured points), broken (two straight "
+                         "lines, fitted knot) or linear")
     ap.add_argument("--gain-combine", choices=("coherent", "incoherent"), default="incoherent",
                     help="with --gain-correction: how several images of a module are combined for the module curve: "
                          "incoherent (default; comb powers added - independent of the image order) or coherent "

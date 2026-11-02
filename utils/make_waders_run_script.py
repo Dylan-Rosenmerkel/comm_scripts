@@ -382,7 +382,7 @@ def main():
     text = sub(text, "  root_agmx/, root_agmx_gaincorr/   with --clusterer agmx/both: A_GMX cluster files",
                "  root_agmx/                   with --clusterer both: the A_GMX cluster files\n"
                "  gain_vs_charge/              with --gain-correction: g(n) models and plots (g(n), nonlinearity, A(n))")
-    text = cut(text, "--gain-correction (optional): the gain falls slowly", "  --gain-model interpolated (default)",
+    text = cut(text, "--gain-correction (optional): the gain falls slowly", "  --gain-model smooth (default)",
                "--gain-correction pooled|per-image (optional): the gain falls slowly with the charge in a pixel\n"
                "  (~3% at 1000 e-), so cluster energies come out low at keV energies. With this flag, BEFORE the\n"
                "  panaSKImg runs, gain_vs_charge measures g(n) from the raw images (spacing of the electron comb at\n"

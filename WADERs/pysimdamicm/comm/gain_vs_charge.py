@@ -24,7 +24,13 @@ trial g). Only "clean" rows are used: where the readout has just seen a lot of c
 comb is blurred (checked per block of rows with the 1-30 e- comb).
 
 Model of g(n) (--model):
-  interpolated (default): monotone cubic (PCHIP) interpolation through the measured points;
+  smooth (default since 2026-11-02): below 200 e- as interpolated; above it windows of the same width overlapping
+      (4x the points) and a weighted cubic in log n through them; above the last point a straight line
+      through the points of the last 4 window widths. Stored as an interpolated curve (fit "smooth").
+      On 141 Fe-55 CCD-images (DM11-26) K-alpha equal to interpolated within 1 eV on average (max 5.5 eV);
+      on the Am-241 59.5 keV line (AMtest EXT4, per gain period) -0.32 % instead of -0.57 %; reaches
+      higher charge.
+  interpolated: monotone cubic (PCHIP) interpolation through the measured points;
       below the first point (~25 e-) g is held at the first point's value, above the last
       point it continues with the slope of a straight line through the last 4 points.
   broken: two straight lines joined at a fitted knot, g = a + b1*min(n, nk) + b2*max(n - nk, 0).
@@ -42,7 +48,7 @@ electrons is A(n) = integral_0^n g; the correction converts ADU -> electrons wit
 Model files written before the --model option (form "a + b*min(n, n_cap)") are linear.
 
 Usage:
-  gain_vs_charge.py measure IMAGES... -o OUTDIR [--name NAME] [--ext 1 2 3 4] [--model interpolated|broken|linear]
+  gain_vs_charge.py measure IMAGES... -o OUTDIR [--name NAME] [--ext 1 2 3 4] [--model smooth|interpolated|broken|linear]
       -> OUTDIR/NAME_gain_vs_charge.json (per extension: g(n) points, fit, clean rows, nonlinearity)
          OUTDIR/NAME_gain_vs_charge.png
          OUTDIR/NAME_nonlinearity.png   measured charge - peak number vs measured charge,
@@ -857,9 +863,9 @@ def gain_periods(rel_gain, err, min_step=PERIOD_MIN_STEP, min_sig=PERIOD_MIN_SIG
     return np.searchsorted(cuts, np.arange(x.size), side="right"), bad
 
 
-def measure(images, exts=None, verbose=True, extrap_factor=3.0, model="interpolated", combine="incoherent",
+def measure(images, exts=None, verbose=True, extrap_factor=3.0, model="smooth", combine="incoherent",
             autoconfig_args=(), memory="off"):
-    """{ext: result} from a list of images of the same CCDs; model: interpolated, broken or linear.
+    """{ext: result} from a list of images of the same CCDs; model: smooth (default), interpolated, broken or linear.
 
     combine (several images only): "incoherent" (default; comb powers of the images added) or
     "coherent" (each image converted with its own curve, then all pixels pooled into one comb, see
@@ -1224,8 +1230,9 @@ def main():
     m.add_argument("--memory", default="off", metavar="off|auto|K",
                    help="remove the horizontal readout memory (a pixel keeps ~3e-4 of the pixel read before it) "
                         "before measuring: off (default), auto (fit per CCD) or a fixed coefficient K")
-    m.add_argument("--model", choices=MODELS, default="interpolated",
-                   help="form of g(n): interpolated (default; monotone interpolation through the measured "
+    m.add_argument("--model", choices=MODELS, default="smooth",
+                   help="form of g(n): smooth (default; overlapping windows and a weighted fit above 200 e-, "
+                        "the standard points below), interpolated (monotone interpolation through the measured "
                         "points), broken (two straight lines, fitted knot) or linear (straight line)")
     a = sub.add_parser("apply", help="correct cluster ROOT files with a measured g(n)")
     a.add_argument("model", help="*_gain_vs_charge.json from 'measure'")

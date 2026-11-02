@@ -21,7 +21,7 @@ energies a few % low.
 
 **Measure** (from the raw images of one module, before panaSKImg):
 
-    gain_vs_charge measure IMAGES... -o gain_vs_charge/ [--model interpolated|broken|linear]
+    gain_vs_charge measure IMAGES... -o gain_vs_charge/ [--model smooth|interpolated|broken|linear]
                                      [--combine incoherent|coherent] [--memory off|auto] [--autoconfig-args "..."]
 
 Outputs per run name:
@@ -109,7 +109,7 @@ From a WADERs checkout it uses that checkout (no install needed); it finds a con
 with ROOT if the current python lacks it.
 
     run_WADERs images.txt [-o PARENT] [-j N] [--gain-correction [pooled|per-image]] [--gain-anchor comb|fit]
-               [--gain-model interpolated|broken|linear|smooth] [--gain-combine incoherent|coherent] [--gain-memory off|auto]
+               [--gain-model smooth|interpolated|broken|linear] [--gain-combine incoherent|coherent] [--gain-memory off|auto]
                [--gain-periods auto|off]
                [--clusterer waders|agmx|both] [--agmx-crowded auto|on|off] [--agmx-crowded-shapes on|off]
                [--auto-threshold] [--temperature K] [--composite] [--module ACM=NAME] ...
