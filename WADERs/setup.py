@@ -108,6 +108,7 @@ setup(
             "bin/cut_fits_image",
             "bin/crosstalk_cli",
             "bin/compare_root_files",
-            "bin/gain_vs_charge"
+            "bin/gain_vs_charge",
+            "bin/run_WADERs"
             ]
         )
