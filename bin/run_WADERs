@@ -295,10 +295,12 @@ what it does, per image (gain_dc_split.py --per-ext, always on):
   The coefficients are fitted per CCD (in the JSON as 'memory'); the curve then reaches higher
   charge (e.g. 1500 -> 2000 e-). Only the measurement changes; cluster energies are converted as
   before (the memory itself shifts them by only ~+0.03 %). Default off.
-  --gain-model interpolated (default) | broken | linear: the form of g(n): monotone
-  interpolation through the measured points, two straight lines with a fitted knot, or
-  one straight line (see gain_vs_charge.py; the straight line does not follow the measured
-  curvature, the other two do).
+  --gain-model interpolated (default) | broken | linear | smooth: the form of g(n): monotone
+  interpolation through the measured points, two straight lines with a fitted knot, one
+  straight line (see gain_vs_charge.py; the straight line does not follow the measured
+  curvature, the others do), or smooth: windows of the same width overlapping (4x the points)
+  and a weighted fit of g(n) as a cubic in log n through all of them instead of a curve
+  through every point (on DM09 about half the error of the curve, mostly above ~900 e-).
   --gain-correction per-image: every image gets its own curve, measured from that image
   alone (gain_vs_charge/image_<image>_gain_vs_charge.json), applied to its own clusters
   -> root_gaincorr_per_image/ (a CCD whose own comb is not usable, e.g. a noisy image,
@@ -420,9 +422,10 @@ def build_parser(full=False):
                          "cluster files (originals kept). MODE: pooled (default: one curve per module from all "
                          "its images -> root_gaincorr/), per-image (each image's own curve -> "
                          "root_gaincorr_per_image/), both (both, plus a comparison; details: -h -v)")
-    ap.add_argument("--gain-model", choices=("interpolated", "broken", "linear"), default="interpolated",
+    ap.add_argument("--gain-model", choices=("interpolated", "broken", "linear", "smooth"), default="interpolated",
                     help="with --gain-correction: form of g(n): interpolated (default; monotone interpolation "
-                         "through the measured points), broken (two straight lines, fitted knot) or linear")
+                         "through the measured points), broken (two straight lines, fitted knot), linear, or smooth (overlapping "
+                         "windows and a smooth weighted fit through all their points; more accurate at high charge)")
     ap.add_argument("--gain-combine", choices=("coherent", "incoherent"), default="incoherent",
                     help="with --gain-correction: how several images of a module are combined for the module curve: "
                          "incoherent (default; comb powers added - independent of the image order) or coherent "

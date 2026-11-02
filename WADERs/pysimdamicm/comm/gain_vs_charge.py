@@ -100,6 +100,27 @@ BLOCK = 25              # rows per block for the clean-row test
 # geometric, so every window holds enough pixels while the curve is sampled densely at low
 # charge. Each window gives one point g(n) at n = sqrt(lo * hi).
 N_EDGES = np.r_[20, 35, 55, 80, 110, 150, 200, 270, 360, 480, 640, 850, 1130, 1500, 2000, 2700, 3600, 5000, 7000]
+# --model smooth: windows of the same width, but overlapping (a new window every 1/OVERLAP_STEP of a window), and a
+# weighted fit of g(n) as a polynomial of degree SMOOTH_DEG in log n through all their points (fit_model) instead of a
+# curve through every point. On DM09 (simulation with a known A(n), and the real images cross-validated by rows) this
+# halved the error of the curve where the pixels are (0.49 -> 0.30 e- rms in the simulation, 0.21 -> 0.14 e- tooth
+# offset on held-out rows); overlap alone gave 0.36, narrower windows 0.62 (worse).
+OVERLAP_STEP = 4
+SMOOTH_DEG = 3
+
+
+def window_pairs(model="interpolated"):
+    """(lo, hi) charge windows [e-] in which the comb spacing is measured: N_EDGES for the interpolated, broken and
+    linear models; for 'smooth' windows of the mean N_EDGES width starting every 1/OVERLAP_STEP of a window."""
+    if model != "smooth":
+        return list(zip(N_EDGES[:-1], N_EDGES[1:]))
+    r = float(np.exp(np.mean(np.diff(np.log(N_EDGES)))))
+    pairs, j = [], 0
+    while N_EDGES[0] * r ** (j / OVERLAP_STEP + 1) <= N_EDGES[-1]:
+        lo = N_EDGES[0] * r ** (j / OVERLAP_STEP)
+        pairs.append((float(lo), float(lo * r)))
+        j += 1
+    return pairs
 
 
 # =============================================================================
@@ -141,7 +162,7 @@ def n_of_adu(adu, model):
     return out
 
 
-MODELS = ("interpolated", "broken", "linear")
+MODELS = ("interpolated", "broken", "linear", "smooth")
 _TABLES = {}            # cache of _table(): A(n) on a 1 e- grid, keyed by the model dict
 
 
@@ -268,6 +289,11 @@ def fit_model(good, form, extrap_factor):
     ncap = extrap_factor * nmax
     lin = dict(form="linear", a=float(a), b=float(b), n_cap=float(ncap),
                a_err=float(np.sqrt(cov[1, 1])), b_err=float(np.sqrt(cov[0, 0])))
+    if form == "smooth":
+        # the overlapping windows sample low charge densely, so the unweighted slope over-weights it (on DM09 EXT2,
+        # whose gain rises up to ~230 e- and then falls, it turned positive); the reliability check of 'smooth' uses
+        # the slope weighted by the point errors
+        lin["b_weighted"] = float(np.polyfit(n, g, 1, w=1 / e)[0])
     if form == "linear":
         model = lin
     elif form == "broken":
@@ -289,6 +315,18 @@ def fit_model(good, form, extrap_factor):
         slope = float(np.polyfit(xs[-k:], ys[-k:], 1)[0])
         model = dict(form="interpolated", a=float(ys[0]), n_pts=[float(v) for v in xs],
                      g_pts=[float(v) for v in ys], slope_end=slope, n_cap=float(ncap))
+    elif form == "smooth":
+        # weighted polynomial in log n through all (overlapping) points, stored as an interpolated curve on a fine
+        # grid, so that every user of the model (g_of, A(n), apply, GainNonlinearityProcess) works unchanged
+        deg = min(SMOOTH_DEG, len(n) - 2)
+        c = np.polyfit(np.log(n), g, deg, w=1 / e)
+        grid = np.geomspace(n.min(), n.max(), 40)
+        gg = np.polyval(c, np.log(grid))
+        slope = float(np.polyval(np.polyder(c), np.log(grid[-1])) / grid[-1])        # dg/dn at the last point
+        model = dict(form="interpolated", fit="smooth", a=float(gg[0]), n_pts=[float(v) for v in grid],
+                     g_pts=[float(v) for v in gg], slope_end=slope, n_cap=float(ncap),
+                     smooth=dict(deg=int(deg), coeffs_log_n=[float(v) for v in c], n_points=int(len(n)),
+                                 overlap_step=OVERLAP_STEP))
     else:
         raise ValueError(f"unknown g(n) model {form!r} (choose from {', '.join(MODELS)})")
     resid = g - g_of(n, model)
@@ -511,7 +549,7 @@ def _measure_clean_values(fits, images, e, cfg, g0, memory=None):
     return vals, nrows_clean, nrows
 
 
-def _measure_comb_points(vals, g0):
+def _measure_comb_points(vals, g0, pairs=None):
     """Local comb spacing g(n) in each charge window of N_EDGES, from low to high charge.
 
     vals: clean pixel values [ADU], one array per image; g0: low-charge gain [ADU/e-].
@@ -533,7 +571,7 @@ def _measure_comb_points(vals, g0):
     pts = []
     misses = 0
     cap = 300000 // max(len(vals), 1)
-    for lo, hi in zip(N_EDGES[:-1], N_EDGES[1:]):
+    for lo, hi in (pairs or window_pairs()):
         vs = [v[(v > lo * g0) & (v < hi * g0)] for v in vals]
         if sum(v.size for v in vs) < 400:
             break
@@ -583,7 +621,7 @@ def _measure_fit(pts, g0, nrows_clean, nrows, model, extrap_factor):
         mdl, anchored = low_charge_anchor(mdl, g0)
         if anchored:
             res["low_charge_anchor"] = dict(g_1e=float(g0), g_first=float(mdl["g_pts"][1]), n_first=float(mdl["n_pts"][1]))
-        b = lin["b"]
+        b = lin.get("b_weighted", lin["b"])
         res.update(ok=True, model=mdl, linear=lin, rms=rms, n_max_measured=nmax,
                    drop_at_1000=float(1 - g_of(1000.0, mdl) / g_of(0.0, mdl)),
                    nonlinearity=nonlinearity(good, mdl))
@@ -656,7 +694,7 @@ def _offset_function(ns, offs):
     return d, dslope
 
 
-def _coherent_points(us, models):
+def _coherent_points(us, models, pairs=None):
     """Local gain in each charge window from several images, pooled COHERENTLY.
 
     us: per image, the clean pixel values already converted to electrons with that image's own
@@ -682,7 +720,7 @@ def _coherent_points(us, models):
     aligned = [u - d(u) for u, (d, _) in zip(us, shifts)]
     pts, misses = [], 0
     cap = 300000 // max(len(us), 1)
-    for lo, hi in zip(N_EDGES[:-1], N_EDGES[1:]):
+    for lo, hi in (pairs or window_pairs()):
         vs = [u[(u > lo) & (u < hi)] for u in aligned]
         if sum(v.size for v in vs) < 400:
             break
@@ -736,7 +774,7 @@ def _measure_coherent(images, exts, verbose, extrap_factor, model, autoconfig_ar
                 nclean += nc
                 nrows += nr
             g0 = float(np.mean([r["g_1e"] for _, r in usable]))
-            res = _measure_fit(_coherent_points(us, [r["model"] for _, r in usable]), g0, nclean, nrows,
+            res = _measure_fit(_coherent_points(us, [r["model"] for _, r in usable], window_pairs(model)), g0, nclean, nrows,
                                model, extrap_factor)
             res.update(combine="coherent", images_used=[os.path.basename(f) for f, _ in usable],
                        per_image_n_max=[r["n_max_measured"] for _, r in usable])
@@ -821,7 +859,7 @@ def measure(images, exts=None, verbose=True, extrap_factor=3.0, model="interpola
             continue
         g0 = float(np.mean(g0s))
         vals, nrows_clean, nrows = _measure_clean_values(fits, images, e, cfg, g0, (memory or {}).get(name))
-        pts = _measure_comb_points(vals, g0)
+        pts = _measure_comb_points(vals, g0, window_pairs(model))
         res = _measure_fit(pts, g0, nrows_clean, nrows, model, extrap_factor)
         res["g_1e_images"] = len(g0s)
         results[name] = res
@@ -888,7 +926,7 @@ def plot_nonlinearity(results, path, title):
         n, A, _ = _table(m) if model_form(m) != "linear" else (None, None, None)
         grid = np.linspace(0, r["n_max_measured"], 300)
         Ag = np.interp(grid, n, A) if n is not None else adu_of_n(grid, m["a"], m["b"], m["n_cap"])
-        ax.plot(Ag / nl["g_ref"], Ag / nl["g_ref"] - grid, color="0.3", lw=1.2, label=f"{model_form(m)} model")
+        ax.plot(Ag / nl["g_ref"], Ag / nl["g_ref"] - grid, color="0.3", lw=1.2, label=f"{m.get('fit', model_form(m))} model")
         xx = np.linspace(0, x.max() * 1.05, 200)
         ax.plot(xx, nl["c2"] * xx ** 2 + nl["c1"] * xx, color="#d1495b", lw=1.2,
                 label=f"${nl['c2']:.3e}\\,x^2 {nl['c1']:+.4f}\\,x$".replace("e-0", "e-"))
@@ -938,7 +976,7 @@ def plot_adu(results, path, title):
             Ap[1:] = Ap[0] + np.cumsum(0.5 * (g[1:] + g[:-1]) * np.diff(n))
             top.plot(n, Ap, "o", ms=4, color="#1f5fbf", label="from the measured local gains")
             bot.plot(n, Ap - g0 * n, "o", ms=4, color="#1f5fbf")
-        top.plot(grid, Ag, color="0.2", lw=1.3, label=f"A(n), {model_form(m)} model")
+        top.plot(grid, Ag, color="0.2", lw=1.3, label=f"A(n), {m.get('fit', model_form(m))} model")
         top.plot(grid, g0 * grid, color="#d1495b", ls="--", lw=1.0, label=f"g(0) n, g(0) = {g0:.4f}")
         bot.plot(grid, Ag - g0 * grid, color="0.2", lw=1.3)
         bot.axhline(0, color="#d1495b", ls="--", lw=1.0)
@@ -985,7 +1023,7 @@ def plot(results, path, title):
     for a_ in ax:
         a_.set_xscale("log"); a_.set_xlabel("electrons in the pixel"); a_.grid(alpha=0.3)
     ax[0].set_ylabel("local gain [ADU/e-]"); ax[1].set_ylabel("gain / low-charge gain")
-    forms = sorted({model_form(r["model"]) for r in results.values() if r.get("ok")})
+    forms = sorted({r["model"].get("fit", model_form(r["model"])) for r in results.values() if r.get("ok")})
     ax[0].set_title(f"{title} ({', '.join(forms) or 'no model'})"); ax[1].set_title("relative (dotted: highest measured charge)")
     ax[0].legend()
     plt.tight_layout()
