@@ -1,0 +1,75 @@
+"""Python Simulator Damic-M detector reponse :mod:`pysimdamicm`
+
+.. currentmodule:: pysimdamicm
+
+
+This module provides tools (and scripts) to simulate RAW data from pure SIM
+data (Geant4-based simulations of the DAMIC-M detector), as well as, tools
+for the pure RECONSTRUCTION process such the cluster reconstruction. 
+
+
+**Include**
+-------------
+    1. Classes for each process involved in the response of the detector (either sensor response or electronics)
+
+    2. Classes for the reconstruction
+
+    3. Classes for the post data processing (creation of background spectras induced by a physical volume inthe detector geometry)
+
+    4. Several functions to get the mass of the physical volume, the normalization of the background for different contaminants, ...
+    
+    5. It also contain different scripts (see :obj:`pysimdamicm.bin` at `repo <https://gitlab.in2p3.fr/damicm/pysimdamicm>`_)
+
+        * Related to Geant4 Simulations:
+            - to create macros needed to run DAMICG4 (:obj:`pysimdamicm.bin.create_macros_DAMICG4`)
+            - to run the (previous) macros as jobs in the IN2P3 cluster (:obj:`pysimdamicm.bin.create_script_QSUBjobs`)
+
+        * Related to Data Acquisition Process and Dara Reconstruction:
+            - to simulate the response of the detector, as well as to
+              clusterize the signal detector output (:obj:`pysimdamicm.bin.psimulCCDimg`)
+
+        * Related to Post Data Processing:
+            - to generate a comparison plot for several induced backgrounds
+              (:obj:`pysimdamicm.bin.comparePVInducedBcks`)
+        
+
+**Available Subpackages**
+-------------------------
+detector_response 
+    :obj:`pysimdamicm.detector_response`
+    Tools to mimic the response of the DAMIC-M detector
+reconstruction 
+    :obj:`pysimdamicm.reconstruction module`
+    Tools for the reconstruction process (up to now, clusterization)
+process_manager 
+    :obj:`pysimdamicm.process_manager`
+    Basic tools to manage the full reconstruction (detector response and
+    reconstruction) chain
+pvinducedbck 
+    :obj:`pysimdamicm.pvinducedbck`
+    Basic tools for the background induced analysis 
+utils 
+    :obj:`pysimdamicm.utils`
+    Basic functions used by several sub-packages
+data
+    :obj:`pysimdamicm.data`
+    Elements (contaminants) tools 
+
+.. moduleauthor:: Nuria Castello-Mor
+"""
+
+__commit__ = 'log4381436'
+__version__ = '1.1.0'
+
+__all__=['utils','data','activity','setups','process','dqm','scripts','process_manager']
+
+
+from . import utils
+from . import data
+from . import activity
+from . import setups
+from . import processes
+from . import dqm
+
+from . import process_manager
+from . import scripts

@@ -1,0 +1,175 @@
+{
+    "input":
+    {
+        "image":
+        {
+            "ACM_multi_extension": true,
+            "extensions"        : [1,2,4,3],
+            "ext_header"        : 0,
+            "skip_image"        : false,
+            "axis_to_compress"  : 1,
+            "correct_leach_bug" : false,
+            "correct_polarity"  : false,
+            "id_skip_start"     : 0,
+            "id_skip_end"       : -1,
+            "id_row_start"      : 0,
+            "id_row_end"        : -1,
+            "id_col_start"      : 0,
+            "id_col_end"        : -1,
+            "n_rows_prescan"    : 0,
+            "n_rows_overscan"   : 0,
+            "ccd_rows"          : 100,
+            "n_cols_prescan"    : 8,
+            "ccd_cols"          : 6152,
+            "n_amp"             : 1,
+            "save_image"        : false,
+            "bz2"               : true
+         },
+         "datetime":
+         {
+             "exposure_start"   : "DATEINI",
+             "readout_start"    : "DATEINI",
+             "readout_end"      : "DATEEND"
+         },
+         "scp":
+        {
+        },
+        "convention":
+        {
+            "ampdir"        : "VCKDIRN",
+            "itgtime"       : "TINTEGR",
+            "Nskips"        : "NDCM",
+            "Ncols"         : "NCOL",
+            "Nrows"         : "NROW",
+            "Npbin"         : "NPBIN",
+            "Nsbin"         : "NSBIN",
+            "ampl"          : "AMPL",
+            "exposure_time" : "EXPOSURE",
+            "read_time"     : "MREAD"
+            }
+    },
+    "process":
+    {
+        "sequence":"CompressSkipperProcess;PedestalSubtractionProcess;CalibrationProcess;ClusterFinder;BuildClusterMask;FitDarkCurrentProcess",
+        "CompressSkipperProcess":
+        {
+            "__DEBUG__"         : false,
+            "create_ttree"      : false,
+            "func_to_compress"  : ["mean"],
+            "n_sig_xtalk"       : 5
+        },
+        "PedestalSubtractionProcess":
+        {
+            "__DEBUG__"         : false,
+            "DEBUG_ROWS"        : [0,34],
+            "create_ttree"      : false,
+            "image"             : "mean_compressed",
+            "method"            : "gauss_fit",
+            "skip_cols"         : [],
+            "in_overscan"       : false,
+            "use_mad"           : false,
+            "axis"              : "row",
+            "n_sigma_to_mask"   : 3,
+            "hist_nbins_method" : "freedman",
+            "save_image"        : false
+        },
+        "TwoDGaussProcess":
+        {
+            "__display__"   : false,
+            "col_start"     : 0,
+            "row_start"     : 0,
+            "q_min_ADU"     : -10,
+            "q_max_ADU"     : 30,
+            "bin_size"      : 0.4,
+            "do_fit"        : true,
+            "dc_L"          : 0.005,
+            "dc_U_range"    : [0.0005,0.01],
+            "dc_U"          : 0.003,
+            "sig_L"         : 3,
+            "sig_L_range"   : [0.5,5.0],
+            "sig_U"         : 2.0,
+            "sig_L_range"   : [0.5,5.0],
+            "theta"         : 46.0,
+            "cal_L"         : 7.0,
+            "cal_L_range"   : [7.0,9.5],
+            "cal_U"         : 7.0,
+            "cal_U_range"   : [3,9.5],
+            "fit_opt"       : "QR LEM"
+        },
+        "CalibrationProcess":
+        {
+            "image" : "mean_compressed_pedestal_subtracted",
+            "gain"  : {"EXT1":1.23, "EXT2":1.245, "EXT3":1.140, "EXT4":1.140 },
+            "from_dc_fit": true
+        },
+        "FitCalibrationConstant":
+        {
+            "image"             : "mean_compressed_pedestal_subtracted",
+            "n_peaks"           : 3,
+            "calibration"       : {"EXT1":10.0, "EXT2":10.0},
+            "n_sigma_win_fit"   : 3
+        },
+        "FitDarkCurrentProcess":
+        {
+            "dqm_mode"          : true,
+            "image"             : "mean_compressed_pedestal_subtracted",
+            "__DEBUG__"         : false,
+            "__verbose__"       : false,
+            "rows_to_mask"      : [],
+            "cols_to_mask"      : [],
+            "mask_clusters"     : true,
+            "do_calibration"    : true,
+            "calibration"       : 1.0,
+            "n_peaks"           : 2,
+            "binning_size"      : 0.1,
+            "sigma_min"         : 0.01,
+            "sigma_max"         : 0.8,
+            "dc_min"            : 0.0001,
+            "dc_max"            : 0.1,
+            "gain_min"          : 0.9,
+            "gain_max"          : 1.9,
+            "x_min"             : -3.5,
+            "x_max"             : 6.5
+        },
+        "ClusterFinder":
+        {
+            "spr_threshold"        : {"EXT1": [null,4.6,10.5], "EXT2":[null,4.6,10.5], "EXT3":[null,4.6,10.5], "EXT4":[null,4.6,10.5]},
+            "spr_image"            : "mean_compressed_pedestal_subtracted_e",
+            "spr_sigma_mean"       : true,
+            "skip_rows"            : [],
+            "skip_cols"            : [],
+            "only_cls_seed"        : true,
+            "method"               : 1,
+            "max_nearest_neighbor" : 1
+        },
+        "BuildClusterMask":
+        {
+            "hot_rows"          : [],
+            "hot_cols"          : [],
+            "cluster_size_min"  : 1,
+            "cluster_DX_min"    : 1,
+            "cluster_DY_min"    : 1,
+            "cluster_E_min"     : 7,
+            "cluster_box_E_min" : 100000000000000000,
+            "N_col_pre"         : 3,
+            "N_col_post"        : 20,
+            "N_row_pre"         : 1,
+            "N_row_post"        : 5,
+            "mask_cluster_column": false
+        },
+        "ApplySelectionCuts":
+        {
+            "cols"  : [],
+            "rows"  : []
+        },
+        "GaussianFitProcess":
+        {
+            "image"           : "mean_compressed_pedestal_subtracted_e",
+            "in_overscan"     : false,
+            "hist_nbins_method" : "freedman",
+            "skip_rows"       : [],
+            "in_trim_mean"    : true,
+            "n_sigma"         : 5
+        }
+    }
+}

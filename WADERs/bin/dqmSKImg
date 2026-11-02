@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+""":script:`panaSKImg` -- CCD image processing with python3
+============================================================
+
+
+      .. moduleauthor:: Nuria Castello-Mor <castello@ifca.unican.es>
+      .. date::01/10/2020
+
+"""
+
+import click
+
+import json
+import os
+import time
+
+import click
+
+from pysimdamicm.dqm.builders import (
+        build_me_collection,
+        fill_metadata,
+        )
+
+from pysimdamicm.scripts import anaSKImg
+from pysimdamicm.utils.config import Config
+
+##############################################################################################################################
+##############################################################################################################################
+#
+#           SCRIPT TO RUN panaSKImg AS DQM-OFLINE for a single raw fits file image ---> build the ME for Level 0
+#
+##############################################################################################################################
+##############################################################################################################################
+
+@click.command(help="Run panaSKImg for the DQM: creates ME and metadata outputs.")
+@click.argument("inputimage")
+@click.option("-e","--ext",type=int,help="CCD identifier correspondiing to the FITS file extension.")
+@click.option("-t","--tag",type=str,help="A short user-defined label that identifies the run and describes its scientific purpose.")
+@click.option("-r","--runid",type=int,help="Run number identifying the dataset to be processed.")
+@click.option("-j","--jsonproc",type=str,help="Configuration file specifying parameters for data reprocessing.")
+@click.option("-m","--jsonme",type=str,help="Configuration file defining the Monitor Elements to be produced")
+@click.option("-d","--datadir",type=str,help="Directory containing the FITS files to be processed.")
+@click.option("-o","--outdir",type=str,default='.',help="Directory containing the outputs.")
+@click.option("--display",is_flag=True,default=False,help="Display visual outputs on screen.")
+def main(inputimage,ext,tag,runid,jsonproc,jsonme,datadir,outdir,display):
+    """
+    inputimage FITS file to be processed
+    """
+    
+    # Get absolute path for the input fits file
+    inputimage = os.path.abspath(datadir+"/"+inputimage)
+    
+    t_init = time.time()
+
+    # --------------------------------------------------------------------- DATA PROCESSING SETTINGS
+    print("INFO. Setting user configuration for data processing:")
+    config = Config(jsonproc,False)
+    if display:
+        for process_name in config.configuration["process"]["sequence"].split(";"):
+            config.configuration["process"][process_name]["__display__"] = True
+    config.configuration["input"]["image"]['extensions'] = ext
+    config.activate_configuration()
+
+    # --------------------------------------------------------------------- MONITOR ELEMENTS AND MEDATADA
+    # --------------------------------------------------------------------- METADATA
+    metadata = fill_metadata(inputimage,tag,runid,ext)
+
+    # --------------------------------------------------------------------- START DATA PROCESSING
+    outdir =  os.path.abspath(outdir)
+    rawdata = anaSKImg.main( 
+                            [inputimage], 
+                            config, 
+                            outdir  ={'others':outdir,'avg':outdir}, 
+                            display =display,
+                            run_id  =runid,
+                            image_id=metadata.image,
+                            ccd_id  =ext,
+                            run_tag =tag
+                            )
+    # --------------------------------------------------------------------- UPDATE METADATA
+    metadata.start = rawdata.start
+    metadata.end   = rawdata.end
+    metadata.texp  = rawdata.exposure_time
+    metadata.tread = rawdata.read_time
+
+    # --------------------------------------------------------------------- MECollection
+    collection = build_me_collection(rawdata, metadata, jsonme)
+    collection.save(f"{outdir}/MECollection_{metadata.run}_{metadata.module}_{metadata.ccd}_{metadata.image}.pkl")
+
+    # --------------------------------------------------------------------- END
+    t_end = time.time()
+
+    pkl_name = "kk"
+    print("DQM INFO: Total number of reprocessed images 1")
+    print("DQM INFO: Total execution time: {} s".format(t_end-t_init))
+    print("DQM INFO: Completed Successfully!")
+    print("DQM PROCESS STATUS::OK, RUN::{}, PKL::{}".format(runid,pkl_name.split('/')[-1]))
+
+    return rawdata
+
+
+
+
+
+# --------------------------------------------------------------------------------------------- #
+if __name__ == '__main__':
+    main()
+

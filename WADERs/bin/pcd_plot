@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+import sys
+
+
+### To avoid ROOT help print out
+if not '-h' in sys.argv and not '--help'in sys.argv:
+    from astropy.io import fits
+    import numpy as np
+    import time
+    from glob import glob
+    from dateutil import parser
+    import ROOT
+
+
+DISPLAY = False
+
+def pcd(fileslist, ext=[0,'FULLMASK'], Nbins=100, Qmin=-2, Qmax=10):
+    
+    if len(fileslist)==0:
+        return "Noting to do: files where not found"
+
+    th = []
+    for dataset,infile in enumerate(fileslist):
+        R,C = fits.getdata(infile[0], extname=ext[0]) if type(ext[0])==str else fits.getdata(infile[0], ext[0]).shape
+        data = np.zeros((len(infile),R,C))
+        mask = np.zeros((len(infile),R,C))
+        
+        for i,f in enumerate(infile):
+            data[i,:,:] = fits.getdata(f, extname=ext[0]) if type(ext[0])==str else fits.getdata(f, ext[0])
+            mask[i,:,:] = fits.getdata(f, extname=ext[1]) if type(ext[1])==str else fits.getdata(f, ext[1])
+    
+        # continuous readout
+        mdata = np.ma.array(data.reshape(R*len(infile),C), mask=mask.reshape(R*len(infile),C)) 
+        
+        if DISPLAY:
+            from matplotlib import pyplot as plt
+            plt.figure(1)
+            plt.imshow(np.ma.round(mdata), origin='lower', aspect='auto')
+            plt.colorbar()
+            plt.show(block=True)
+
+        # distribution
+        th.append( ROOT.TH1F("PCD_{}".format(dataset),"PCD_{}".format(dataset), Nbins, Qmin, Qmax) )
+        for p in mdata.compressed():
+            th[dataset].Fill(p)
+
+    ROOT.gStyle.SetPalette(ROOT.kRainBow)
+    c = ROOT.TCanvas("PCD","PCD")
+    opt = "HIST PLC PMC"
+    for _h in th:
+        _h.Draw(opt)
+        opt = opt+"SAME"
+    c.SetLogy()
+    c.Update()
+
+    if len(th)>1:
+        r = th[0].Clone("ratio")
+        r.SetName("ratio")
+        r.Sumw2()
+        opt = "PE PMC PLC"
+        
+        c2 = ROOT.TCanvas("ratio plot","ratio plot")
+        clones = []
+        for _h in th[1:]:
+            clones.append( _h.Clone("{}_clone".format(_h.GetName())) )
+            clones[-1].Sumw2()
+            clones[-1].Divide(r)
+            clones[-1].Draw(opt)
+            opt = opt+"same"
+            c2.Update()
+
+        c2.SetGridy()
+        c2.SetGridx()
+        c2.Update()
+        c2.Draw()
+    input("press enter ... ")
+
+
+    return
+
+
+########################################################################################
+if __name__=='__main__':
+
+    import argparse
+    
+    aparser = argparse.ArgumentParser()
+    
+
+    aparser.add_argument("-d",
+            action='store',
+            dest='dataset',
+            nargs="+",
+            help='pattern file naming for all subsets of data to be compared')
+
+    aparser.add_argument("--ext",
+            action='store',
+            dest='ext',
+            nargs="+",
+            default=[0,'FULLMASK'],
+            help='extension number or name for the data and the mask')
+
+    aparser.add_argument("--ho",
+            action='store',
+            dest='hist',
+            nargs="+",
+            default=[500,-2,10],
+            help='Number of bins, Q min and Qmax values in units of electrons, default 500, -2e and 10e')
+
+    arg = aparser.parse_args()
+
+    lof = []
+    for p in arg.dataset:
+        lof.append( glob(p) )
+
+    pcd(lof, arg.ext, Nbins=int(arg.hist[0]), Qmin=int(arg.hist[1]), Qmax=int(arg.hist[2]))
+
+

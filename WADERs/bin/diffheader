@@ -1,0 +1,32 @@
+#!/usr/bin/env python3
+
+from astropy.io import fits
+from glob import glob 
+import click
+
+
+@click.command(help="Script to display differences on the fits file header")
+@click.option("--files",help="Files two be compared", type=(str,str),default=("",""))
+@click.option("--hext",help="Header extension", type=int,default=1)
+@click.option("--mode",help="Display parameter with diff values, same or both",type=str,default="diff")
+def main(files,hext,mode):
+    
+    file1 ,file2 = files
+    h1 = fits.getheader(file1,ext=hext)
+    h2 = fits.getheader(file2,ext=hext)
+    
+    print(h1)
+    print(h1.keys())
+    for key in h1.keys():
+        if h1[key] != h2[key]:
+            if mode in ["diff","both"]:
+                print(f"{key}: file1: {h1[key]}, file2: {h2[key]}, -- DIFF --")
+        else:
+            if mode in ["same", "both"]:
+                print(f"{key}: file1: {h1[key]}, file2: {h2[key]}, -- SAME --")
+
+
+########################################################################################
+if __name__=='__main__':
+    main()
+

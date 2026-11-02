@@ -1,0 +1,281 @@
+#!/usr/bin/env python3
+import sys 
+
+if not '-h' in sys.argv and not '--help'in sys.argv:
+    import pprint
+
+__DEBUG__ = False
+template_ini_file = """
+; CCDDrone config file - template
+;   This is a template of the config file that CCDDrone takes
+;   to run a DAMIC CCD. In case you want to start fresh,
+;   you can copy this file and rename it to CCDConfig.ini
+;   There are three sections. [ccd]. [clocks] and [bias]
+;   anything appearing after a semicolon is a comment and is ignored
+;   Each parameter must be on a new line
+
+[ccd]
+;sequencer_loc = /home/centos/DAMIC/CCDDrone-CCDDrone_tests/CCDSequencer-SkipperASM/firmware_pit_super_sequencer_UW2.lod
+sequencer_loc = /home/centos/DAMIC/CCDDrone_LBC/CCDSequencer-SKipperASM/firmware_pit_super_sequencer_UW2.lod
+;sequencer_loc =  /home/centos/DAMIC/CCDDrone_LBC/CCDSequencer-SKipperASM/compton/firmware_super_sequencer_Paolo_Aug2020_inverted.lod
+super_sequencer = true 		;this is true only if you are using the universal sequencer
+second_stage = UW2    	 	;Whether you are using the pinouts from UW v1 (older CCDs) or v2 (newer CCDs)
+
+type = SK             		;possible types: DES and SK
+columns = {cols}       		;PP52 has 6144+8+8 cols; add overscans here, but dont multiply it with skipper repeats
+rows = {rows}         		;PP52 has 1148 rows
+NDCM = {skips}                	;number of skipper charge measurements. If type=DES this is ignored
+RG_inv = false          	;in the old sequencers, the RG was inverted. The newer sequencers have this fixed
+
+AmplifierDirection = {amp}  ;Possible values U, L, UL.  - (L,R,LR)
+HClkDirection = {hdir}      ;Possible values U, L, UL. Super-sequencer only
+VClkDirection = {vdir}      ;Possible values 1,2,(12). Super-sequencer only
+
+Gain = {gain}               ;Gain can be only 1,2,5 or 10
+ParallelBin = {hbin}        ;Binning of the parallel clocks in the V-direction. Super-sequencer only
+SerialBin = {vbin}          ;Binning of the serial clocks in the H-directions. Super-sequencer only
+
+[timing]
+IntegralTime = {ittime}	    	;unit is micro-seconds. Super-sequencer only
+PedestalIntgWait = {piwait}  	;2 Wait time (in us) before pedestal integration begins. Includes ADC refresh. Super-sequencer only
+SignalIntgWait = {siwait}    	;2 Wait time (in us) before signal integration begins. Super-sequencer only
+
+DGWidth = {dgw}			;0.2;0.4;0.16 0.08 Width of the dump gate (in us). Super-sequencer only
+OGWidth = {ogw} 		;0.4;0.16 Width of (in us) of OG to transfer charge from sense node to SW. Skipper+Super-sequencer only
+RGWidth = {rgw}         ;0.16 Width of (in us) RG in a skipping sequence. SK+Super-sequencer only
+SWPulseWidth = {sww} 	;0.2;0.4;0.16 Width of (in us) the SW pulse to push charge into the sense node. SK+Super seq only.
+
+
+;The Variables in this section works in this manner: Imagine the H or V clocks. They start with
+;Clock 1-2-3: 
+;1. H-L-H
+;2. L-L-H
+;3. L-H-H
+;
+;So on ans so forth. The timing of step 1 and 3 where you have a single clock low is controlled by
+;VWidth and HWidth. The timing of step 2 where two clocks are low is controlled by VOverlapWidth 
+;and HOverlapWidth. Earlier in the sequencer, both of these were set to the same value 
+;(those of you familiar with P_DELAY and S_DELAY). Those variables set the same width for all these
+;steps - therefore your P_DELAY = VWidth = VOverlapWidth
+
+VWidth = {vwidth}      	        ;13.12 Width of (in us) the V-clock when not overlapping. Super seq only.
+VOverlapWidth = {vlapwidth}   	;Width of (in us) of the V-clock when two gates overlap. Super seq only.
+HWidth = {hwidth}        	    ;0.24  Width of (in us) the H-clock when not overlapping. Super seq only.
+HOverlapWidth = {hlapwidth}   	;0.24 Width of (in us) of the H-clock when two gates overlap. Super seq only.
+
+
+;The clocks section is divided into SR1 clocks and SR2 clocks.
+;Please note that if the sequencer used is UW1, then SR1 clocks are
+;used and SR2 clocks are ignored since UW1 boards have the clocks
+;split as U and L not 1 and 2.
+[clocks]
+
+;Common clocks: Serial register charge movement direction.
+u_hclock_hi = {hhi_u}      	;1 -2 h-clocks 6.5-4  5.5-3.  6,3.5   3.5-0.5 4 1
+u_hclock_lo = {hlo_u} 		;1.0
+l_hclock_hi = {hhi_l}
+l_hclock_lo = {hlo_l} 		;1.0
+
+;SR1 clocks for UW2 boards / clocks for UW1 boards
+one_vclock_hi = {vhi_1}   ; 7-5  7-6 V-clock   3.5-1.5 4 2.5
+one_vclock_lo = {vlo_1}
+
+one_tg_hi = {tghi_1} 	  ;TG
+one_tg_lo = {tglo_1}
+
+one_dg_hi = {dghi_1}	;dump gate. Ignored if ccd type is DES
+one_dg_lo = {dglo_1} 	;dump gate. Ignored if ccd type is DES
+one_rg_hi = {rghi_1} 	;7.  ;reset gate
+one_rg_lo = {rglo_1}    ; 10
+
+one_sw_hi = {swhi_1} 	;0.5 ;3 summing well
+one_sw_lo = {swlo_1}    ;-2
+one_og_hi = {oghi_1}  	;-1.75 ;Output gate. Ignored if ccd type is DES
+one_og_lo = {oglo_1}    ;
+
+
+;SR2 clocks for UW2 boards
+two_vclock_hi = {vhi_2}	;1.5 Supersequencer with UW2 configuration only, for newer SK CCDs. Ignored otherwise.
+two_vclock_lo = {vlo_2}	;1.5      ;-0.5
+
+two_tg_hi = {tghi_2}       	;TG 7-5
+two_tg_lo = {tglo_2}	    ;1.5
+
+two_dg_hi = {dghi_2}      	;2 dump gate. Ignored if ccd type is DES
+two_dg_lo = {dglo_2}       	;-8
+two_rg_hi = {rghi_2}       	;reset gate
+two_rg_lo = {rglo_2}       	; 6.
+
+two_sw_hi = {swhi_2}       	;3 summing well
+two_sw_lo = {swlo_2}     	;-2
+two_og_hi = {oghi_2}     	;2 Output gate. Ignored if ccd type is DES
+two_og_lo = {oglo_2}     	;-1
+
+
+[bias]
+vsub = {vsub}        		; V
+ramp_down_rate = 15.    	; V/s
+ramp_up_rate = 15.          ; V/s
+hold_vsuboff_seconds = 9.   ; seconds - no better than millisecond precision please 
+turnoff_clock_voltage = 45.	; V at which to turn clks off during ramp down
+restart_clock_voltage = 20. ; V at which to turn on clks during ramp up
+
+vdd_1 = -19. 			    ;-17.           ;
+vdd_2 = -19.           		;
+vref_1 = -7.0 			    ;-4.5; Reference: SK CCD: -4.6 and DES CCD: -13.12. Range: 0-25V. 
+vref_2 = -7.0            	; Reference: SK CCD: -4.6 and DES CCD: -13.12. Range: 0-25V.
+drain_1 = -22.         		; -15.5 Drain is useful for SK only, but is still set regardless. The pins are distinct to SK CCDs.
+drain_2 = -22.         		; Drain is useful for SK only, but is still set regardless. The pins are distinct to SK CCDs.
+
+opg_1 = 2.21          		; OpG is useful for DES only, but is still set regardless. The pins are distinct to DES CCDs.
+opg_2 = 2.21          		; OpG is useful for DES only, but is still set regardless. The pins are distinct to DES CCDs.
+
+battrelay = 5.0       		;controls relay for battery box
+video_offsets_U = 0   		;Pedestal offset controls - U amplifier. Range: 0-4095
+video_offsets_L = 0   		;Pedestal offset controls - L amplifier. Range: 0-4095
+"""
+
+DEFAULT_VALUES = {
+        # matrix size of the CCD rows, cols, skips
+        'cols':     6144,
+        'rows':     1148,
+        'skips':    1,
+        # binning
+        'hbin':     1,
+        'vbin':     1,
+        # for readout
+        'amp':      'UL',
+        'hdir':     'UL',
+        'vdir':     1,
+        # gain
+        'gain':     1,
+        # integration time in us
+        'ittime':   10,
+        # time to wait at the beggining of the integration time for pedestal and signal, 
+        # does not need to be exactly the same
+        'piwait':   2.5,
+        'siwait':   2.5,
+        # bias voltage
+        'vsub':     65.,
+        # width of the dump gate (DG), transfer gate (OG), skipper sequence (RG) and summing well (SW) pulse in us
+        'dgw':      0.24,
+        'ogw':      0.24,
+        'rgw':      0.24,
+        'sww':      0.24,
+        # vertical timing and voltages
+        'vwidth' :  30.0,
+        'vlapwidth':15.0,
+        'vhi_1':    4.0, # P07: 9.0
+        'vlo_1':    1.5, # P07: 5.7
+        'vhi_2':    4.0,
+        'vlo_2':    1.5,
+        # horizontal timing and voltages
+        'hwidth' :  1.5, 
+        'hlapwidth':1.5,
+        'hhi_u':    2.5,  # P07: 8
+        'hlo_u':    -0.5, # P07: 5
+        'hhi_l':    2.5,  # 8
+        'hlo_l':    -0.5, # 5
+        # transfer gate (wHY THEY ARE THE SAME VALUES??)
+        'tghi_1':   4.0, # 5.7
+        'tglo_1':   1.5, # 5.7
+        'tghi_2':   4.0,
+        'tglo_2':   1.5,
+        # summing well
+        'swhi_1':   -3.0,
+        'swlo_1':   -9.0, # P07 -10
+        'swhi_2':   -3.0,
+        'swlo_2':   -9.0, # P07 -10
+        # output gate
+        'oghi_1':   -4.0,
+        'oglo_1':   -9.0,
+        'oghi_2':   -4.0,
+        'oglo_2':   -9.0,
+        # reset gate
+        'rghi_1':   5.0, # P07 8
+        'rglo_1':   3.0, # P07 3
+        'rghi_2':   5.0,
+        'rglo_2':   3.0,
+        # drain gate
+        'dghi_1':   -4.0, 
+        'dglo_1':   -8.0,
+        'dghi_2':   -4.0,
+        'dglo_2':   -8.0
+        }
+
+
+def read_kwargs(kwargs):
+    
+    settings = {}
+    for p,v in DEFAULT_VALUES.items():
+        if p in kwargs:
+            settings[p] = kwargs[p]
+        else:
+            settings[p] = DEFAULT_VALUES[p]
+    
+    return settings
+
+def main(outfile, **kwargs):
+    
+
+    settings = read_kwargs(kwargs)
+    if __DEBUG__:
+        pprint.pprint(settings, indent=4)
+
+    macro = template_ini_file.format(**settings)
+
+    macro_file = open(outfile, "w")
+    macro_file.write(macro)
+    macro_file.close()
+
+    return
+
+
+############################################################################################
+############################################################################################
+
+if __name__=='__main__':
+
+    import sys
+    import argparse
+    import copy
+
+    parser = argparse.ArgumentParser()
+    
+    parser.add_argument("-o",
+            action="store",
+            dest="ini_file",
+            help="name for th ini config file to use with ./CCDDApplyNewSettings ")
+
+    parser.add_argument("-s",
+            action="store",
+            dest="settings",
+            nargs="+",
+            default=[],
+            help="list of keyword:value to setup in the ini config file, possible keywords are: {}".format('|'.join(list(DEFAULT_VALUES.keys()))))
+ 
+    
+    parser.add_argument("--verbose",
+            action="store_true",
+            dest="verbose",
+            help="Debug prints will be displayed")
+   
+    args = parser.parse_args(args=None if sys.argv[1:] else ['--help'])
+    
+    kwargs = copy.deepcopy(DEFAULT_VALUES)
+    for pv in args.settings:
+        p,v = pv.split(':')
+        # check if the keyword exists
+        if p in DEFAULT_VALUES.keys():
+            # update value from user settings
+            kwargs[p] = v
+        else:
+            raise IOError("Value {} is not yet implemented (or maybe is worng).\n\t Possible values are {}".format(p,'/'.join(list(DEFAULT_VALUES.keys()))))
+
+    main(args.ini_file, **kwargs)
+    print("\nConfig file {} successfully created".format(args.ini_file))
+    print("Done")
+
+       
+        
+

@@ -1,0 +1,230 @@
+#!/usr/bin/env python3
+import sys
+
+
+### To avoid ROOT help print out
+if not '-h' in sys.argv and not '--help'in sys.argv:
+    from astropy.io import fits
+    import numpy as np
+    import time
+    from glob import glob
+    from dateutil import parser
+
+def save_images_as_3Dfits(infile,output,extnumber,hext,keydate=None,image_shape=None):
+    
+    lof = sorted(list(glob(infile)))
+    
+    if image_shape is None:
+        ROW,COL = fits.getdata(lof[0],ext=extnumber).shape
+    else:
+        ROW,COL = image_shape
+
+    # checking if files have been found
+    if len(lof)==0:
+        raise("IOError: file(s) not found with pattern {}".format(infile))
+
+    tstart = []  
+    img    = []
+    for i,fitsfile in enumerate(lof):
+        if image_shape:
+            isValid = np.logical_and( fits.getval( fitsfile, "NAXIS2") == image_shape[0], 
+                    fits.getval( fitsfile, "NAXIS1") == image_shape[1] )
+            if not isValid:
+                continue
+
+        # open the file
+        hdu = fits.open(fitsfile)
+        
+        if keydate is None:
+            try:
+                # time as timestamp
+                tstart.append( time.mktime( parser.parse( hdu[0].header['EXPSTART'] ).timetuple() ) )
+            except KeyError:
+                tstart.append( time.mktime( parser.parse( hdu[int(hext)].header['DATE'] ).timetuple() ) )
+        else:
+            tstart.append( time.mktime( parser.parse( hdu[int(hext)].header[keydate] ).timetuple() ) )
+
+
+
+        # pixel value
+        img.append( hdu[extnumber].data.copy() )
+
+        # close file
+        hdu.close()
+
+    t,q = zip(*sorted(zip(tstart,img)))
+
+    print("Save data set to fits file image ... ")
+    # qmatrix is a 3D array with (time, rows, cols)
+    qmatrix = np.array(q).reshape(len(img),img[0].shape[0],img[0].shape[1])
+
+    save_as_fits(fits.getheader(fitsfile, int(extnumber)),qmatrix,output)
+
+    return
+
+def save_images_as_2Dfits(infile,output,extnumber,row_range=[0,-1],image_shape=None,hext=None,ACM=False,keydate=None):
+    
+    lof = sorted(list(glob(infile)))
+
+    if hext is None:
+        hext = extnumber
+
+    # checking if files have been found
+    if len(lof)==0:
+        raise("IOError: file(s) not found with pattern {}".format(infile))
+
+    if row_range[1]==-1:
+        row_range[1] = fits.getdata(lof[0], extnumber, memmap=False).shape[0]
+    
+    try:
+        extname = fits.getval(lof[0], "EXTNAME", ext=extnumber)
+    except KeyError:
+        extname = None
+
+    tbinpix = []
+    tbinexp = []
+    tstart = []
+    img    = []
+    for i,fitsfile in enumerate(lof):
+        if image_shape:
+            isValid = np.logical_and( fits.getval( fitsfile, "NAXIS2") == image_shape[0], 
+                                      fits.getval( fitsfile, "NAXIS1") == image_shape[1] )
+            if not isValid:
+                continue
+        # time as timestamp
+        if keydate is None:
+            if ACM:
+                tstart.append( time.mktime( parser.parse( fits.getval(fitsfile, 'DATEINI', ext=hext) ).timetuple() ))
+            else:
+                try:
+                    tstart.append( time.mktime( parser.parse( fits.getval(fitsfile, 'EXPSTART', ext=hext) ).timetuple() ))
+                except KeyError:
+                    tstart.append( time.mktime( parser.parse( fits.getval(fitsfile, 'DATE', ext=hext) ).timetuple() ))
+        else:
+            tstart.append( time.mktime( parser.parse( fits.getval(fitsfile, keydate, ext=hext) ).timetuple() ))
+
+        # pixel value
+        img.append( fits.getdata(fitsfile, extnumber, memmap=False)[row_range[0]:row_range[1],:] )
+
+        try:
+            tpix = fits.getval(fitsfile,'MREAD')/(img[-1].shape[0]*img[-1].shape[1]) / float(len(fits.getval(fitsfile,'AMPL').strip()))
+            tbinpix.append( tpix * (img[-1].shape[0]*img[-1].shape[1]-1)/2. * 0.001 )
+            tbinexp.append( fits.getval(fitsfile,'MEXP')*0.001 )
+            add_values_to_header = True
+        except KeyError:
+            add_values_to_header = False
+            continue
+
+    try:
+        t,q,slof = zip(*sorted(zip(tstart,img,lof)))
+
+    except ValueError:
+        t = tstart
+        q = img
+        slof = lof
+
+    print("Save data set to fits file image ... ")
+    # qmatrix is a 3D array with (time, rows, cols)
+    qmatrix = np.array(q).reshape(len(img),img[0].shape[0],img[0].shape[1])
+    # qmatrix is a 2D array with (n_files*rows, cols)
+    qmatrix_2D = qmatrix.reshape(len(img)*img[0].shape[0],img[0].shape[1])
+    
+    header = fits.getheader(slof[0]).copy()
+    if add_values_to_header:
+        header["RDEND"] =  fits.getval(slof[-1],"RDEND")
+        header["CNUMIMG"] = (len(tbinpix),"Total number of combined images")
+        header["CTBINPIX"] = (np.mean(tbinpix), "Mean readout time of the binned pixel (s)" )
+        header["CTPIXSTD"] = (np.std(tbinpix), "Mean readout time of the binned pixel (s)" )
+        header["CTBINEXP"] = (np.mean(tbinexp), "Mean MEXP (s)" )
+        header["CTEXPSTD"] = (np.std(tbinexp), "Mean readout time of the binned pixel (s)" )
+
+    save_as_fits(header,qmatrix_2D,output,extname)
+
+    return
+
+
+def save_as_fits(h,matrix,output,extname=None):
+
+    h['AMPL'] = 'J' 
+    hdu_list = [fits.PrimaryHDU(data=matrix, header=h)]
+    hdu_list[-1].name = 'CONCATENATION' if extname is None else extname
+
+    hdul = fits.HDUList(hdu_list)
+    hdul.writeto(output,overwrite=True)
+
+    return
+
+
+########################################################################################
+if __name__=='__main__':
+
+    import argparse
+    
+    aparser = argparse.ArgumentParser()
+    
+
+    aparser.add_argument(
+            action='store',
+            dest='infile',
+            help='list of input fits file to join them; can be given as a pattern file')
+
+    aparser.add_argument("-o",
+            action='store',
+            dest='output',
+            help='name for the output fits file')
+
+    aparser.add_argument("-c",
+            action='store_true',
+            dest='composed',
+            help='set to build a 2D image instead of 3D (by default)')
+   
+    aparser.add_argument("--ext",
+            action='store',
+            dest='ext',
+            default=0,
+            help='extension ID to get the data matrix')
+
+    aparser.add_argument("--hext",
+            action='store',
+            dest='hext',
+            default=0,
+            help='extension ID to get the header information')
+
+    aparser.add_argument("--row-range",
+            action='store',
+            dest='row_range',
+            nargs="+",
+            default=[0,-1],
+            help='range of rows to be added given as the first and the last range of the interval, i.e. [is,if) ')
+
+    aparser.add_argument("--shape",
+            action='store',
+            dest='shape',
+            nargs="+",
+            help='The fits file pattern identification may it has several image shape, use this parameter to set the proper shape of the data array)')
+
+    aparser.add_argument("--acm",
+            action='store_true',
+            dest='ACM',
+            help='set to inform header naming from ACM data format')
+
+    aparser.add_argument("--keydate",
+            action='store',
+            dest='keydate',
+            default=None,
+            help='Header keyword for timing: DATE/DATESTART/... ')
+ 
+    arg = aparser.parse_args()
+    if arg.shape:
+        image_shape = [int(arg.shape[0]), int(arg.shape[1])]
+    else:
+        image_shape = None
+   
+    if arg.composed:
+        row_range = [int(arg.row_range[0]),int(arg.row_range[1])]
+        save_images_as_2Dfits(arg.infile,arg.output,int(arg.ext),row_range,image_shape,int(arg.hext),arg.ACM,keydate=arg.keydate)
+    else:
+        save_images_as_3Dfits(arg.infile,arg.output,int(arg.ext),hext=int(arg.hext),keydate=arg.keydate,image_shape=image_shape)
+
+    print("Done! find compose fits file images at {}".format(arg.output))
+

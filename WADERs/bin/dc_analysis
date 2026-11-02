@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+import sys
+
+
+### To avoid ROOT help print out
+if not '-h' in sys.argv and not '--help'in sys.argv:
+    from astropy.io import fits
+    import numpy as np
+    import time
+    from glob import glob
+    from dateutil import parser
+
+
+
+def dc_vs_time(infile,amp=["U","L"], gain=None, continuous_readout=False, pol1=0, all_plots=False):
+        
+    lof = sorted(list(glob(infile)))
+    
+    # checking if files have been found
+    if len(lof)==0:
+        raise("IOError: file(s) not found with pattern {}".format(infile))
+
+    # amplifier dependent
+    keywords = ['DC','GAIN','SIG']
+    parameters = {}
+    for a in amp:
+        for k in keywords:
+            param = "ME"+str(k)+str(a)
+            parameters[param] = np.zeros(len(lof))
+            parameters["E"+param] = np.zeros(len(lof))
+    
+    # independent of the amplifier
+    parameters["MEXP"] = np.zeros(len(lof))
+    parameters["MREAD"] = np.zeros(len(lof))
+    parameters["RDSTRT"] = np.zeros(len(lof))
+    parameters["NPBIN"] = np.zeros(len(lof))
+    parameters["NSBIN"] = np.zeros(len(lof)) 
+
+    for i,fitsfile in enumerate(lof):
+        for k in parameters.keys():
+            if k=="RDSTRT":
+                parameters[k][i] = time.mktime( parser.parse(fits.getval(fitsfile,k)).timetuple() )
+            else:
+                parameters[k][i] = fits.getval(fitsfile,k)
+            
+            if gain is not None:
+                if k.count("MEGAIN"):
+                    if k[0]=="E":
+                        parameters[k][i] = 0.0
+                    else:
+                        parameters[k][i] = gain[a]
+    
+    # dc = MEDC / BIN / GAIN
+    yexp = []
+    for a in amp:
+        parameters["DC"+str(a)]  = parameters["MEDC"+str(a)] / (parameters["NPBIN"]*parameters["NSBIN"]) / parameters["MEGAIN"+str(a)]
+        A = 1/(parameters["NPBIN"]*parameters["NSBIN"]) / parameters["MEGAIN"+str(a)] * parameters["EMEDC"+str(a)]
+        B = parameters["MEDC"+str(a)] / (parameters["NPBIN"]*parameters["NSBIN"]) / parameters["MEGAIN"+str(a)]**2.0 * parameters["EMEGAIN"+str(a)]
+        parameters["EDC"+str(a)] = np.sqrt(A**2.0+B**2.0)
+        
+        # ms -> s (0.001) -. day (60*60*24)
+        if continuous_readout:
+            print("Assuming continous readout measurements ... ")
+            parameters["texp"] = np.cumsum(0.001*(parameters["MEXP"]+parameters["MREAD"]/2.)/60./60./24.)
+        else:
+            parameters["texp"] = (parameters["MEXP"]+parameters["MREAD"])*0.001/60./60./24.
+        
+        yexp.append(int(np.log10(min(parameters["DC"+str(a)]))))
+
+    for a in amp:
+        parameters["DC"+str(a)] = parameters["DC"+str(a)]/10**min(yexp)
+        parameters["EDC"+str(a)] = parameters["EDC"+str(a)]/10**min(yexp)
+        
+
+
+    ######################################################### DRAW PARAMETERS
+    import ROOT
+    from array import array
+    colors = {'U':ROOT.kAzure+2,'L':ROOT.kGreen+3}
+    
+    if all_plots:
+        list_plots = zip(["DC","MEGAIN","MESIG"],["Single electron rate ","k [ADU/e-]","#sigma_{e-} [ADU]"])
+    else:
+        list_plots = zip(["DC"],["Single electron rate "])
+
+
+    for p,ytitle in list_plots:
+        tg = []
+        tf = []
+        ylimits = [10,0]
+        c = ROOT.TCanvas("c","c",900,700)
+        leg = ROOT.TLegend(0.2,0.7,0.35,0.8)
+        dopt = "APZ"
+
+        for a in amp:
+            if not continuous_readout:
+                x  = array('d',(parameters["RDSTRT"]-min(parameters["RDSTRT"]))/60./60./24.) 
+                xtitle = "Relative date time (days)"
+            else:
+                x  = array('d',parameters["texp"])
+                xtitle = "Total exposure (days)"
+
+            ex = array('d', np.zeros_like(x))
+
+            y  = array('d',parameters[p+str(a)])
+            ey = array('d',parameters["E"+p+str(a)])
+            ylimits[0] = min(ylimits[0],min(y))
+            ylimits[1] = max(ylimits[1],max(y))
+
+            tg.append( ROOT.TGraphErrors(len(lof),x,y,ex,ey) )
+            tg[-1].SetMarkerStyle(21)
+            tg[-1].SetMarkerSize(0.8)
+            tg[-1].SetMarkerColor(colors[a])
+            tg[-1].SetLineColor(colors[a])
+
+            # fitting 
+            if p=="DC" and pol1>0:
+                try:
+                    tf.append( ROOT.TF1("pol1","pol1",x[0],x[pol1]))
+                except IndexError:
+                    tf.append( ROOT.TF1("pol1","pol1",x[0],x[-1]))
+                tf[-1].SetLineColor(colors[a])
+                tg[-1].Fit(tf[-1],"EMR")
+
+            if p=="DC":
+                tg[-1].GetYaxis().SetTitle(ytitle+" (10^{"+str(min(yexp))+"} e-/pix)")
+            else:
+                tg[-1].GetYaxis().SetTitle(ytitle)
+            tg[-1].GetXaxis().SetTitle(xtitle)
+            
+            if p=="DC" and pol1>0:
+                tg[-1].SetTitle("Measurement of dark current")
+                leg.AddEntry(tg[-1],a+": #lambda={} #times 10^{}{}{}".format(round(tf[-1].GetParameter(1),2),"{",min(yexp),"}")+" e-/pix/day","PL")
+            else:
+                leg.AddEntry(tg[-1],a,"PL")
+
+            tg[-1].Draw(dopt)
+            dopt="PZ same"
+       
+        leg.Draw()
+        if p.count("DC")>0:
+            tg[0].GetHistogram().GetYaxis().SetRangeUser(ylimits[0]*0.8,ylimits[1]*1.2)
+
+        c.Update()
+        c.Draw()
+        input("press enter ... ")
+
+    return
+
+
+########################################################################################
+if __name__=='__main__':
+
+    import argparse
+    
+    aparser = argparse.ArgumentParser()
+    
+
+    aparser.add_argument(
+            action='store',
+            dest='infile',
+            help='pattern file name to join as a 3D array sorted by time')
+
+    aparser.add_argument("--continuous",
+            action='store_true',
+            dest='continuous_readout',
+            help='if set DC will be assumed is continuous readout and exposure will be calculated as cumsum of np.sumsum(texp + mread/2)')
+
+    aparser.add_argument("--all",
+            action='store_true',
+            dest='all',
+            help='if set DC will be assumed is continuous readout and exposure will be calculated as cumsum of np.sumsum(texp + mread/2)')
+
+    aparser.add_argument("--amp",
+            action='store',
+            dest='amp',
+            nargs="+",
+            default=["L","U"],
+            help='List of amplifier names')
+
+    aparser.add_argument("--pol1",
+            action='store',
+            dest='pol1_fit',
+            type=int,
+            default=0,
+            help='Number of points (from the first one, and consecutive) to fit the single electron rate')
+
+    arg = aparser.parse_args()
+
+    dc_vs_time(arg.infile, arg.amp, gain=None, continuous_readout=arg.continuous_readout, pol1=arg.pol1_fit, all_plots=arg.all)
+
+

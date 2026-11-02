@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+import click
+import os
+from astropy.io import fits
+import numpy as np
+from glob import glob
+
+@click.command()
+@click.option('--images', type=str, help='Nombre del fichero de entrada FITS')
+@click.option('--col', type=(int,int), help='Center of the new frame, pad in both sides (cols: pixel units)')
+@click.option('--row', type=(int,int), help='Center of the new frame, pad in both sides (rows: pixel units)')
+@click.option('--ext', type=int, help='Extension for the data array',default=0)
+@click.option('--mp4', type=bool, default=False, help='Generate an mp4')
+@click.option('--cmap', type=(float,float), default=(-0.5, 2.0), help='Min and Max pixel charge value for the cmap color map of the mp4')
+@click.option('--tframe', type=float, default=3, help='Time in seconds for each fotogram (each image)')
+@click.option('--cmapname', type=str, default='grey', help='Cmap color map from matplotlib')
+@click.option('--ccds', type=str, default="A,B,C,D", help="Coma separated CCD names")
+def process_fits(images, col, row, ext, mp4, cmap, tframe, cmapname, ccds):
+    """Extrae el header de la extensión 0 y parte de los datos de la extensión ext de un archivo FITS."""
+    
+    lof = sorted(glob(images))
+    if len(lof)==0:
+        raise IOError("Images not found!")
+
+    # rango de columns
+    col_center, dcol = col
+    col_start, col_end = col_center-dcol, col_center+1+dcol
+    # Procesar el rango de filas
+    row_center, drow = row
+    row_start, row_end = row_center-drow, row_center+1+drow
+    
+    # Extraer el header de la extensión 0
+    header_ext0 = fits.getheader(lof[0], ext=0)
+    Ncol = col_end+1-col_start
+    Nrow = row_end+1-row_start 
+    try:
+        header_ext0["NROW"] = Nrow
+    except KeyError:
+        pass
+    try:
+        header_ext0["NCOL"] = Ncol
+    except KeyError:
+        pass
+ 
+    image_region = []
+    for infile in lof:
+        print(infile)
+        # Extraer los datos de la extensión ext
+        data_ext1 = fits.getdata(infile, ext=ext)
+        # Seleccionar las filas y columnas especificadas
+        selected_data = data_ext1[row_start:row_end+1, col_start:col_end+1]
+        image_region.append( selected_data )
+
+    # Crear un nuevo archivo FITS con el header y los datos seleccionados
+    data = np.stack(image_region,axis=0)
+    hdu = fits.PrimaryHDU(data=data, header=header_ext0)  # Crear HDU para el header
+     
+    # Generar el nombre del archivo de salida
+    base_name = os.path.splitext(infile)[0]  # Obtener el nombre base del archivo sin extensión
+    output_filename = f"{base_name}_snap_{col[0]}-{row[0]}.fits"  # Añadir el sufijo '_region'
+    
+    # Combinar ambas HDUs en un nuevo archivo FITS
+    hdu.writeto(output_filename, overwrite=True)
+
+    title = f"r:{row[0]}, c:{col[0]}"
+    generate_multiplot(data, output_filename, cmapname, cmap[0], cmap[1], ccds, title)
+
+    # Generar an mp4
+    if mp4:
+        generate_mp4(data, output_filename, cmapname, cmap[0], cmap[1], tframe)
+    click.echo(f"Archivo guardado exitosamente como '{output_filename}'")
+
+def generate_multiplot(data, output_filename, cmap_name, qmin, qmax, ccds, title):
+    import matplotlib.pyplot as plt
+    from astropy.visualization import ImageNormalize
+    
+    ccds = ccds.split(',')
+    fig, ax = plt.subplots(2,2,figsize=(10, int(10*data.shape[1]/data.shape[2])))
+    fig.suptitle(title)
+    ax = ax.flatten()
+    for frame in range(data.shape[0]):
+        norm = ImageNormalize(data[frame], vmin=qmin, vmax=qmax)
+        y,x = data.shape[1]//2-1,data.shape[2]//2-1
+        ax[frame].imshow(data[frame], origin='lower', cmap=cmap_name, norm=norm)
+        _ = ax[frame].plot(x,y,'rs',linestyle='None',markerfacecolor='None')
+        ax[frame].set_title(f"CCD-{ccds[frame]}: Q={np.round(data[frame,y,x],3)} e-")
+
+    fig.savefig(output_filename.replace('.fits','_subfigure.png'))
+    plt.show()
+
+    return
+
+def generate_mp4(data,outname,cmap_name, qmin,qmax,tframe=5):
+    import matplotlib.pyplot as plt
+    import matplotlib.animation as animation
+    from astropy.visualization import ImageNormalize
+
+    # Crear la figura y el eje de la animación
+    fig, ax = plt.subplots(figsize=(10, int(10*data.shape[1]/data.shape[2])))
+
+    # Función para actualizar la imagen en cada fotograma
+    def update(frame):
+        norm = ImageNormalize(data[frame], vmin=qmin, vmax=qmax)
+        ax.clear()  # Limpiar el eje antes de dibujar la siguiente imagen
+        im = ax.imshow(data[frame], origin='lower', cmap=cmap_name, norm=norm)
+        y,x = data.shape[1]//2-1,data.shape[2]//2-1
+        _ = ax.plot(x,y,'rs',linestyle='None',markerfacecolor='None')
+        ax.set_title(f"Frame {frame + 1}: Q={np.round(data[frame,y,x],3)} e-")
+        ax.axis('off')  # Opcional: desactivar los ejes
+
+    # Crear la animación
+    ani = animation.FuncAnimation(fig, update, frames=np.arange(0,data.shape[0]), interval=int(tframe*1000))
+    
+    # Guardar la animación como un archivo MP4
+    outname = outname.replace('.fits','_movie.mp4').replace('.fz','_movie.mp4')
+    ani.save(outname, writer='ffmpeg', fps=1)
+    click.echo(f"Movie mp4 creada exitosamente como {outname}")
+
+    plt.show()
+    return
+
+if __name__ == '__main__':
+    process_fits()
+

@@ -1,0 +1,15 @@
+build/*
+dist/*
+doc/_build/html/*
+jobSender
+notebooks/*/*/*
+pysimdamicm.egg-info/*
+pysimdamicm/__pycache__/*
+pysimdamicm/*/__pycache__/*
+venv/
+__pycache__/*
+*/__pycache__
+*/*/__pycache__
+build
+dist
+doc/_build

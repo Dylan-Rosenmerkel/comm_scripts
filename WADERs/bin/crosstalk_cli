@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+# Autor: Nuria Castello Mor
+# Fecha: 2-10-2025
+import click
+
+from dataclasses import dataclass, field
+from typing import Dict, Tuple, List, Optional, Sequence, Any
+from glob import glob
+from astropy.io import fits
+import numpy as np
+import os
+import re
+
+from pysimdamicm.processes.crosstalk import *
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+mpl.rcParams['text.usetex'] = True
+
+
+
+def load_sim_data(dc=2.0e-4,ser=0.16,minS=100,maxS=1000,Ncols=1280,Nrows=480,Nseeds=1000):
+    XTALK_COEFF = np.array([
+                        [ 0,     0.60,   -1.12,   -1.91],
+                        [ 1.33,  0,      -1.22,   -1.53],
+                        [-2.20, -1.00,    0,       1.50],
+                        [-0.60, -1.50,    1.20,     0  ],
+                        ]) * 1e-4 
+    print("Simulating data with the following Crosstalk correlation: [1E-4]")
+    print(XTALK_COEFF/1e-4)
+    labels = sorted(['A-CH0', 'B-CH1', 'C-CH2', 'D-CH3'])
+    images    = {}
+    seeds     = {}
+    # generate xtalk images
+    for lab in labels:
+        images[lab] = np.random.poisson(dc, size=(Nrows,Ncols)) + np.random.normal(0,ser, size=(Nrows,Ncols))
+        # generate random seeds
+        seeds[lab] = np.zeros_like(images[lab])
+        for Ei in [700,1000]:
+            S    = np.random.exponential(Ei, size=Nseeds).astype(int) + np.random.normal(0,50, size=Nseeds).astype(int)
+            rows = np.random.randint(1,Nrows-1,Nseeds)
+            cols = np.random.randint(1,Ncols-1,Nseeds)
+            # generare image with the random seeds
+            seeds[lab][rows,cols] += S
+            # combina poisson+noise + seeds
+            images[lab] += seeds[lab]
+    # apply correlation matrix
+    for i_src,src in enumerate(labels):
+        for j_dst,dst in enumerate(labels):
+            if src==dst:
+                continue
+            # append xtalk from each different source
+            images[dst] += XTALK_COEFF[j_dst,i_src] * images[src]
+    
+    for lab in labels:
+        seeds[lab][seeds[lab]>0] += 1e10
+    return images, seeds, labels
+
+@click.command(help="Crosstalk Evaluation (supports multiple datasets)")
+@click.option('-d', '--datadir', multiple=True, type=str, help='Dataset directories')
+@click.option('-i', '--infits', multiple=True, type=str, help='Input FITS patterns')
+@click.option('--acm', help='ACM number for title purposes', type=str, default=None)
+@click.option('--lag', help='Tuple (rows, cols) specifying the readout offset.', type=(int, int), default=(0, 0))
+@click.option('--qrange', help='Pixel charge range (min, max) to consider as seeds.', type=(float, float), default=(400, 5000))
+@click.option('--bootstrap-size', help='Number of bootstrap resamples (default 50000).', type=int, default=10000)
+@click.option('--energy-bins', help='Number of energy bins (default 5).', type=int, default=5)
+@click.option('--display', help='Show plots.', type=bool, default=True)
+@click.option('--correct-from-null', help='If set, alpha matrix will be corrected from null hypothesis', type=bool, default=True)
+@click.option('-o', '--outdir', help='Output directory for FITS file and plots.', type=str, default=None)
+@click.option('--mask-rows', help='Row start and end index to ignore in crosstalk calculation', type=(int,int), default=(None,None))
+@click.option('--sim',help='Simulate a random image, with a given xtalk correlation, needs tuple with the following params: (bool,dc,noise,cols,rows)',type=(bool,float,float,int,int), default=(False,2e-4,0.16,500,500))
+def main(datadir, infits, acm, lag, qrange, bootstrap_size, energy_bins,
+         display, correct_from_null, outdir, mask_rows, sim):
+    
+    if sim[0]:
+        images, qmax_maps, labels = load_sim_data(sim[1], sim[2], Nrows=sim[3], Ncols=sim[4])
+        all_images_per_dataset = [images]
+        all_qmax_per_dataset   = [qmax_maps]
+        outdir = '.'
+    else:
+        if len(datadir) != len(infits):
+            raise click.ClickException("Number of -d and -i options must match.")
+    
+        datasets = list(zip(datadir, infits))
+        print(f"Detected {len(datasets)} dataset(s):")
+        for idx, (d,p) in enumerate(datasets,1):
+            print(f"   Set {idx}: dir={d}, pattern={p}")
+    
+        # --- Load all datasets using load_data ---
+        all_images_per_dataset = []
+        all_qmax_per_dataset = []
+    
+        for d, p in datasets:
+            images, qmax_maps, lof = load_data(d, p)
+            all_images_per_dataset.append(images)
+            all_qmax_per_dataset.append(qmax_maps)
+    
+        # --- Concatenate images across datasets ---
+        labels = sorted(all_images_per_dataset[0].keys(), key=lambda x: int(x.split('CH')[1]))
+        concatenated_images = {}
+        concatenated_qmax = {}
+        for label in labels:
+            concatenated_images[label] = np.vstack([ds[label] for ds in all_images_per_dataset])
+            concatenated_qmax[label] = np.vstack([ds[label] for ds in all_qmax_per_dataset])
+    
+        images    = concatenated_images
+        qmax_maps = concatenated_qmax
+        print("Concatenated image shapes:")
+        for label in labels:
+            print(f"  {label}: {images[label].shape}")
+    
+        # --- Mask rows if specified ---
+        mask_rows_1,mask_rows_2 = mask_rows
+        row_start = mask_rows_1 if mask_rows_1 is not None else 0
+        row_end = mask_rows_2 if mask_rows_2 is not None else None
+        for key in images:
+            images[key] = images[key][row_start:row_end, :]
+            qmax_maps[key] = qmax_maps[key][row_start:row_end, :]
+
+    # --- Evaluate Crosstalk ---
+    minS, maxS = qrange
+    results = evaluate_crosstalk(
+        images, qmax_maps, labels=list(labels),
+        lags=[lag], min_S=float(minS), max_S=float(maxS),
+        n_bootstrap=bootstrap_size, n_energy_bins=energy_bins,
+        energy_binning_mode='quantile'
+    )
+    
+    res = results[lag]
+    print("\nOrden CCDs:", res.order)
+    print("\nMatriz α (off-diagonal):\n", res.alpha_matrix)
+    print("\nNull test (esperado cerca de 0):\n", res.null_test_alpha_matrix)
+    print("\nα - null:\n", res.alpha_matrix - res.null_test_alpha_matrix)
+    
+    if not sim[0]:
+        # --- Prepare output headers and file path ---
+        images_hdr = {}
+        all_files = []
+        # Collect all FITS files from all datasets
+        for datadir_i, infits_i in datasets:
+            files_i = sorted(glob(os.path.join(datadir_i, infits_i)))
+            all_files.extend(files_i)
+            for f in files_i:
+                fname = os.path.basename(f)
+                with fits.open(f) as hdul:
+                    images_hdr[fname] = hdul[0].header.copy()
+    
+        # Ensure output directory exists
+        if outdir is not None:
+            os.makedirs(outdir, exist_ok=True)
+        else:
+            outdir = os.getcwd()
+
+        # --- Build final output filename dynamically ---
+        first_file_basename = os.path.basename(all_files[0])
+        match_base = re.match(r"(.*?)(\d{8}_\d{6}_\d+)", first_file_basename)
+        base_name_part = match_base.group(1).rstrip('_') if match_base else "concatenated"
+
+        # Extract timestamps from each filename
+        timestamps = []
+        for f in all_files:
+            fname = os.path.basename(f)
+            match = re.search(r"(\d{8}_\d{6}_\d+)", fname)
+            if match:
+                timestamps.append(match.group(1))
+
+        # Remove duplicates while preserving order
+        seen = set()
+        timestamps = [x for x in timestamps if not (x in seen or seen.add(x))]
+
+        # Build final output filename
+        output_base = f"{base_name_part}_{'_'.join(timestamps)}"
+        output_name = os.path.join(outdir, f"{output_base}.fits")
+        print("Output FITS file will be:", output_name)
+
+        # --- Save corrected FITS ---
+        res.apply_correction_and_save_fits(
+            images=images,
+            images_hdr=images_hdr,
+            input_filename=output_name,
+            acm=acm,
+            output_dir=outdir
+        )
+    
+    # --- Plot if requested ---
+    ffname = os.path.join(outdir, f"crosstalk_ACM-{acm}_lag_{''.join(map(str, lag))}")
+    res.plot_alpha_vs_energy(output=ffname, ttitle=f"ACM-{acm}")
+    visual_charge_correlation_plot(
+                                    images,
+                                    labels,
+                                    alpha_null_matrix=res.alpha_matrix / res.null_test_alpha_matrix,
+                                    alpha_matrix=res.alpha_matrix,
+                                    null_matrix=res.null_test_alpha_matrix,
+                                    title=f'ACM-{acm}: Crosstalk Characterization across channels: ',
+                                    output=ffname,
+                                    xlim=(0,maxS),
+                                    qmaps=qmax_maps
+                                    )
+
+    if display:
+        if correct_from_null:
+            res.plot_global_alpha(who='null_test_alpha_matrix',output=ffname, ttitle=f"ACM-{acm}")
+            _ = plot_correction_vs_energy(res.alpha_matrix,
+                                         sorted(all_images_per_dataset[0].keys(), key=lambda x: int(x.split('CH')[1])),
+                                         res.null_test_alpha_matrix)
+            _ = plot_pcd(images, res.alpha_matrix, res.null_test_alpha_matrix)
+        else:
+            res.plot_global_alpha(output=ffname, ttitle=f"ACM-{acm}")
+            _ = plot_correction_vs_energy(res.alpha_matrix,
+                                         sorted(all_images_per_dataset[0].keys(), key=lambda x: int(x.split('CH')[1])))
+            _ = plot_pcd(images, res.alpha_matrix)
+
+        plt.show(block=True)
+
+if __name__ == '__main__':
+    main()
