@@ -6,6 +6,7 @@ from pysimdamicm.processes.reconstruction import ClusterFinder, CreateFitsImage,
 ### PROCESS RELATED WITH REAL DATA: LOW LEVEL
 from pysimdamicm.processes.skipper_analysis import CompressSkipperProcess, PedestalSubtractionProcess, FitDarkCurrentProcess, CalibrationProcess, CorrectElectronicColumnTransient, AddBKGComponent, FitDarkCurrentPerRow, FitDarkCurrentPerCol, GaussianFitProcess, MeanPixelChargePerAxis, TwoDGaussProcess, CrossTalkProcess, GaussianNoiseProcess, EvalCTIProcess, EvalHaloProcess
 from pysimdamicm.processes.skipper_comissioning import ChargeLossPlot, FFTNoisePlot, RNvsNskipsPlot, FitCalibrationConstant, ChargeLossSkewnessProcess
+from pysimdamicm.processes.gain_nonlinearity import GainNonlinearityProcess
 ### SINGLETON: UNITS CLASS WITH GLOBAL PARAMETERS
 from pysimdamicm.utils.units import Units
 u=Units()
@@ -104,6 +105,8 @@ class ProcessManager(object):
             GaussianNoiseProcess.__name__:GaussianNoiseProcess,
             EvalCTIProcess.__name__:EvalCTIProcess,
             EvalHaloProcess.__name__:EvalHaloProcess,
+            ### gain vs charge correction g(n) (comm_scripts)
+            GainNonlinearityProcess.__name__:GainNonlinearityProcess,
             ### sims and data: adding component on top of the input image
             AddBKGComponent.__name__:AddBKGComponent,
             ### reconstruction: both sims and data

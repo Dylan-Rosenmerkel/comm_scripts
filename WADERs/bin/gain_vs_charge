@@ -1,0 +1,20 @@
+#!/usr/bin/env python3
+""":script:`gain_vs_charge` -- gain as a function of the charge in a pixel, g(n), from skipper-CCD images
+=========================================================================================================
+
+    gain_vs_charge measure IMAGES... -o OUTDIR [--model interpolated|broken|linear] [--combine incoherent|coherent]
+        -> OUTDIR/NAME_gain_vs_charge.json   g(n) points and model per extension (the model_file of the
+                                             panaSKImg process GainNonlinearityProcess)
+           OUTDIR/NAME_gain_vs_charge.png    g(n), absolute and relative to g(0)
+           OUTDIR/NAME_nonlinearity.png      measured charge - peak number vs measured charge
+           OUTDIR/NAME_adu_of_n.png          A(n) = integral of g, and A(n) - g(0) n
+    gain_vs_charge apply MODEL.json CLUSTERS.root... -o OUTDIR
+        -> cluster files with pixels_E and Energy corrected with g(n) (the same correction that
+           GainNonlinearityProcess + ClusterFinder apply inside panaSKImg)
+
+    gain_vs_charge -h   all options.  Code: pysimdamicm/comm/gain_vs_charge.py (from comm_scripts).
+"""
+from pysimdamicm.comm.gain_vs_charge import main
+
+if __name__ == "__main__":
+    main()

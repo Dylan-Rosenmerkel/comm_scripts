@@ -139,6 +139,13 @@ def main(infiles,config,outdir=None,display=True,run_id=None,
 
                 print("main INFO. Add ROOT TTree with reconstrcted information >> info")
                 outman.fill_tree("info",run_id,[InfoFromReconstruction(rdata)],isdata=True)
+
+                if hasattr(rdata, "agmx_config"):
+                    ### ClusterFinder algorithm "agmx": its settings and crowded-mode record (as comm_scripts' agmx_root.py)
+                    import ROOT
+                    from pysimdamicm.processes.comm_clustering import agmx_config_json
+                    outman.tfile.cd()
+                    ROOT.TNamed("agmx_config", agmx_config_json(rdata)).Write("", ROOT.TObject.kOverwrite)
             else:
                 print("main INFO. Run {}, Image {}: {} clusters >>>> clustersRec_tagged".format(run_id,rdata.n_image,Nclusters))
                 outman.fill_tree("clustersRec_tagged",run_id,evt_clusters,isdata=True)

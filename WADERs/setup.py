@@ -80,6 +80,7 @@ setup(
             "pysimdamicm.dqm",
             "pysimdamicm.setups",
             "pysimdamicm.scripts",
+            "pysimdamicm.comm",
             "pysimdamicm.json"
         ],
         include_package_data=True,
@@ -106,6 +107,7 @@ setup(
             "bin/get_calibration_constant",
             "bin/cut_fits_image",
             "bin/crosstalk_cli",
-            "bin/compare_root_files"
+            "bin/compare_root_files",
+            "bin/gain_vs_charge"
             ]
         )

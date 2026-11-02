@@ -162,6 +162,17 @@ class ClusterFinder(ReconstructionProcess):
             "low_energy": 1  ### MASK FLAG IMPLEMENTATION ###
                 })
 
+        # comm_scripts additions (pysimdamicm/processes/comm_clustering.py); the defaults keep the WADERs behaviour
+        #   algorithm          : "waders" (threshold + connect, as always) or "agmx" (A_GMX model-based clustering)
+        #   agmx               : A_GMX options {"crowded": "auto"|"on"|"off", "crowded_shapes": "on"|"off",
+        #                        "fe_candidates": true|false, "temperature": K, "first_row": input.image.id_row_start}
+        #   spr_threshold_auto : false, true or {"alpha": 0.10, "seed_e": 9.5}: pixel/seed thresholds in electrons
+        #                        from the dark charge of each CCD (replaces spr_threshold of resolved CCDs)
+        self.algorithm = "waders"
+        self.agmx = {}
+        self.spr_threshold_auto = False
+        self.__units__.update({"algorithm": 1, "agmx": 1, "spr_threshold_auto": 1})
+
         # PARAMETERS FOR THE CLUSTER PROCESS ITSELF
         #############################################################################
         self.method=int(1)
@@ -225,6 +236,16 @@ class ClusterFinder(ReconstructionProcess):
         """
         if self.evaluate_event_mask: ## MASK FLAG IMPLEMENTATION ##
             self.load_masks_for_image(hits)
+
+        # comm_scripts additions: thresholds from the dark charge, A_GMX, g(n) correction (comm_clustering.py)
+        n_clusters_before = len(getattr(hits, 'evt_clusters', []))
+        if self.spr_threshold_auto and hits.isdata:
+            self.set_auto_spr_threshold(hits)
+        if self.algorithm == "agmx":
+            self.execute_agmx(hits)
+            return
+        elif self.algorithm != "waders":
+            raise ValueError(f"ClusterFinder: algorithm must be 'waders' or 'agmx', not {self.algorithm!r}")
 
         # APPLY FIRST THE SIGNAL PATTER RECOGNITION ALGORITHM TO SET ALL NEEDED PARAMETERS
         if self.spr_threshold is not None:
@@ -301,8 +322,55 @@ class ClusterFinder(ReconstructionProcess):
             # append Cluster objects to list of clusters
             self.get_cluster_object_list(hits)
 
+        # comm_scripts: energies of the new clusters corrected with g(n) if GainNonlinearityProcess ran
+        self.correct_gain_nonlinearity(hits, n_clusters_before)
+
         ### add distance to the closest cluster
         self.get_closest_cluster(hits)
+
+    def set_auto_spr_threshold(self, hits):
+        """spr_threshold of the current amplifier from its dark charge (spr_threshold_auto, comm_clustering.py)"""
+        from pysimdamicm.processes.comm_clustering import auto_spr_threshold, AUTO_ALPHA, AUTO_SEED_E
+        opts = self.spr_threshold_auto if isinstance(self.spr_threshold_auto, dict) else {}
+        amp = hits.execute_process_in_amp
+        thr, lam, k, noise = auto_spr_threshold(hits, amp, self.spr_image, opts.get("alpha", AUTO_ALPHA),
+                                                opts.get("seed_e", AUTO_SEED_E))
+        if thr is None:
+            print(f"Process <ClusterFinder> spr_threshold_auto {amp}: electron peaks not resolved "
+                  f"(noise {noise:.2f} e-) - configured spr_threshold kept")
+            return
+        if not isinstance(self.spr_threshold, dict):
+            self.spr_threshold = {a: (list(self.spr_threshold) if self.spr_threshold is not None else None)
+                                  for a in hits.amplifier.keys()}
+        self.spr_threshold[amp] = thr
+        print(f"Process <ClusterFinder> spr_threshold_auto {amp}: dark charge {lam:.2f} e-/pix (median of rows) -> "
+              f"pixels >= {k} e- (> {thr[1]:g}), seed > {thr[2]:g} e-")
+
+    def execute_agmx(self, hits):
+        """algorithm "agmx": A_GMX clusters of the current amplifier (comm_clustering.find_clusters_agmx). The
+        WADERs threshold cut still runs first when spr_threshold is set: it gives the clusters the same
+        seed-noise attributes (sigma_seed_eV, qmin_cluster_seed) as the WADERs clusters."""
+        from pysimdamicm.processes.comm_clustering import find_clusters_agmx, AGMX_DEFAULTS
+        if self.spr_threshold is not None:
+            self.execute_simple_threshold_cut(hits)
+            if hits.isdata:
+                hits.get_compatibility_with_ClusterObject(getattr(hits, 'n_run', 0), getattr(hits, 'n_image', 0))
+        find_clusters_agmx(self, hits, dict(AGMX_DEFAULTS, **(self.agmx or {})))
+        self.get_closest_cluster(hits)
+
+    def correct_gain_nonlinearity(self, hits, first):
+        """pixels_E and Energy of the clusters from index first on, corrected with the g(n) curve that
+        GainNonlinearityProcess attached for the current amplifier (as gain_vs_charge apply)"""
+        curve = getattr(hits, 'gain_curve', {}).get(getattr(hits, 'execute_process_in_amp', None))
+        if curve is None or not hasattr(hits, 'evt_clusters'):
+            return
+        from pysimdamicm.processes.gain_nonlinearity import correct_clusters
+        new = hits.evt_clusters[first:]
+        med = correct_clusters(new, curve)
+        if hasattr(hits, 'me_reconstructed_spectrum') and len(hits.me_reconstructed_spectrum) == len(hits.evt_clusters):
+            hits.me_reconstructed_spectrum[first:] = [c.Energy for c in new]
+        print(f"Process <ClusterFinder> {hits.execute_process_in_amp}: {len(new)} cluster energies corrected with g(n), "
+              f"median E_new/E_old (E > 1 keV) = {med:.4f}")
 
     def get_threshold_for_moskita_data(self,hits,idx):
         

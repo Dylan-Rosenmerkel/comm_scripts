@@ -75,7 +75,14 @@ option_help = {
         "clusters_per_blank":"event rate per image, i.e. number of events to be pasted in each blank  image",
         "in_ADU"            :"unset If blank is not in ADU units",
         "only_pair_creation":"Set only pair eh creation, and do not simulate diffusion, both are contained in the same process",
-        "row_readtime"      :"Exposure time used in the dark current process, time to read a full row"
+        "row_readtime"      :"Exposure time used in the dark current process, time to read a full row",
+        ############### comm_scripts additions (ClusterFinder, GainNonlinearityProcess)
+        "algorithm"         :"ClusterFinder: 'waders' (threshold + connect, default) or 'agmx' (A_GMX model-based clustering)",
+        "agmx"              :"ClusterFinder with algorithm 'agmx': {crowded: auto|on|off, crowded_shapes: on|off,\n\t\t fe_candidates: true|false, temperature: K, first_row: input.image.id_row_start}",
+        "spr_threshold_auto":"ClusterFinder: true or {alpha, seed_e}: pixel/seed thresholds in electrons from the\n\t\t dark charge of each CCD (smallest k >= 2 with P(Poisson >= k) <= alpha); unresolved CCDs keep spr_threshold",
+        "model_file"        :"GainNonlinearityProcess: *_gain_vs_charge.json from 'gain_vs_charge measure' (g(n) per extension)",
+        "anchor"            :"GainNonlinearityProcess: 'comb' (g(n) incl. its low-charge gain, default) or 'fit' (keep the\n\t\t calibration gain at low charge)",
+        "temperature"       :"GainNonlinearityProcess: CCD temperature [K] for the energy per electron of the corrected energies"
         }
 
 
