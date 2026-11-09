@@ -73,6 +73,47 @@ class Periodogram(unittest.TestCase):
         self.assertAlmostEqual(gs[np.argmax(p)], 1.3, delta=0.002)
 
 
+class LowChargeAnchor(unittest.TestCase):
+    """low_charge_anchor: (1 e-, g_1e) is added only when g_1e is low and the 3-18 e- comb confirms the drop."""
+    MDL = dict(INTERP, a=1.300)
+
+    def test_no_anchor_when_g1e_agrees(self):
+        self.assertFalse(GVC.low_charge_anchor(self.MDL, 1.299)[1])
+
+    def test_anchor_without_check_as_before(self):
+        mdl, applied = GVC.low_charge_anchor(self.MDL, 1.25)
+        self.assertTrue(applied)
+        self.assertEqual(mdl["n_pts"][0], 1.0)
+        self.assertEqual(mdl["g_pts"][0], 1.25)
+
+    def test_flat_low_check_vetoes_a_biased_g1e(self):
+        """VR-3 like: g_1e biased low, the gain at 3-18 e- equals the first comb point -> model unchanged."""
+        check = dict(n=7.35, g=1.2995, significant=True)
+        self.assertFalse(GVC.low_charge_anchor(self.MDL, 1.25, check=check)[1])
+
+    def test_falling_low_check_adds_both_points(self):
+        """DM09 like: g_1e < g(3-18 e-) < first point -> (1, g_1e) and (7.35, g_check) are both added."""
+        check = dict(n=7.35, g=1.285, significant=True)
+        mdl, applied = GVC.low_charge_anchor(self.MDL, 1.25, check=check)
+        self.assertTrue(applied)
+        self.assertEqual(mdl["n_pts"][:3], [1.0, 7.35, 25])
+        self.assertEqual(mdl["g_pts"][:3], [1.25, 1.285, 1.300])
+        self.assertAlmostEqual(float(GVC.g_of(0.0, mdl)), 1.25)
+
+    def test_biased_high_g1e_uses_only_the_measured_point(self):
+        """DM27 EXT3 like: g_1e above the measured low-charge gain -> only (7.35, g_check), no anchor at g_1e."""
+        check = dict(n=7.35, g=1.285, significant=True)
+        mdl, applied = GVC.low_charge_anchor(self.MDL, 1.31, check=check)
+        self.assertTrue(applied)
+        self.assertEqual(mdl["n_pts"][:2], [7.35, 25])
+        self.assertEqual(mdl["g_pts"][0], 1.285)
+        self.assertAlmostEqual(float(GVC.g_of(0.0, mdl)), 1.285)
+
+    def test_insignificant_check_is_ignored(self):
+        check = dict(n=7.35, g=1.2995, significant=False)
+        self.assertTrue(GVC.low_charge_anchor(self.MDL, 1.25, check=check)[1])
+
+
 class CoherentPooling(unittest.TestCase):
     """_coherent_points: images converted with their own curves are pooled into one comb."""
 
