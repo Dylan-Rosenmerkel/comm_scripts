@@ -129,8 +129,11 @@ auto thresholds), `src/gain_dc_split.py` (choose_gain), `src/gain_vs_charge.py` 
 - **Not implemented**: pedestal methods other than "median" (gaus_fit, the lowest-peak finder is_highDC; a warning
   is recorded and the median is used), polynomial calibrations, skip (non-averaged) images, ClusterFinder options
   other than the defaults used in run_WADERs (method 1 k-radius, split_image_in_rows, masks, moskita),
-  BuildClusterMask (only an optional simple dilated mask with --save-fits), the `*_waders.fits.bz2` images and
-  panaSKImg's plots.
+  BuildClusterMask (only an optional simple dilated mask with --save-fits) and the `*_waders.fits.bz2` images.
+- **Plots** (`--plots`, always on in run_WADERs; `native_plots.py`): panaSKImg's --save-plots PDFs with the same
+  names: `_FitDarkCurrentProcess_DCfit_EXTn.pdf` (same numbers as panaSKImg's on DM09: chi2/ndf 521.9 / 87, gain
+  1.3409, sigma 0.1846 ADU; the dotted continuation beyond the fit window covers every plotted peak, not only the
+  next one) and `_PedestalSubtractionProcess_Baseline/Sigma_EXTn.pdf` (per row). matplotlib, ~0.1 s per plot.
 
 ### Branches
 

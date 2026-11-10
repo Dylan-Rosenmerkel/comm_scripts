@@ -606,13 +606,14 @@ def autoconfig_pedestal(r):
 def process_image(path, out_dir, curve=None, clusterer="threshold", thresholds="auto", anchor="comb",
                   ev_per_e=None, exts=None, autoconfig_args=(), panaskimg_json=None, props_from=None,
                   crowded="auto", crowded_shapes="on", first_row=None, save_fits=False, write=True, verbose=True,
-                  keep_arrays=False, gain_override=None, outputs=None, all_ext=True):
+                  keep_arrays=False, gain_override=None, outputs=None, all_ext=True, plots=False):
     """Process every CCD of one image (read once) and write OUT/panaSKImg_clustersRec_<stem>_ext<n>.root.
 
     outputs: [(key, clusterer, folder, curve)] -> one cluster file per CCD for each entry, all from the same pedestal
     and fits (run_WADERs: root/, root_gaincorr/, root_agmx/, ...); [] = fits only, no cluster files. Default (None):
     from curve / clusterer / out_dir below. all_ext: also process CCDs autoconfig flags as unresolved outliers
-    (flooded among good ones; run_WADERs skips them unless --all-ext).
+    (flooded among good ones; run_WADERs skips them unless --all-ext). plots: write panaSKImg's --save-plots PDFs
+    (DC fit, baseline and sigma per row; native_plots.py) to out_dir.
     curve: g(n) model JSON or run_WADERs gain_vs_charge/ folder (None: no correction); clusterer: 'threshold',
     'agmx' or 'both' (then OUT/root/ and OUT/root_agmx/); thresholds: 'auto' | 'sigma0' | (pix_e, seed_e);
     anchor: g(n) anchor ('comb' | 'fit', as gain_vs_charge); ev_per_e: eV per electron of the written energies
@@ -716,6 +717,8 @@ def process_image(path, out_dir, curve=None, clusterer="threshold", thresholds="
                    fits=dict({k: {p: v[p] for p in FIT_PARAMS + ["chi2", "ndf"]} for k, v in fits.items()},
                              final={p: fit[p] for p in FIT_PARAMS + ["chi2", "ndf"]}))
         info = info_branches(n, mu_row, sig_row, fit, ccd, nfile, h0)
+        if plots and write:
+            write_plots(os.path.join(out_dir, stem), ext, ps, active, fit, r, mu_row, sig_row, h0, args)
         t_cal = time.time()
         # ---- 5. / 6. one cluster file per output (clusterer x g(n) curve), from the same calibrated image
         thr = thresholds_for(thresholds, r, sigma0_e, mim["thr"] if mim else None)
@@ -802,6 +805,23 @@ def process_image(path, out_dir, curve=None, clusterer="threshold", thresholds="
     return summary
 
 
+def write_plots(base, ext, ps, active, fit, r, mu_row, sig_row, h0, args):
+    """panaSKImg's --save-plots PDFs of one CCD: base_FitDarkCurrentProcess_DCfit_<ext>.pdf (the fit),
+    base_PedestalSubtractionProcess_Baseline_<ext>.pdf and _Sigma_<ext>.pdf (per row)."""
+    import native_plots as NPL
+    s = fit["settings"]
+    data = ps[fit_mask(ps.shape, active, s)]
+    t0, t1, _ = readout_times(h0)
+    info = ([f"t_read={t1 - t0:.1f}s"] if t0 is not None else []) + [
+        f"t_exp={float(h0.get('EXPOSURE', 0.0)):.1f}s", f"bin: {h0.get('NPBIN', 1)}x{h0.get('NSBIN', 1)}",
+        f"frame: {h0.get('NROW', ps.shape[0])}x{h0.get('NCOL', ps.shape[1])}x{h0.get('NDCM', h0.get('NSKIPS', 1))}",
+        f"CCD-{ext}"]
+    NPL.dc_fit(f"{base}_FitDarkCurrentProcess_DCfit_{ext}.pdf", data, fit,
+               NPL.plot_range(s, r, getattr(args, "plot_peaks", 5)), comb_model, s["n_peaks"], info)
+    NPL.per_row(f"{base}_PedestalSubtractionProcess_Baseline_{ext}.pdf", mu_row, "Baseline (ADUs)")
+    NPL.per_row(f"{base}_PedestalSubtractionProcess_Sigma_{ext}.pdf", sig_row, "Sigma (ADUs)")
+
+
 def save_calibrated(path, e_img, rows, cols):
     """calibrated image [e-] and a cluster mask (cluster pixels dilated by one pixel; not panaSKImg's
     BuildClusterMask with its per-direction margins)."""
@@ -856,6 +876,7 @@ def main(argv=None):
                     "pedestal, fit and threshold settings (validation)")
     ap.add_argument("--crowded", default="auto", help="A_GMX crowded mode auto|on|off")
     ap.add_argument("--save-fits", action="store_true", help="also write the calibrated image + cluster mask")
+    ap.add_argument("--plots", action="store_true", help="also write panaSKImg's --save-plots PDFs (DC fit, baseline, sigma)")
     ap.add_argument("--autoconfig-args", default="", help='extra autoconfig options, e.g. "--ccd-cols 6200"')
     a = ap.parse_args(argv)
     thr = a.thresholds
@@ -863,7 +884,7 @@ def main(argv=None):
         thr = tuple(float(v) for v in thr.split(","))
     kw = dict(curve=a.curve, clusterer=a.clusterer, thresholds=thr, anchor=a.anchor, ev_per_e=a.ev_per_e,
               exts=a.ext, autoconfig_args=a.autoconfig_args.split(), panaskimg_json=a.panaskimg_json,
-              crowded=a.crowded, save_fits=a.save_fits)
+              crowded=a.crowded, save_fits=a.save_fits, plots=a.plots)
     imgs = expand_inputs(a.images)
     os.makedirs(a.out, exist_ok=True)
     t0 = time.time()

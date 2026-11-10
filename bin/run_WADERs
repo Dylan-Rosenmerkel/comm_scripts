@@ -229,7 +229,9 @@ engine (--engine, default native):
           the gain choice of gain_dc_split, cluster finding, and cluster files in panaSKImg's format (same trees and
           branches; MakeComposite and gain_vs_charge read them unchanged). No panaSKImg / pysimdamicm needed. Same
           output folders (root/, root_gaincorr*/, root_agmx*/, gain_vs_charge/, composite*/, summary.txt,
-          fit_quality.csv) plus native_summary.json (per CCD: fits, gain choice, pedestal, thresholds, timings).
+          fit_quality.csv) and plots (*_FitDarkCurrentProcess_DCfit_EXTn.pdf, *_PedestalSubtractionProcess_
+          Baseline/Sigma_EXTn.pdf, as panaSKImg --save-plots), plus native_summary.json (per CCD: fits, gain choice,
+          pedestal, thresholds, timings). Not written: *_waders.fits.bz2, json/, root/dc_fits/.
           Cluster thresholds (--thresholds): auto (default) in electrons from the CCD's dark charge (pixel >= k e-,
           seed >= 9.5 e-), sigma0 = panaSKImg's 10 / 30 x pedestal sigma (reproduces panaSKImg's clusters), or
           PIX,SEED. Validated against panaSKImg on DM09 Image 5 (docs/native_pipeline_validation.md).
@@ -1310,7 +1312,7 @@ def run_native(run):
     print(f"  {run.stamp()} " + ("fits only (--no-clusters)" if args.no_clusters else
                                  "cluster files: " + ", ".join(os.path.basename(d) + "/" for _, _, d, _ in outputs(images[0]))
                                  if images else "nothing to do"))
-    final = native_process(run, NP, [(img, dict(kw, outputs=outputs(img))) for img in images], failed)
+    final = native_process(run, NP, [(img, dict(kw, outputs=outputs(img), plots=True)) for img in images], failed)
     configs = {img: native_record(img, final[img]) for img in images if img in final}
     with open(os.path.join(run.out, "native_summary.json"), "w") as fh:
         json.dump([final[img] for img in images if img in final], fh, indent=1, default=str)
