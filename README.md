@@ -10,7 +10,8 @@ Scripts to analyse skipper-CCD images with panaSKImg (WADERs) without writing JS
 ```
 comm_scripts/
   README.md
-  bin/     commands to run          run_WADERs (and the alias runWADERs), run_AGMX (A_GMX clusters for a finished run)
+  bin/     commands to run          run_WADERs (and the alias runWADERs), run_superWADERs (run_WADERs with the native
+                                    engine as default), run_AGMX (A_GMX clusters for a finished run)
   src/     the pipeline modules     autoconfig_panaSKImg.py, gain_dc_split.py,
                                     gain_vs_charge.py, fit_quality.py, agmx_root.py (A_GMX -> panaSKImg cluster files)
   utils/   standalone helpers       compare_dcfit_vs_skips.py, split_clustersRec_by_ext.py,
@@ -38,7 +39,13 @@ function does what. Everything still open: `docs/notes/OPEN_ITEMS.md`.
 ```bash
 /path/to/comm_scripts/bin/run_WADERs image.fz          # one image
 /path/to/comm_scripts/bin/run_WADERs my_images.txt     # a list, one image path per line
+/path/to/comm_scripts/bin/run_superWADERs my_images.txt   # the same without panaSKImg (native engine)
 ```
+
+`run_superWADERs` is `run_WADERs --engine native`: comm_scripts' own pedestal, fits, clustering and cluster files in
+panaSKImg's format (src/native_pipeline.py), one process per image, with the same options, output folders and
+summary; cluster thresholds in electrons from the dark charge (`--thresholds auto`). Both commands take
+`--engine native|waders`. Details and validation: docs/native_pipeline.md.
 
 Results go to `WADERs_analysis_<image or list name>/` in the current folder (`-o` to choose another):
 

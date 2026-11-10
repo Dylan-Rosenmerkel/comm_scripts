@@ -926,7 +926,7 @@ def process_image(path, out_dir, curve=None, clusterer="threshold", thresholds="
         if n not in meas:
             continue
         r, ext = meas[n], f"EXT{n}"
-        rec = dict(ext=ext, resolved=bool(r["resolved"]), lam01=r.get("lam01") if r["resolved"] else None)
+        rec = dict(ext=ext, resolved=bool(r.get("resolved")), lam01=r.get("lam01") if r.get("resolved") else None)
         summary["ccds"][ext] = rec
         if r["dead"]:
             rec["skipped"] = "no CCD signal (autoconfig)"

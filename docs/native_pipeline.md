@@ -5,7 +5,8 @@ panaSKImg format (`panaSKImg_clustersRec_<image>_ext<n>.root`, trees `clustersRe
 which MakeComposite and the comm_scripts analysis code read unchanged. It replaces the cluster-producing part of
 `bin/run_WADERs` (autoconfig + gain_dc_split + panaSKImg runs + g(n) + agmx_root).
 
-Status: the default engine of `bin/run_WADERs` (`--engine native`; `--engine waders` runs panaSKImg). Validated
+Status: the default engine of `bin/run_superWADERs` (= `bin/run_WADERs --engine native`; `bin/run_WADERs` keeps
+panaSKImg as its default, and both commands take `--engine native|waders`). Validated
 against panaSKImg on the 3 DM09 Image_5 images (native_pipeline_validation.md), and on the board-103 skip-noise images
 with an overscan (2026-11-10: gain and noise equal to panaSKImg's on 80 CCD-images, median difference 0.00 %; up to
 2.8 % on unresolved 100-skip CCDs, where panaSKImg used a Gaussian-fit pedestal).

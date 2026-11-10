@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+"""run_superWADERs: run_WADERs with the native engine as the default (--engine native: comm_scripts' own pedestal,
+fits, clustering and panaSKImg-format cluster files, src/native_pipeline.py; no panaSKImg needed).
+
+    run_superWADERs <image.fz | list.txt> [-o PARENT] [-j N] [options]      (the options of run_WADERs)
+    run_superWADERs ... --engine waders                                      panaSKImg instead
+
+Same command line, output folders and summary as run_WADERs (which keeps panaSKImg as its default); see
+run_WADERs -h -v and docs/native_pipeline.md.
+"""
+import os
+import runpy
+import sys
+
+os.environ["RUN_SUPERWADERS"] = "1"          # read by run_WADERs (default engine, program name), also after its
+                                             # re-run inside a conda environment
+script = os.path.join(os.path.dirname(os.path.realpath(__file__)), "run_WADERs")
+sys.argv[0] = script
+runpy.run_path(script, run_name="__main__")

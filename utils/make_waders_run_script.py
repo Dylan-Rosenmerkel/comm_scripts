@@ -377,11 +377,12 @@ def strip_native_engine(text):
     """--engine native (src/native_pipeline.py) is comm_scripts-only: this version always runs panaSKImg. Removes
     the engine help, --engine / --thresholds, the dispatch and the native section, and the optional parameters added
     for it to env_ready / ensure_environment / step4_summary (so those read as before)."""
-    text = cut(text, "engine (--engine, default native):", "output (WADERs_analysis_<run name>/):", "")
-    text = cut(text, '    ap.add_argument("--engine", choices=("native", "waders"), default="native",',
+    text = cut(text, "engine (--engine; default waders for run_WADERs, native for run_superWADERs):",
+               "output (WADERs_analysis_<run name>/):", "")
+    text = cut(text, "    if SUPER:                                   # started as bin/run_superWADERs",
                '    ap.add_argument("--all-ext", action="store_true",', "")
     text = sub(text, "    check_engine(args, auto)\n", "")
-    text = sub(text, '    ensure_environment(args.env, needed=NATIVE_MODULES if args.engine == "native" else NEEDED_MODULES)  # may re-run\n'
+    text = sub(text, '    ensure_environment(args.env, prog=PROG, needed=NATIVE_MODULES if args.engine == "native" else NEEDED_MODULES)  # may re-run\n'
                      '    # this script inside the conda environment and exit\n',
                "    ensure_environment(args.env)          # may re-run this script inside the conda environment and exit\n")
     text = sub(text, '    if args.engine == "native":           # --engine native: steps 1-3d without panaSKImg\n'
