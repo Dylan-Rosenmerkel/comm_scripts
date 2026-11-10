@@ -1839,6 +1839,13 @@ def _histogram_peaks(rootfile, ext, g, lam_expected, max_peaks, tol):
     x = np.array([h.GetBinCenter(i) for i in range(1, h.GetNbinsX() + 1)])
     y = np.array([h.GetBinContent(i) for i in range(1, h.GetNbinsX() + 1)])
     f.Close()
+    return peaks_in_histogram(x, y, g, lam_expected, max_peaks, tol)
+
+
+def peaks_in_histogram(x, y, g, lam_expected, max_peaks, tol):
+    """The work of _histogram_peaks on a histogram given as bin centres x [ADU] and contents y (also used by the
+    native pipeline's --tune, which makes the histogram itself). Returns dict(zero, k, ratios, lam01)."""
+    x, y = np.asarray(x, float), np.asarray(y, float)
 
     def peak_count(pos):
         """Pixels in the peak at pos (ADU): histogram content within +-0.4 gain."""

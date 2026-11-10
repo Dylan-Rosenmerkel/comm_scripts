@@ -554,14 +554,16 @@ def _fit_memory(images, exts, extrap_factor, model, autoconfig_args):
     return out
 
 
-def _measure_clean_values(fits, images, e, cfg, g0, memory=None):
+def _measure_clean_values(fits, images, e, cfg, g0, memory=None, low=None):
     """Pixel values [ADU] of the clean rows of extension e, one array per image.
 
     Only pixels above 0.9 * N_EDGES[0] electrons are kept (the lowest charge window).
     memory: (kL, kR) readout-memory coefficients to remove first (remove_memory), or None.
-    Returns (list of arrays, number of clean rows, number of rows), rows summed over images.
+    low: (lo, hi) e- (LOW_CHECK) to also return the pixels in that window, one array per image.
+    Returns (list of arrays, number of clean rows, number of rows), rows summed over images,
+    and with low the list of low-window arrays as a fourth item.
     """
-    vals, nrows_clean, nrows = [], 0, 0
+    vals, lows, nrows_clean, nrows = [], [], 0, 0
     for f in images:
         x = ext_pixels(fits.open(f)[e].data, cfg, g0)
         if memory:
@@ -571,7 +573,9 @@ def _measure_clean_values(fits, images, e, cfg, g0, memory=None):
         nrows_clean += int(mask.sum())
         v = x[mask]
         vals.append(v[v > N_EDGES[0] * 0.9 * g0])
-    return vals, nrows_clean, nrows
+        if low:
+            lows.append(v[(v > low[0] * g0) & (v < low[1] * g0)])
+    return (vals, nrows_clean, nrows, lows) if low else (vals, nrows_clean, nrows)
 
 
 def _measure_comb_points(vals, g0, pairs=None):
@@ -616,24 +620,45 @@ def _measure_comb_points(vals, g0, pairs=None):
 
 
 LOW_RISE = 0.005    # low-charge anchor: g_1e this fraction (or more) below the first comb point -> add (1 e-, g_1e)
+LOW_CHECK = (3, 18)  # e-: comb window below the first one, measured to confirm that drop before anchoring
 
 
-def low_charge_anchor(mdl, g0, rise=LOW_RISE):
+def low_charge_anchor(mdl, g0, rise=LOW_RISE, check=None):
     """The interpolated model holds g constant below its first comb point (~26 e-, the windows start at 20 e-). On
-    most CCDs the gain is flat there, but on some it rises steeply at low charge (DM09 EXT2: 1.22 ADU/e- at 1 e-,
-    1.29 at 26 e-), and then pixels below ~26 e- get too few electrons (diffuse back-side Fe-55 -1.4 %). When the
-    single-electron gain g_1e is more than `rise` below the first point, (n = 1, g_1e) is added as a model point
-    (DM09 EXT2 back - front -1.40 -> +0.02 %, DM04-06 ACM109 EXT2 -1.03 -> -0.72 %, ACM110 EXT1 -1.18 -> -0.87 %);
-    otherwise the model is unchanged (adding it everywhere made flat-gain CCDs slightly worse). Returns (model,
-    applied)."""
+    most CCDs the gain is flat there, but on some it changes steeply at low charge (DM09 EXT2: 1.22 ADU/e- at 1 e-,
+    1.24 at 7 e-, 1.29 at 26 e-), and then pixels below ~26 e- get the wrong number of electrons (diffuse back-side
+    Fe-55 -1.4 %). Returns (model, applied).
+
+    check: the comb point measured in LOW_CHECK (3-18 e-, n = sqrt(3 * 18), _measure_comb_points), or None.
+    - check significant and within rise / 2 of the first comb point: the gain is flat below the first window, the
+      model is unchanged (g_1e can be biased low: VR-3 VDD-20 dH+2, ACM 125 EXT1, g_1e 1.2955 while the found
+      peaks at 1-20 e- are evenly spaced at the first comb point, 1.346).
+    - check significant and further away: the measured point (n_check, g_check) is added; (1 e-, g_1e) is added
+      below it as well when g_1e continues the same trend (g_1e < g_check). g_1e can also be biased high (DM27 EXT3,
+      ACM 109: g_1e 1.270, comb 1.238 at 3-18 e-, 1.2547 at 26 e-), then only the measured point is used.
+      Ka on 2025-09-23 Image_8 / PD06 (A_GMX, all / back-side events, eV): DM27 EXT3 -22 -> -12 / -50 -> -20,
+      PD06 A EXT4 -13 -> -10 / -36 -> -23, DM07 EXT2 -13 -> -11 / -24 -> -17; DM09 EXT2 (both points) and the
+      other changed CCDs within 1-2 eV; widths unchanged.
+    - no usable check: as before, (1 e-, g_1e) is added when g_1e is more than `rise` below the first point (DM09
+      EXT2 back - front -1.40 -> +0.02 %, DM04-06 ACM109 EXT2 -1.03 -> -0.72 %, ACM110 EXT1 -1.18 -> -0.87 %); adding
+      it everywhere made flat-gain CCDs slightly worse."""
     if model_form(mdl) != "interpolated" or mdl["n_pts"][0] <= 1.0 or not np.isfinite(g0):
         return mdl, False
-    if g0 >= (1.0 - rise) * mdl["g_pts"][0]:
+    first = mdl["g_pts"][0]
+    if check and check.get("significant") and np.isfinite(check.get("g", np.nan)):
+        if abs(check["g"] / first - 1.0) <= rise / 2:
+            return mdl, False
+        n_pts = [float(check["n"])] + list(mdl["n_pts"])
+        g_pts = [float(check["g"])] + list(mdl["g_pts"])
+        if g0 < check["g"]:
+            n_pts, g_pts = [1.0] + n_pts, [float(g0)] + g_pts
+        return dict(mdl, n_pts=n_pts, g_pts=g_pts, a=g_pts[0]), True
+    if g0 >= (1.0 - rise) * first:
         return mdl, False
     return dict(mdl, n_pts=[1.0] + list(mdl["n_pts"]), g_pts=[float(g0)] + list(mdl["g_pts"]), a=float(g0)), True
 
 
-def _measure_fit(pts, g0, nrows_clean, nrows, model, extrap_factor, low_pts=None):
+def _measure_fit(pts, g0, nrows_clean, nrows, model, extrap_factor, low_pts=None, check=None):
     """Result dict of one extension: the points and, with >= 4 significant points, the model.
 
     The curve is marked not ok (no correction) when the comb was measured only below 400 e-
@@ -646,9 +671,14 @@ def _measure_fit(pts, g0, nrows_clean, nrows, model, extrap_factor, low_pts=None
     if len(good) >= 4:
         low_good = [p for p in low_pts if p["significant"]] if low_pts is not None else None
         mdl, lin, nmax, rms = fit_model(good, model, extrap_factor, low=low_good)
-        mdl, anchored = low_charge_anchor(mdl, g0)
-        if anchored:
-            res["low_charge_anchor"] = dict(g_1e=float(g0), g_first=float(mdl["g_pts"][1]), n_first=float(mdl["n_pts"][1]))
+        n_before = len(mdl.get("n_pts", []))
+        mdl, anchored = low_charge_anchor(mdl, g0, check=check)
+        if check:
+            res["low_charge_check"] = dict(check, anchored=bool(anchored))
+        if anchored:                                 # g_first / n_first: the first comb point (above the added points)
+            k = len(mdl["n_pts"]) - n_before
+            res["low_charge_anchor"] = dict(g_1e=float(g0), g_first=float(mdl["g_pts"][k]), n_first=float(mdl["n_pts"][k]),
+                                            added=[[float(n), float(g)] for n, g in zip(mdl["n_pts"][:k], mdl["g_pts"][:k])])
         b = lin.get("b_weighted", lin["b"])
         res.update(ok=True, model=mdl, linear=lin, rms=rms, n_max_measured=nmax,
                    drop_at_1000=float(1 - g_of(1000.0, mdl) / g_of(0.0, mdl)),
@@ -934,10 +964,12 @@ def measure(images, exts=None, verbose=True, extrap_factor=3.0, model="smooth", 
                 print(f"  {name}: skipped ({results[name]['reason']})")
             continue
         g0 = float(np.mean(g0s))
-        vals, nrows_clean, nrows = _measure_clean_values(fits, images, e, cfg, g0, (memory or {}).get(name))
+        vals, nrows_clean, nrows, lows = _measure_clean_values(fits, images, e, cfg, g0, (memory or {}).get(name),
+                                                               low=LOW_CHECK)
         pts = _measure_comb_points(vals, g0, window_pairs(model))
         low = _measure_comb_points(vals, g0) if model == "smooth" else None
-        res = _measure_fit(pts, g0, nrows_clean, nrows, model, extrap_factor, low)
+        check = _measure_comb_points(lows, g0, [LOW_CHECK])
+        res = _measure_fit(pts, g0, nrows_clean, nrows, model, extrap_factor, low, check[0] if check else None)
         res["g_1e_images"] = len(g0s)
         results[name] = res
         if verbose:

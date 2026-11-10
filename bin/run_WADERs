@@ -234,7 +234,9 @@ engine (--engine, default native):
           pedestal, thresholds, timings). Not written: *_waders.fits.bz2, json/, root/dc_fits/.
           Cluster thresholds (--thresholds): auto (default) in electrons from the CCD's dark charge (pixel >= k e-,
           seed >= 9.5 e-), sigma0 = panaSKImg's 10 / 30 x pedestal sigma (reproduces panaSKImg's clusters), or
-          PIX,SEED. Validated against panaSKImg on DM09 Image 5 (docs/native_pipeline_validation.md).
+          PIX,SEED. Every pedestal method of panaSKImg (median, Gaussian fit, lowest-peak finder for a charged
+          overscan) and --tune are done natively. Validated against panaSKImg (docs/native_pipeline.md,
+          docs/native_pipeline_validation.md).
   waders  panaSKImg (pysimdamicm) once per CCD, as described below.
 
 output (WADERs_analysis_<run name>/):
@@ -1185,8 +1187,6 @@ def check_engine(args, auto):
             sys.exit("run_WADERs: --thresholds belongs to --engine native; with --engine waders give the thresholds "
                      "with --autoconfig-args \"--cluster-threshold-e PIX SEED\" (or auto)")
         return
-    if args.tune:
-        sys.exit("run_WADERs: --tune is not available with --engine native yet; use --engine waders")
     if "--cluster-threshold-e" in auto:
         sys.exit("run_WADERs: with --engine native the cluster thresholds are set with --thresholds "
                  "(auto, sigma0 or PIX,SEED), not --autoconfig-args --cluster-threshold-e")
@@ -1207,7 +1207,7 @@ def native_record(img, s):
             notes.append(f"  {e}: {c['gain_note']}")
             if c.get("pedestal_note"):
                 notes.append(f"  {e}: NOTE {c['pedestal_note']}")
-        else:
+        elif not c.get("outlier"):              # skipped outliers are listed by step4_summary (r["skipped"])
             notes.append(f"  {e}: not run ({c.get('skipped')})")
     return dict(stem=s["stem"], src=img, orig=img, summary=s, notes=notes,
                 fits={"dc": {e: c["fits"]["dc"] for e, c in ccds.items() if "fits" in c and "dc" in c["fits"]}},
@@ -1271,7 +1271,8 @@ def run_native(run):
     print(f"run_WADERs (engine native, {NP.VERSION}): {len(run.images)} image(s) -> {run.out}   "
           f"({args.jobs} images at a time; thresholds {args.thresholds})")
     kw = dict(thresholds=thr, anchor=args.gain_anchor, autoconfig_args=shlex.split(args.autoconfig_args),
-              crowded=args.agmx_crowded, crowded_shapes=args.agmx_crowded_shapes, all_ext=args.all_ext, verbose=False)
+              crowded=args.agmx_crowded, crowded_shapes=args.agmx_crowded_shapes, all_ext=args.all_ext, tune=args.tune,
+              verbose=False)
     failed = []
     images = list(run.images)
 

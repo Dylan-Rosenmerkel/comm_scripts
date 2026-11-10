@@ -126,8 +126,24 @@ auto thresholds), `src/gain_dc_split.py` (choose_gain), `src/gain_vs_charge.py` 
   the WADERs+g(n) files use epsilon(T) = 3.7486 eV. The native pipeline uses epsilon(T) for both clusterers
   whenever g(n) is applied (+0.23 % on the A_GMX energies relative to panaSKImg's root_agmx files).
 - **Thresholds**: default `auto` (above); `--thresholds sigma0` gives panaSKImg's rule.
-- **Not implemented**: pedestal methods other than "median" (gaus_fit, the lowest-peak finder is_highDC; a warning
-  is recorded and the median is used), polynomial calibrations, skip (non-averaged) images, ClusterFinder options
+- **Pedestal methods** (`pedestal()`): all of PedestalSubtractionProcess's row methods with the settings
+  autoconfig chooses per CCD (`set_pedestal`): median / mean (sigma = std or MAD), and the Gaussian fit per row
+  (`gaus_fit`: default / freedman / sturge / manual bins, mu in the 10-90 % quantiles, sigma in 0.5-1.5 std;
+  scipy least squares), with the lowest-peak start for a charged overscan (`is_highDC`: the first local maximum of
+  the histogram). Tail masks (cut_right_tail / cut_left_tail, n_sigma_to_mask) and the fallback to the active
+  region for < 3 overscan columns as panaSKImg. Checked per row against panaSKImg's info tree (2026-11-10):
+  gaus_fit (freedman, 8 unresolved 100-skip CCDs, board 103): |diff| median 1e-5 ADU, max 1.6e-4 ADU (Minuit's
+  tolerance); lowest peak (L2 surface run, EXT2 of 2 images): 996 of 1000 rows within 1e-4 ADU, the 4 others
+  rows with a large track in the overscan (sigma 6-221 ADU). For the lowest-peak case the peak search and the fit
+  are done with ROOT itself (TH1::Interpolate / TF1::Derivative / Fit 'Q EM B'): with ~150 overscan pixels in 150
+  bins the derivative is 0 between equal bins up to floating-point residue (whose sign decides; a Python replay
+  agrees on 79 % of the rows) and the chi2 has several minima (which one panaSKImg reports is where Minuit stops).
+- **--tune** (`tune_ccd`): autoconfig's tune_pedestal + refine_peaks with native pedestals and fits instead of
+  panaSKImg runs: the same candidates (chosen / median / Gaussian fit or lowest peak), score (fit_quality total
+  relative error + 1 per parameter at a limit), wide scan and window rules (autoconfig.peaks_in_histogram,
+  apply_peak_window, gain_dc_split.sync_from_tuned). L2 surface run (2 images, 6 CCDs): same candidate chosen on
+  every CCD, scores equal to 3 decimals, same windows, same final fits; 9 s instead of 58 s.
+- **Not implemented**: polynomial calibrations, skip (non-averaged) images, ClusterFinder options
   other than the defaults used in run_WADERs (method 1 k-radius, split_image_in_rows, masks, moskita),
   BuildClusterMask (only an optional simple dilated mask with --save-fits) and the `*_waders.fits.bz2` images.
 - **Plots** (`--plots`, always on in run_WADERs; `native_plots.py`): panaSKImg's --save-plots PDFs with the same
@@ -169,8 +185,7 @@ runs before.
 ## Open issues
 
 - fSTD from Minuit cannot be reproduced exactly (see above); the native value is the converged one.
-- Only the "median" pedestal; images with a charged overscan (autoconfig's is_highDC) or gaus_fit pedestals are
-  processed with the median (flagged in native_summary.json / native_config).
+- Pedestal methods and --tune: see above (all of panaSKImg's row methods; checked per row against panaSKImg).
 - The clustering region is the whole active region, as panaSKImg (bad columns and the first rows are only masked
   in the dark-current fit). Hot columns therefore still give clusters, as before.
 - Unresolved CCDs (no electron counts) keep the sigma0 threshold rule in `auto` mode.

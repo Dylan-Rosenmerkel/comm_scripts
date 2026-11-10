@@ -168,6 +168,180 @@ def pedestal_rows(raw, region, n_sigma_mask=1.5):
     return mu, sig
 
 
+def _nbins(x, method, manual):
+    """number of histogram bins of panaSKImg's fit_gaussian (absp.py): sturge, freedman, default or manual"""
+    span = float(x.max() - x.min())
+    if method == "sturge":
+        return int(1 + np.ceil(np.log2(x.size)))
+    if method == "freedman":
+        iqr = float(np.quantile(x, 0.75) - np.quantile(x, 0.25))
+        return int(np.ceil(span / (2 * iqr / x.size ** (1 / 3)))) if iqr > 0 else 10
+    if method == "manual":
+        return int(manual)
+    return int(0.5 * span) if span > 5 else 10
+
+
+_PEAK_ID = [0]
+
+
+class _quiet_fd1:
+    """Silence file descriptor 1 (C-level printf, e.g. TMinuit) inside a with block."""
+    def __enter__(self):
+        sys.stdout.flush()
+        self.saved = os.dup(1)
+        self.null = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(self.null, 1)
+
+    def __exit__(self, *exc):
+        sys.stdout.flush()
+        os.dup2(self.saved, 1)
+        os.close(self.saved)
+        os.close(self.null)
+
+
+def _root_first_peak(x, nb):
+    """(centre of the bin, centre of the bin before, bin width) of the first local maximum that panaSKImg's
+    fit_gaussian (is_highDC) finds: the first bin where TF1::Derivative of TH1::Interpolate changes sign from + to -.
+    Computed with ROOT itself: between two bins of equal content the derivative is 0 up to floating-point residue,
+    whose sign decides; a Python replay of the arithmetic agrees on only ~80 % of the rows, ROOT's own call on all.
+    None if there is no such bin."""
+    import ROOT
+    _PEAK_ID[0] += 1
+    lo, hi = float(x.min()), float(x.max())
+    th = ROOT.TH1F(f"native_ped_{_PEAK_ID[0]}", "", int(nb), lo, hi)
+    th.SetDirectory(0)
+    for q in x:
+        th.Fill(float(q))
+    dh = ROOT.TF1(f"native_dped_{_PEAK_ID[0]}", lambda xx, p: th.Interpolate(xx[0]), lo, hi, 0)
+    prev, out = 0.0, None
+    for i in range(1, int(th.GetEntries()) + 1):
+        dv = dh.Derivative(th.GetBinCenter(i))
+        if dv < 0 and prev > 0:
+            out = (th.GetBinCenter(i), th.GetBinCenter(i - 1), th.GetBinWidth(1))
+            break
+        prev = dv
+    del dh, th
+    return out
+
+
+def _root_gaus_fit(x, nb, p0, mu_lim, sd_lim):
+    """(mu, sigma) of panaSKImg's fit_gaussian done with ROOT: TH1F of nb bins over [min, max], TF1 'gaus' from p0
+    with the mu / sigma limits, Fit 'Q EM B'."""
+    import ROOT
+    _PEAK_ID[0] += 1
+    th = ROOT.TH1F(f"native_pedfit_{_PEAK_ID[0]}", "", int(nb), float(x.min()), float(x.max()))
+    th.SetDirectory(0)
+    for q in x:
+        th.Fill(float(q))
+    ff = ROOT.TF1(f"native_gaus_{_PEAK_ID[0]}", "gaus")
+    ff.SetParameters(float(p0[0]), float(p0[1]), float(p0[2]))
+    ff.SetParLimits(1, float(mu_lim[0]), float(mu_lim[1]))
+    ff.SetParLimits(2, float(sd_lim[0]), float(sd_lim[1]))
+    with _quiet_fd1():                     # Minuit's IMPROVE ('M') prints "NEW MINIMUM FOUND" banners despite 'Q'
+        th.Fit(ff, "Q EM B N")
+    out = float(ff.GetParameter(1)), float(ff.GetParameter(2))
+    del ff, th
+    return out
+
+
+def gaus_pedestal(x, nb_method="default", nb_manual=0, lowest_peak=False):
+    """(mu, sigma) [ADU] of one row's pixels as panaSKImg's fit_gaussian (method gaus_fit): histogram of nb bins
+    between the smallest and the largest value (ROOT: the largest value itself falls in the overflow bin), Gaussian
+    chi2 fit (Neyman errors, empty bins left out, model at the bin centres; ROOT 'Q EM B'), start norm = n / nb.
+    Limits: mu in the 10-90 % quantiles, sigma in 0.5-1.5 x std, start mu = median, sigma = std. lowest_peak
+    (is_highDC): the first local maximum of the histogram (the derivative of the linear interpolation between bin
+    centres changes sign) starts the fit instead: mu between the smallest value and that bin + 3 bins, sigma
+    (peak - smallest value) / 4 in [/10, /2] - the zero-electron peak when the overscan holds charge. Falls back to
+    the median / std if the histogram or the limits are degenerate."""
+    x = np.asarray(x, float)
+    lo, hi = float(x.min()), float(x.max())
+    nb = _nbins(x, nb_method, nb_manual)
+    sd = float(np.std(x))
+    if nb < 3 or hi <= lo or sd <= 0:
+        return float(np.median(x)), sd
+    y, e = np.histogram(x[x < hi], nb, (lo, hi))
+    c = 0.5 * (e[1:] + e[:-1])
+    w = e[1] - e[0]
+    q10, q90 = np.percentile(x, [10, 90])
+    mu0, pk = None, None
+    if lowest_peak:
+        pk = _root_first_peak(x, nb)
+        if pk is not None:
+            ci, cprev, wr = pk
+            mu0, mu_lo, mu_hi = 0.5 * (ci + cprev), lo, ci + 3 * wr
+            sd, sd_lo, sd_hi = (ci - lo) / 4, (ci - lo) / 10, (ci - lo) / 2
+    if mu0 is None:
+        mu0, mu_lo, mu_hi = float(np.median(x)), float(q10), float(q90)
+        sd_lo, sd_hi = 0.5 * sd, 1.5 * sd
+    use = y > 0
+    if use.sum() < 3 or not (mu_hi > mu_lo and sd_hi > sd_lo):
+        return float(np.median(x)), float(np.std(x))
+    if lowest_peak and pk is not None:
+        # a few hundred overscan pixels in 150 bins: the chi2 has several minima, and which one panaSKImg reports is
+        # where Minuit stops from this start -> the same fit with ROOT (as panaSKImg: 'Q EM B', same start and limits)
+        return _root_gaus_fit(x, nb, (x.size / nb, mu0, sd), (mu_lo, mu_hi), (sd_lo, sd_hi))
+    cu, yu = c[use], y[use].astype(float)
+    p0 = [x.size / nb, float(np.clip(mu0, mu_lo, mu_hi)), float(np.clip(sd, sd_lo, sd_hi))]
+    resid = lambda p: (yu - p[0] * np.exp(-0.5 * ((cu - p[1]) / p[2]) ** 2)) / np.sqrt(yu)
+    try:
+        res = optimize.least_squares(resid, p0, bounds=([-np.inf, mu_lo, sd_lo], [np.inf, mu_hi, sd_hi]),
+                                     x_scale="jac", max_nfev=2000)
+        return float(res.x[1]), float(res.x[2])
+    except ValueError:
+        return float(np.median(x)), float(np.std(x))
+
+
+def pedestal(raw, active, ovs, cfg, ext):
+    """Per-row pedestal and sigma [ADU] with panaSKImg's PedestalSubtractionProcess settings cfg (axis 'row'):
+    region = overscan (in_overscan and >= 3 overscan columns) or active region; pixels more than n_sigma_to_mask x
+    MAD (unscaled) from the region's median are masked on the side(s) cut_right_tail / cut_left_tail (none if
+    n_sigma_to_mask <= 0; 100 when the overscan is too small and it was < 0); then per row: median or mean (sigma =
+    std, or MAD with use_mad), or the Gaussian fit (gaus_fit; is_highDC[ext] -> lowest-peak start).
+    Returns (mu_row, sigma_row, description)."""
+    method = str(cfg.get("method", "gaus_fit")).lower()
+    method = "gaus_fit" if method in ("gauss_fit", "gaussian_fit", "gaus_fit") else method
+    nsig = float(cfg.get("n_sigma_to_mask", -1))
+    in_ovs = bool(cfg.get("in_overscan", True))
+    if in_ovs and ovs.any(axis=0).sum() < 3:
+        in_ovs = False
+        if nsig < 0:
+            nsig = 100.0
+    region = ovs if in_ovs else active
+    high = cfg.get("is_highDC", False)
+    high = bool(high.get(ext, False)) if isinstance(high, dict) else bool(high)
+    if method == "median" and not cfg.get("use_mad", True) and bool(cfg.get("cut_right_tail", True)) \
+            and not bool(cfg.get("cut_left_tail", True)):
+        mu, sig = pedestal_rows(raw, region, nsig)          # the validated fast path (run_WADERs' usual case)
+        return mu, sig, f"median of the {'overscan' if in_ovs else 'active region'} per row"
+    keep = region.copy()
+    if nsig > 0:
+        v = raw[region]
+        med = np.median(v)
+        mad = np.median(np.abs(v - med))
+        dev = raw - med
+        if cfg.get("cut_right_tail", True):
+            keep &= dev <= nsig * mad
+        if cfg.get("cut_left_tail", True):
+            keep &= dev >= -nsig * mad
+    mu = np.full(raw.shape[0], np.nan)
+    sig = np.full(raw.shape[0], np.nan)
+    for k in range(raw.shape[0]):
+        x = raw[k][keep[k]]
+        if x.size < 2:
+            continue
+        if method == "gaus_fit":
+            mu[k], sig[k] = gaus_pedestal(x, str(cfg.get("hist_nbins_method", "default")).lower(),
+                                          cfg.get("hist_nbins", 0), high)
+        else:
+            m = float(np.median(x) if method == "median" else np.mean(x))
+            mu[k] = m
+            sig[k] = float(np.median(np.abs(x - m)) if cfg.get("use_mad", True) else np.std(x))
+    where = "overscan" if in_ovs else "active region"
+    desc = {"gaus_fit": f"Gaussian fit per row ({cfg.get('hist_nbins_method', 'default')} bins"
+                        + (", lowest-peak start" if high else "") + f") in the {where}"}.get(method, f"{method} of the {where} per row")
+    return mu, sig, desc
+
+
 # =============================================================================
 # dark-current fit and gain choice
 # =============================================================================
@@ -186,18 +360,19 @@ def autoconfig_fit_settings(results, args):
     """The per-CCD FitDarkCurrentProcess settings autoconfig --per-ext writes, for the two fits of gain_dc_split:
     {'gain': {ext: settings}, 'dc': {ext: settings}} ('gain' = --peaks all, 'dc' = --peaks auto, i.e. the
     Poisson-like peaks with the module-wide number of peaks of choose_peaks)."""
-    out = {}
+    out = {"json": {}, "r": {}}                 # also each CCD's JSON and measurement copy (for --tune)
     for mode, peaks in (("gain", "all"), ("dc", args.peaks)):
         rs = copy.deepcopy(results)
         a = copy.copy(args)
         a.peaks = peaks
         A.choose_peaks(rs, a)
-        out[mode] = {}
+        out[mode], out["json"][mode], out["r"][mode] = {}, {}, {}
         for r in rs:
             r["fit"] = A.fit_settings(r)
             j = json.loads(A.REFERENCE_JSON)
             A.set_dark_current_fit(j, [r])
             out[mode][r["ext"]] = ext_settings(j["process"]["FitDarkCurrentProcess"], r["ext"])
+            out["json"][mode][r["ext"]], out["r"][mode][r["ext"]] = j, r
     return out
 
 
@@ -318,6 +493,85 @@ def gain_noise_dc(ps, active, ext, r, fs, mimic=None):
     else:
         final = fits["dc"]
     return final, note, fits, held
+
+
+def _at_limit(fit, s):
+    """autoconfig.at_limit on a native fit: mu at a limit or sigma at its upper limit."""
+    mu, sg = fit["mu"][0], fit["sigma"][0]
+    return abs(mu - s["mu_min"]) < 1e-3 or abs(mu - s["mu_max"]) < 1e-3 or abs(sg - s["sigma_max"]) < 1e-3 * s["sigma_max"]
+
+
+def tune_ccd(raw, active, ovs, ext, r, fs, args):
+    """--tune for one resolved CCD, natively (autoconfig tune_pedestal + refine_peaks, with native pedestals and fits
+    in place of panaSKImg runs; same candidates, score and window rules):
+      1. pedestal candidates: autoconfig's choice ('chosen'), the per-row 'median', and the other of Gaussian fit /
+         lowest-peak finder; each is fitted with the CCD's dark-current settings and ranked by
+         fit_quality.quality's total relative error (+1 for mu or sigma at a limit);
+      2. with the best pedestal a wide fit (-2.5 to --max-peaks + 0.5 gains) gives the histogram in which the zero
+         peak and the Poisson-like peaks are found (autoconfig.peaks_in_histogram); the mu limits and window are
+         centred on them (autoconfig.apply_peak_window; --peaks auto keeps the module-wide number of peaks);
+      3. the all-peaks (gain) settings follow (gain_dc_split.sync_from_tuned).
+    Returns (pedestal settings, {'gain': {ext: settings}, 'dc': {ext: settings}}, report lines)."""
+    import contextlib
+    import io
+    import fit_quality as FQ
+    lines = []
+    start = dict(gain=r["gain"], sigma=r.get("sigma_raw", r["sigma"]), lam=r.get("lam01") or r.get("lam") or 0.1)
+    ped0 = autoconfig_pedestal(r)
+    cands = {"chosen": {}, "median": {"method": "median", "n_sigma_to_mask": 1.5}}
+    if ped0.get("is_highDC"):
+        cands["gausfit"] = {"is_highDC": {k: False for k in ped0["is_highDC"]}, "hist_nbins_method": "manual",
+                            "hist_nbins": 100000, "n_sigma_to_mask": 1.5}
+    else:
+        cands["highDC"] = {"hist_nbins_method": "manual", "hist_nbins": 150, "n_sigma_to_mask": -1,
+                           "is_highDC": {ext: True}}
+    s = fs["dc"][ext]
+    table = []
+    for name, upd in cands.items():
+        ped = copy.deepcopy(ped0)
+        ped.update(upd)
+        if name == "median":
+            ped.pop("is_highDC", None)
+        mu_row, _, _ = pedestal(raw, active, ovs, ped, ext)
+        ps = raw - np.nan_to_num(mu_row, nan=0.0)[:, None]
+        try:
+            fit = fit_dark_current(ps, fit_mask(ps.shape, active, s), s, start)
+            q = FQ.quality(fit, r.get("lam01"))
+            sc = q["score"] + (1.0 if _at_limit(fit, s) else 0.0)
+        except Exception as e:                    # a candidate that cannot be fitted is not chosen
+            q, sc = {"error": str(e)}, math.inf
+        table.append((sc, name, ped, ps, q))
+    table.sort(key=lambda v: v[0])
+    lines.append("pedestal tuning (score = total relative fit error, lower is better):")
+    for sc, name, _, _, q in table:
+        lines.append(f"  {name:8s} " + ("failed" if not np.isfinite(sc) else
+                     f"score {sc:7.3f}  chi2 {q['chi2ndf']:.1f} DC {q['dc']:.3f}+-{q['dc_err_s']:.3f} ({q['dc_bias'] or 0:+.3f})"))
+    best_sc, best, ped_best, ps, _ = table[0]
+    lines.append(f"  -> using '{best}' pedestal settings")
+    # ---- window refinement on the histogram of a wide fit
+    g = r["gain"]
+    scan = dict(s, x_min=round(-2.5 * g, 2), x_max=round((args.max_peaks + 0.5) * g, 2),
+                n_peaks=min(args.max_peaks + 3, 20))
+    mask = fit_mask(ps.shape, active, scan)
+    data = ps[mask]
+    nb = int(abs(scan["x_max"] - scan["x_min"]) / scan["binning_size"])
+    y, e = np.histogram(data[(data > scan["x_min"]) & (data < scan["x_max"])], nb, (scan["x_min"], scan["x_max"]))
+    hp = A.peaks_in_histogram(0.5 * (e[1:] + e[:-1]), y, g, r["lam"], args.max_peaks, args.poisson_tol)
+    lines.append(f"peak refinement: zero peak at {hp['zero']:+.2f} ADU, "
+                 + " ".join(f"{v:.2f}" for v in hp["ratios"][:8]) + f"  -> {hp['k']} Poisson-like peaks")
+    rd = copy.deepcopy(fs["r"]["dc"][ext])
+    a = copy.copy(args)
+    if args.peaks == "auto" and rd.get("k_fit"):
+        a.peaks = str(rd["k_fit"])                 # keep the module-wide number of peaks
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        jd = A.apply_peak_window(fs["json"]["dc"][ext], [rd], {ext: hp}, a)
+    lines += [l for l in buf.getvalue().splitlines() if l.strip()]
+    jd["process"]["PedestalSubtractionProcess"] = ped_best
+    jg = copy.deepcopy(fs["json"]["gain"][ext])
+    GDS.sync_from_tuned(jg, jd, [ext])
+    return ped_best, {"gain": {ext: ext_settings(jg["process"]["FitDarkCurrentProcess"], ext)},
+                      "dc": {ext: ext_settings(jd["process"]["FitDarkCurrentProcess"], ext)}}, lines
 
 
 # =============================================================================
@@ -606,14 +860,15 @@ def autoconfig_pedestal(r):
 def process_image(path, out_dir, curve=None, clusterer="threshold", thresholds="auto", anchor="comb",
                   ev_per_e=None, exts=None, autoconfig_args=(), panaskimg_json=None, props_from=None,
                   crowded="auto", crowded_shapes="on", first_row=None, save_fits=False, write=True, verbose=True,
-                  keep_arrays=False, gain_override=None, outputs=None, all_ext=True, plots=False):
+                  keep_arrays=False, gain_override=None, outputs=None, all_ext=True, plots=False, tune=False):
     """Process every CCD of one image (read once) and write OUT/panaSKImg_clustersRec_<stem>_ext<n>.root.
 
     outputs: [(key, clusterer, folder, curve)] -> one cluster file per CCD for each entry, all from the same pedestal
     and fits (run_WADERs: root/, root_gaincorr/, root_agmx/, ...); [] = fits only, no cluster files. Default (None):
     from curve / clusterer / out_dir below. all_ext: also process CCDs autoconfig flags as unresolved outliers
     (flooded among good ones; run_WADERs skips them unless --all-ext). plots: write panaSKImg's --save-plots PDFs
-    (DC fit, baseline and sigma per row; native_plots.py) to out_dir.
+    (DC fit, baseline and sigma per row; native_plots.py) to out_dir. tune: --tune on every resolved CCD (tune_ccd:
+    pedestal method by total fit error, window on the fitted histogram).
     curve: g(n) model JSON or run_WADERs gain_vs_charge/ folder (None: no correction); clusterer: 'threshold',
     'agmx' or 'both' (then OUT/root/ and OUT/root_agmx/); thresholds: 'auto' | 'sigma0' | (pix_e, seed_e);
     anchor: g(n) anchor ('comb' | 'fit', as gain_vs_charge); ev_per_e: eV per electron of the written energies
@@ -685,20 +940,22 @@ def process_image(path, out_dir, curve=None, clusterer="threshold", thresholds="
         active, ovs = regions(raw.shape, geo)
         # ---- 2. pedestal: the settings autoconfig --per-ext chooses for this CCD (or the panaSKImg JSON's);
         #         overscan if they ask for it and there is one (>= 3 columns)
-        ped_cfg = mim["ped"] if mim else autoconfig_pedestal(r)
-        use_ovs = bool(ped_cfg.get("in_overscan", False)) and ovs.any(axis=0).sum() >= 3 and not r.get("ped_active")
+        ped_cfg = dict(mim["ped"] if mim else autoconfig_pedestal(r))
+        if r.get("ped_active"):                   # autoconfig's fallback: pedestal from the active region
+            ped_cfg["in_overscan"] = False
+        fs_ccd = fs
+        if tune and r["resolved"] and not mim:
+            ped_cfg, fs_ccd, rec["tune"] = tune_ccd(raw, active, ovs, ext, r, fs, args)
+        mu_row, sig_row, ped_desc = pedestal(raw, active, ovs, ped_cfg, ext)
+        use_ovs = "overscan" in ped_desc
         high_dc = ped_cfg.get("is_highDC")
         high_dc = bool(high_dc.get(ext)) if isinstance(high_dc, dict) else bool(high_dc)
         rec["pedestal"] = dict(method=ped_cfg.get("method", "median"), lowest_peak=high_dc,
-                               region="overscan" if use_ovs else "active")
-        if ped_cfg.get("method", "median") != "median" or high_dc:
-            rec["pedestal_note"] = (f"pedestal method {ped_cfg.get('method')}{' (lowest peak)' if high_dc else ''} "
-                                    f"not implemented natively: median used")
-        mu_row, sig_row = pedestal_rows(raw, ovs if use_ovs else active, float(ped_cfg.get("n_sigma_to_mask", 1.5)))
+                               region="overscan" if use_ovs else "active", description=ped_desc)
         ps = raw - np.nan_to_num(mu_row, nan=0.0)[:, None]
         t_ped = time.time()
         # ---- 3. gain, noise, dark current
-        fit, note, fits, held = gain_noise_dc(ps, active, ext, r, fs, mim["fit"] if mim else None)
+        fit, note, fits, held = gain_noise_dc(ps, active, ext, r, fs_ccd, mim["fit"] if mim else None)
         gain = fit["gain"][0]
         if gain_override and n in gain_override:
             gain = float(gain_override[n])
@@ -877,6 +1134,8 @@ def main(argv=None):
     ap.add_argument("--crowded", default="auto", help="A_GMX crowded mode auto|on|off")
     ap.add_argument("--save-fits", action="store_true", help="also write the calibrated image + cluster mask")
     ap.add_argument("--plots", action="store_true", help="also write panaSKImg's --save-plots PDFs (DC fit, baseline, sigma)")
+    ap.add_argument("--tune", action="store_true", help="pedestal method by total fit error and window on the fitted "
+                    "histogram, per resolved CCD (autoconfig --tune, natively)")
     ap.add_argument("--autoconfig-args", default="", help='extra autoconfig options, e.g. "--ccd-cols 6200"')
     a = ap.parse_args(argv)
     thr = a.thresholds
@@ -884,7 +1143,7 @@ def main(argv=None):
         thr = tuple(float(v) for v in thr.split(","))
     kw = dict(curve=a.curve, clusterer=a.clusterer, thresholds=thr, anchor=a.anchor, ev_per_e=a.ev_per_e,
               exts=a.ext, autoconfig_args=a.autoconfig_args.split(), panaskimg_json=a.panaskimg_json,
-              crowded=a.crowded, save_fits=a.save_fits, plots=a.plots)
+              crowded=a.crowded, save_fits=a.save_fits, plots=a.plots, tune=a.tune)
     imgs = expand_inputs(a.images)
     os.makedirs(a.out, exist_ok=True)
     t0 = time.time()

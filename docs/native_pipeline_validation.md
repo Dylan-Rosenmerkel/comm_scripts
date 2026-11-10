@@ -139,6 +139,6 @@ here.
 
 ## Not measured / open
 
-- Images with an overscan, prescan, binning, or a charged overscan (is_highDC): not validated.
+- Overscan / prescan and charged-overscan images: validated after this document was written (2026-11-10; board-103 skip-noise images, L2 surface run with is_highDC; see native_pipeline.md). Binned images: not validated.
 - No validation of the native pipeline on other modules or image types (only DM09 Image_5).
 - fSTD values cannot be reproduced bit by bit (Minuit's stopping point); quantified above.
