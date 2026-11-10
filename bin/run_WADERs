@@ -4,6 +4,9 @@
     run_WADERs <image.fz | image.fits | image.fits.bz2 | list.txt> [-o PARENT] [-j N] [options]
     run_WADERs -h        the options;   run_WADERs -h -v   the full guide (what each step does)
 
+Engine (--engine): native (default) does steps 1-3d below in python, one process per image (src/native_pipeline.py,
+run_native(); no panaSKImg needed; same output folders); waders runs panaSKImg per CCD, the steps below.
+
 What happens, per image (each step is one function below)
 ---------------------------------------------------------
   check_request          inputs exist, output folder free, option combinations valid (standard library only)
@@ -83,9 +86,9 @@ RESERVED_AUTOCONFIG = ("--peaks", "--per-ext", "--tune", "-o", "--output")
 # =============================================================================
 # Environment
 # =============================================================================
-def env_ready():
+def env_ready(needed=NEEDED_MODULES):
     """True if this python can run everything."""
-    return all(importlib.util.find_spec(m) is not None for m in NEEDED_MODULES)
+    return all(importlib.util.find_spec(m) is not None for m in needed)
 
 
 def find_conda():
@@ -115,11 +118,12 @@ def find_env(conda, name):
     return None
 
 
-def ensure_environment(env_name, prog="run_WADERs", script=SCRIPT_PATH, inside_flag=INSIDE_FLAG):
-    """Return if this python is ready; otherwise re-run `script` (this one, or bin/run_AGMX) inside a conda env."""
-    if env_ready():
+def ensure_environment(env_name, prog="run_WADERs", script=SCRIPT_PATH, inside_flag=INSIDE_FLAG, needed=NEEDED_MODULES):
+    """Return if this python is ready (has the modules `needed`); otherwise re-run `script` (this one, or bin/run_AGMX)
+    inside a conda env."""
+    if env_ready(needed):
         return
-    missing = [m for m in NEEDED_MODULES if importlib.util.find_spec(m) is None]
+    missing = [m for m in needed if importlib.util.find_spec(m) is None]
     if os.environ.get(inside_flag):
         sys.exit(f"{prog}: the environment is missing {', '.join(missing)}")
     conda = find_conda()
@@ -219,6 +223,18 @@ the conda environment with panaSKImg is found and used automatically.
 """
 
 HELP_EPILOG = """\
+engine (--engine, default native):
+  native  comm_scripts' own implementation of steps 1-3 (src/native_pipeline.py), one process per image (-j images
+          in parallel): autoconfig's measurements and settings, the per-row pedestal, the two dark-current fits and
+          the gain choice of gain_dc_split, cluster finding, and cluster files in panaSKImg's format (same trees and
+          branches; MakeComposite and gain_vs_charge read them unchanged). No panaSKImg / pysimdamicm needed. Same
+          output folders (root/, root_gaincorr*/, root_agmx*/, gain_vs_charge/, composite*/, summary.txt,
+          fit_quality.csv) plus native_summary.json (per CCD: fits, gain choice, pedestal, thresholds, timings).
+          Cluster thresholds (--thresholds): auto (default) in electrons from the CCD's dark charge (pixel >= k e-,
+          seed >= 9.5 e-), sigma0 = panaSKImg's 10 / 30 x pedestal sigma (reproduces panaSKImg's clusters), or
+          PIX,SEED. Validated against panaSKImg on DM09 Image 5 (docs/native_pipeline_validation.md).
+  waders  panaSKImg (pysimdamicm) once per CCD, as described below.
+
 output (WADERs_analysis_<run name>/):
   *.pdf, *_waders.fits.bz2     panaSKImg plots and processed images
   summary.txt, fit_quality.csv gain, noise, dark current per CCD, with fit errors
@@ -423,6 +439,13 @@ def build_parser(full=False):
                     help="number of panaSKImg runs at the same time (default: 4, or fewer if fewer CPUs)")
     ap.add_argument("--overwrite", action="store_true",
                     help="replace an existing WADERs_analysis_<run name> folder (otherwise it stops)")
+    ap.add_argument("--engine", choices=("native", "waders"), default="native",
+                    help="native (default): comm_scripts' own pedestal, fits, clustering and cluster files "
+                         "(src/native_pipeline.py; no panaSKImg; -j = images in parallel). waders: panaSKImg "
+                         "(pysimdamicm) per CCD (details: -h -v)")
+    ap.add_argument("--thresholds", metavar="auto|sigma0|PIX,SEED", default="auto",
+                    help="--engine native: cluster thresholds. auto (default): in electrons from each CCD's dark "
+                         "charge; sigma0: panaSKImg's 10 / 30 x pedestal sigma; PIX,SEED: fixed, in electrons")
     ap.add_argument("--all-ext", action="store_true",
                     help="also run CCDs flagged as flooded/unresolved (slow, fits not reliable); their clusters "
                          "are only searched with --autoconfig-args \"--cluster-all\" (which also runs them)")
@@ -672,6 +695,7 @@ def check_request(args):
         auto = shlex.split(args.autoconfig_args)
     except ValueError as e:
         sys.exit(f"run_WADERs: --autoconfig-args cannot be parsed ({e})")
+    check_engine(args, auto)
     bad = sorted({a.split("=")[0] for a in auto} & set(RESERVED_AUTOCONFIG))
     if bad:
         sys.exit(f"run_WADERs: {', '.join(bad)} cannot be given in --autoconfig-args (run_WADERs sets "
@@ -950,6 +974,62 @@ def apply_curve(run, GVC, gc_lines, mpath, rs, outdir):
         gc_lines.append(f"    {os.path.basename(dst_f)}: {what}")
 
 
+def measure_gain_curves(run, GVC, configs, run_exts, modes, gc_lines, on_curve=None):
+    """The g(n) curves of step 3b, written to gain_vs_charge/ with their plots: one per module, or per gain period of
+    a module (module_groups), and with 'per-image' in modes one per image (the module curve where the image's own comb
+    is not usable). Appends the summary lines to gc_lines; on_curve(mode, model file, records) is called after each
+    curve (step 3b: correct those images' cluster files with it). Returns {(mode, image stem): model file}."""
+    args = run.args
+    # images of the same module (ACM id in the name, e.g. ..._106_20250914_024425_6) share the CCDs; split into
+    # gain periods where the gain steps (--gain-periods auto)
+    groups, parent, period_lines = module_groups(run, configs, GVC)
+    if not groups:
+        gc_lines.append("gain vs charge: nothing to correct, no image was configured")
+    curves = {}                     # (mode, image stem) -> model file
+    # module curves: used by 'pooled', and by 'per-image' for CCDs whose own comb is not usable
+    module_res = {}
+    gc_lines.append(f"gain vs charge per pixel (--gain-correction, --gain-model {args.gain_model}; one curve per "
+                    f"module from all its images, from the electron comb in clean rows):")
+    gc_lines += period_lines
+    whole = {}                      # module -> curve from all its images (fallback for a period's unusable CCDs)
+    for key, rs in sorted(groups.items()):
+        print(f"  {run.stamp()} g(n) for module {key} ({len(rs)} image(s))")
+        mpath, res = measure_curve(run, GVC, rs, f"module_{key}", f"module {key}", run_exts)
+        if key != parent[key] and not all(rr.get("ok") for rr in res.values()):
+            m = parent[key]
+            if m not in whole:
+                print(f"  {run.stamp()} g(n) for module {m}, all periods (for the CCDs without a period curve)")
+                whole[m] = measure_curve(run, GVC, [r for k, v in groups.items() if parent[k] == m for r in v],
+                                         f"module_{m}", f"module {m}", run_exts)[1]
+            fallback_curve(mpath, [r["orig"] for r in rs], res, whole[m], "module", GVC.E_PER_E)
+        report_curve(gc_lines, f"module {key}", res)
+        module_res[key] = res
+        if "pooled" in modes:
+            curves.update({("pooled", r["stem"]): mpath for r in rs})
+            if on_curve:
+                on_curve("pooled", mpath, rs)
+    if "per-image" in modes:
+        gc_lines.append("gain vs charge per pixel, one curve per image (--gain-correction per-image; a CCD whose "
+                        "own comb is not usable gets the module curve):")
+        for key, rs in sorted(groups.items()):
+            for r in sorted(rs, key=lambda r: r["stem"]):
+                print(f"  {run.stamp()} g(n) for image {r['stem']}")
+                mpath, res = measure_curve(run, GVC, [r], f"image_{r['stem']}", r["stem"], run_exts)
+                for ext, rr in res.items():       # fallback to the module curve, recorded in the file
+                    rr["source"] = "image"
+                    mod = module_res[key].get(ext, {})
+                    if not rr.get("ok") and mod.get("ok"):
+                        res[ext] = dict(mod, source="module", own_reason=rr.get("reason"))
+                with open(mpath, "w") as fh:
+                    json.dump({"images": [r["orig"]], "e_per_electron_eV": GVC.E_PER_E, "extensions": res},
+                              fh, indent=1)
+                report_curve(gc_lines, r["stem"], res)
+                curves[("per-image", r["stem"])] = mpath
+                if on_curve:
+                    on_curve("per-image", mpath, [r])
+    return curves
+
+
 def step3b_gain_correction(run, configs, tasks):
     """Step 3b, --gain-correction: measure the gain vs charge per pixel g(n) and write corrected cluster files.
 
@@ -978,51 +1058,8 @@ def step3b_gain_correction(run, configs, tasks):
         os.makedirs(d, exist_ok=True)
     D["root_gc"] = gc_dirs.get("pooled", gc_dirs.get("per-image"))
 
-    # images of the same module (ACM id in the name, e.g. ..._106_20250914_024425_6) share the CCDs; split into
-    # gain periods where the gain steps (--gain-periods auto)
-    groups, parent, period_lines = module_groups(run, configs, GVC)
-    if not groups:
-        gc_lines.append("gain vs charge: nothing to correct, no image was configured")
-    curves = {}                     # (mode, image stem) -> model file
-    # module curves: used by 'pooled', and by 'per-image' for CCDs whose own comb is not usable
-    module_res = {}
-    gc_lines.append(f"gain vs charge per pixel (--gain-correction, --gain-model {args.gain_model}; one curve per "
-                    f"module from all its images, from the electron comb in clean rows):")
-    gc_lines += period_lines
-    whole = {}                      # module -> curve from all its images (fallback for a period's unusable CCDs)
-    for key, rs in sorted(groups.items()):
-        print(f"  {run.stamp()} g(n) for module {key} ({len(rs)} image(s))")
-        mpath, res = measure_curve(run, GVC, rs, f"module_{key}", f"module {key}", run_exts)
-        if key != parent[key] and not all(rr.get("ok") for rr in res.values()):
-            m = parent[key]
-            if m not in whole:
-                print(f"  {run.stamp()} g(n) for module {m}, all periods (for the CCDs without a period curve)")
-                whole[m] = measure_curve(run, GVC, [r for k, v in groups.items() if parent[k] == m for r in v],
-                                         f"module_{m}", f"module {m}", run_exts)[1]
-            fallback_curve(mpath, [r["orig"] for r in rs], res, whole[m], "module", GVC.E_PER_E)
-        report_curve(gc_lines, f"module {key}", res)
-        module_res[key] = res
-        if "pooled" in modes:
-            curves.update({("pooled", r["stem"]): mpath for r in rs})
-            apply_curve(run, GVC, gc_lines, mpath, rs, gc_dirs["pooled"])
-    if "per-image" in modes:
-        gc_lines.append("gain vs charge per pixel, one curve per image (--gain-correction per-image; a CCD whose "
-                        "own comb is not usable gets the module curve):")
-        for key, rs in sorted(groups.items()):
-            for r in sorted(rs, key=lambda r: r["stem"]):
-                print(f"  {run.stamp()} g(n) for image {r['stem']}")
-                mpath, res = measure_curve(run, GVC, [r], f"image_{r['stem']}", r["stem"], run_exts)
-                for ext, rr in res.items():       # fallback to the module curve, recorded in the file
-                    rr["source"] = "image"
-                    mod = module_res[key].get(ext, {})
-                    if not rr.get("ok") and mod.get("ok"):
-                        res[ext] = dict(mod, source="module", own_reason=rr.get("reason"))
-                with open(mpath, "w") as fh:
-                    json.dump({"images": [r["orig"]], "e_per_electron_eV": GVC.E_PER_E, "extensions": res},
-                              fh, indent=1)
-                report_curve(gc_lines, r["stem"], res)
-                curves[("per-image", r["stem"])] = mpath
-                apply_curve(run, GVC, gc_lines, mpath, [r], gc_dirs["per-image"])
+    curves = measure_gain_curves(run, GVC, configs, run_exts, modes, gc_lines,
+                                 on_curve=lambda mode, mpath, rs: apply_curve(run, GVC, gc_lines, mpath, rs, gc_dirs[mode]))
     if not args.no_clusters:
         for mode, d in gc_dirs.items():
             gcroots = sorted(glob.glob(os.path.join(d, "panaSKImg_clustersRec_*.root")))
@@ -1133,19 +1170,206 @@ def step3c_composite(run, configs, gc_dirs, agmx_dirs=None):
     return comp_lines, comp_failed
 
 
-def step4_summary(run, configs, roots, failed, gc_lines, comp_lines, comp_failed, agmx_lines=(), agmx_failed=()):
+# =============================================================================
+# --engine native: steps 1-3d without panaSKImg (src/native_pipeline.py)
+# =============================================================================
+NATIVE_MODULES = ("numpy", "astropy", "scipy", "numba", "ROOT")
+
+
+def check_engine(args, auto):
+    """--engine / --thresholds checks (standard library only). auto: the --autoconfig-args, split."""
+    if args.engine == "waders":
+        if args.thresholds != "auto":
+            sys.exit("run_WADERs: --thresholds belongs to --engine native; with --engine waders give the thresholds "
+                     "with --autoconfig-args \"--cluster-threshold-e PIX SEED\" (or auto)")
+        return
+    if args.tune:
+        sys.exit("run_WADERs: --tune is not available with --engine native yet; use --engine waders")
+    if "--cluster-threshold-e" in auto:
+        sys.exit("run_WADERs: with --engine native the cluster thresholds are set with --thresholds "
+                 "(auto, sigma0 or PIX,SEED), not --autoconfig-args --cluster-threshold-e")
+    if args.thresholds not in ("auto", "sigma0"):
+        try:
+            pix, seed = (float(v) for v in args.thresholds.split(","))
+        except ValueError:
+            sys.exit("run_WADERs: --thresholds: auto, sigma0 or PIX,SEED in electrons (e.g. 2.5,9.5)")
+
+
+def native_record(img, s):
+    """The per-image record the shared steps use (module_groups, measure_gain_curves, step3c_composite,
+    compare_gain_corrections, step4_summary), from a native_pipeline.process_image summary."""
+    ccds = s["ccds"]
+    notes = []
+    for e, c in sorted(ccds.items()):
+        if "gain_note" in c:
+            notes.append(f"  {e}: {c['gain_note']}")
+            if c.get("pedestal_note"):
+                notes.append(f"  {e}: NOTE {c['pedestal_note']}")
+        else:
+            notes.append(f"  {e}: not run ({c.get('skipped')})")
+    return dict(stem=s["stem"], src=img, orig=img, summary=s, notes=notes,
+                fits={"dc": {e: c["fits"]["dc"] for e, c in ccds.items() if "fits" in c and "dc" in c["fits"]}},
+                final={e: c["fits"]["final"] for e, c in ccds.items() if "fits" in c},
+                held={e: tuple(c["held"]) for e, c in ccds.items() if c.get("held")},
+                refs={e: c["lam01"] for e, c in ccds.items() if c.get("lam01") is not None},
+                skipped=sorted(e for e, c in ccds.items() if c.get("outlier") and "skipped" in c))
+
+
+def native_process(run, NP, tasks, failed):
+    """native_pipeline.process_image on every (image, keyword arguments), -j images at a time (one process each).
+    Failures are appended to `failed` as (stem, 'all', reason). Returns {image: summary}."""
+    from multiprocessing import get_context
+    done = {}
+    with cf.ProcessPoolExecutor(max_workers=max(1, min(run.args.jobs, len(tasks))), mp_context=get_context("spawn")) as ex:
+        futs = {ex.submit(NP._job, (img, run.out, kw)): img for img, kw in tasks}
+        for fut in cf.as_completed(futs):
+            img = futs[fut]
+            s, err = fut.result()
+            if err:
+                print(f"  {run.stamp()} {image_stem(img)}: FAILED ({err.splitlines()[0]})")
+                with open(os.path.join(run.dirs["logs"], f"{image_stem(img)}_native.log"), "w") as fh:
+                    fh.write(err)
+                failed.append((image_stem(img), "all", err.splitlines()[0]))
+                continue
+            done[img] = s
+            for e, c in sorted(s["ccds"].items()):
+                if "gain" in c:
+                    nc = ", ".join(f"{k} {v['n_clusters']}" for k, v in c.items()
+                                   if isinstance(v, dict) and "n_clusters" in v)
+                    print(f"  {run.stamp()} {s['stem']} {e}: gain {c['gain']:.4f} ADU/e-, noise {c['noise_e']:.3f} e-, "
+                          f"DC {c['dc_e']:.4f} e-/pix" + (f"; clusters: {nc}" if nc else ""))
+                else:
+                    print(f"  {run.stamp()} {s['stem']} {e}: not run ({c.get('skipped')})")
+    return done
+
+
+def run_native(run):
+    """--engine native: steps 1-3d in python (src/native_pipeline.py), then --composite and the summary as with
+    --engine waders. Per image one process (-j images at a time) does the pedestal, the two dark-current fits and the
+    gain choice once and writes every requested set of cluster files from them:
+      root/                  threshold clusters, energies with the fitted gain (3.74 eV/e-, as panaSKImg's root/)
+      root_gaincorr*/        --gain-correction: the same clusters with g(n) energies (epsilon(T))
+      root_agmx*/            --clusterer agmx|both: A_GMX on the calibrated image, and on the g(n) image
+    With --gain-correction the fits run once beforehand without cluster files (they give each image's gain for the
+    gain periods); g(n) is then measured from the raw images as in step 3b (measure_gain_curves).
+    Returns the exit code."""
+    args = run.args
+    sys.path.insert(0, SRC_DIR)
+    import fit_quality as FQ
+    import gain_dc_split as G
+    import native_pipeline as NP
+    run.FQ, run.G = FQ, G
+    prepare_output(run)
+    D = run.dirs
+    for k in ("json", "work"):                 # panaSKImg's folders: not used here
+        shutil.rmtree(D.pop(k), ignore_errors=True)
+    shutil.rmtree(D.pop("fits"), ignore_errors=True)
+    run.t0 = time.time()
+    thr = args.thresholds if args.thresholds in ("auto", "sigma0") else tuple(float(v) for v in args.thresholds.split(","))
+    print(f"run_WADERs (engine native, {NP.VERSION}): {len(run.images)} image(s) -> {run.out}   "
+          f"({args.jobs} images at a time; thresholds {args.thresholds})")
+    kw = dict(thresholds=thr, anchor=args.gain_anchor, autoconfig_args=shlex.split(args.autoconfig_args),
+              crowded=args.agmx_crowded, crowded_shapes=args.agmx_crowded_shapes, all_ext=args.all_ext, verbose=False)
+    failed = []
+    images = list(run.images)
+
+    # ---- --gain-correction: fits first (each image's gain, for the gain periods), then g(n) from the raw images
+    gc_lines, gc_dirs, curves = [], {}, {}
+    if args.gain_correction:
+        print(f"  {run.stamp()} fits of every CCD (for the g(n) groups)")
+        pre = native_process(run, NP, [(img, dict(kw, outputs=[], write=False)) for img in images], failed)
+        images = [img for img in images if img in pre]
+        configs = {img: native_record(img, pre[img]) for img in images}
+        import gain_vs_charge as GVC
+        D["gc"] = os.path.join(run.out, "gain_vs_charge")
+        os.makedirs(D["gc"], exist_ok=True)
+        run_exts = sorted({int(e[3:]) for r in configs.values() for e in r["final"]})
+        modes = ["pooled", "per-image"] if args.gain_correction == "both" else [args.gain_correction]
+        gc_dirs = {m: os.path.join(run.out, "root_gaincorr" if m == "pooled" else "root_gaincorr_per_image") for m in modes}
+        D["root_gc"] = gc_dirs.get("pooled", gc_dirs.get("per-image"))
+        curves = measure_gain_curves(run, GVC, configs, run_exts, modes, gc_lines)
+
+    # ---- the cluster files (all sets of one image from the same fits)
+    agmx_dirs = {}
+    if args.clusterer != "waders" and not args.no_clusters:
+        agmx_dirs = {"plain": os.path.join(run.out, "root_agmx")}
+        agmx_dirs.update({m: os.path.join(run.out, "root_agmx_gaincorr" + ("" if m == "pooled" else "_per_image"))
+                          for m in gc_dirs})
+
+    def outputs(img):
+        """[(key, clusterer, folder, curve)] of one image"""
+        if args.no_clusters:
+            return []
+        stem = image_stem(img)
+        o = [("root", "threshold", D["root"], None)]
+        o += [(f"gaincorr_{m}", "threshold", d, curves[(m, stem)]) for m, d in gc_dirs.items()]
+        for key, d in agmx_dirs.items():
+            o.append((f"agmx_{key}", "agmx", d, None if key == "plain" else curves[(key, stem)]))
+        return o
+
+    print(f"  {run.stamp()} " + ("fits only (--no-clusters)" if args.no_clusters else
+                                 "cluster files: " + ", ".join(os.path.basename(d) + "/" for _, _, d, _ in outputs(images[0]))
+                                 if images else "nothing to do"))
+    final = native_process(run, NP, [(img, dict(kw, outputs=outputs(img))) for img in images], failed)
+    configs = {img: native_record(img, final[img]) for img in images if img in final}
+    with open(os.path.join(run.out, "native_summary.json"), "w") as fh:
+        json.dump([final[img] for img in images if img in final], fh, indent=1, default=str)
+
+    # ---- file lists, the per-image vs pooled comparison, A_GMX lines
+    def file_list(d):
+        fs = sorted(glob.glob(os.path.join(d, "panaSKImg_clustersRec_*.root")))
+        with open(os.path.join(d, "root_files.txt"), "w") as fh:
+            fh.write("".join(f + "\n" for f in fs))
+        return fs
+    roots = [] if args.no_clusters else file_list(D["root"])
+    if gc_dirs and not args.no_clusters:
+        for mode, d in gc_dirs.items():
+            gc_lines.append(f"  corrected cluster files ({mode}): {len(file_list(d))} (list: "
+                            f"{os.path.join(d, 'root_files.txt')}; same clusters as root/, energies with g(n))")
+    if len(gc_dirs) == 2:
+        gc_lines += compare_gain_corrections(configs, curves, gc_dirs, D["gc"], args.no_clusters)
+    agmx_lines = []
+    if agmx_dirs:
+        agmx_lines.append(f"A_GMX clusters (--clusterer {args.clusterer}, native: clustering_tests/adaptive.py engine "
+                          f"'gmx'; recommended: agmx_blend < 0.02, agmx_ped < 10):")
+        agmx_lines += [f"  {os.path.basename(d)}/: {len(file_list(d))} cluster files (list: "
+                       f"{os.path.join(d, 'root_files.txt')})" for d in agmx_dirs.values()]
+
+    # ---- --composite and the summary (shared with --engine waders)
+    comp_lines, comp_failed = step3c_composite(run, configs, gc_dirs, agmx_dirs)
+    rows = []
+    for r in configs.values():
+        for e, fit in sorted(r["final"].items()):
+            q = G.held_quality(fit, r["refs"].get(e), r["held"].get(e))
+            rows.append(dict(image=r["stem"], ext=e, gain_held=e in r["held"], **q))
+    thr_lines = ["cluster thresholds (--engine native, --thresholds " + args.thresholds + "):"]
+    for r in sorted(configs.values(), key=lambda r: r["stem"]):
+        for e, c in sorted(r["summary"]["ccds"].items()):
+            if "thresholds" in c:
+                thr_lines.append(f"  {r['stem']} {e}: pixel > {c['thresholds']['pixel_e']:.2f} e-, seed >= "
+                                 f"{c['thresholds']['seed_e']:.2f} e- ({c['thresholds']['note']})")
+    step4_summary(run, configs, roots, failed, ([] if args.no_clusters else thr_lines + [""]) + gc_lines, comp_lines,
+                  comp_failed, agmx_lines, fit_rows=rows, gain_details="native_summary.json")
+    print(f"\nresults: {run.out}")
+    return 1 if failed or comp_failed else 0
+
+
+def step4_summary(run, configs, roots, failed, gc_lines, comp_lines, comp_failed, agmx_lines=(), agmx_failed=(),
+                  fit_rows=None, gain_details="json/<image>/<image>_gain_dc_summary.txt"):
     """Step 4: fit_quality.csv and summary.txt (also printed).
 
     Per CCD, the dark-current fit of panaSKImg (root/dc_fits/) gives gain, noise and dark current; their errors are
     scaled by sqrt(chi2/ndf) (a fit with chi2/ndf > 1 underestimates its errors) and the dark current is compared with
     the one from the 0e-/1e- pixel counts (the "DC bias"). summary.txt then lists which gain was used per CCD and why,
-    the cluster files, and the gain-correction and MakeComposite results.
+    the cluster files, and the gain-correction and MakeComposite results. fit_rows: the per-CCD rows (held_quality
+    dicts with image, ext, gain_held) when they do not come from panaSKImg's root/dc_fits/ (--engine native);
+    gain_details: where the gain choice is documented.
     """
     args, D, G, FQ = run.args, run.dirs, run.G, run.FQ
     refs = {r["stem"]: r["refs"] for r in configs.values()}
     held = {r["stem"]: r["held"] for r in configs.values()}
-    rows = []
-    for path in sorted(glob.glob(os.path.join(D["fits"], "*_FitDarkCurrentProcess_side*.root"))):
+    rows = list(fit_rows or [])
+    for path in ([] if fit_rows is not None else sorted(glob.glob(os.path.join(D["fits"], "*_FitDarkCurrentProcess_side*.root")))):
         m = FQ.SIDE_RE.match(os.path.basename(path))
         if not m:
             continue
@@ -1173,8 +1397,7 @@ def step4_summary(run, configs, roots, failed, gc_lines, comp_lines, comp_failed
                      f"{q['noise']:7.4f} +- {q['noise_err_s']:.4f} {q['dc']:7.4f} +- {q['dc_err_s']:.4f} {bias}")
     lines += ["", "errors scaled by sqrt(chi2/ndf); * = gain held at the all-peaks fit; "
                   "DC bias = fit - dark current from the 0e-/1e- pixel counts", "",
-              "gain used per CCD (gain_dc_split: all-peaks fit vs 0e-/1e- fit; details in "
-              "json/<image>/<image>_gain_dc_summary.txt):"]
+              f"gain used per CCD (gain_dc_split: all-peaks fit vs 0e-/1e- fit; details in {gain_details}):"]
     for r in sorted(configs.values(), key=lambda r: r["stem"]):
         lines.append(f"  {r['stem']}")
         lines += [f"  {n}" for n in r["notes"]]
@@ -1206,12 +1429,15 @@ def main():
     """The whole pipeline: checks, environment, then steps 1-4 (see the module docstring)."""
     args = parse_args()
     run_name, images, out, modules = check_request(args)
-    ensure_environment(args.env)          # may re-run this script inside the conda environment and exit
+    ensure_environment(args.env, needed=NATIVE_MODULES if args.engine == "native" else NEEDED_MODULES)  # may re-run
+    # this script inside the conda environment and exit
     os.environ["AGMX_CROWDED"] = args.agmx_crowded   # read by clustering_tests/adaptive.py (A_GMX workers)
     os.environ["AGMX_CROWDED_SHAPES"] = args.agmx_crowded_shapes
     if args.temperature is not None:                 # read by src/pair_energy.py (gain_vs_charge, A_GMX) at import
         os.environ["COMM_TEMPERATURE_K"] = str(args.temperature)
     run = Run(args=args, run_name=run_name, images=images, out=out, modules=modules)
+    if args.engine == "native":           # --engine native: steps 1-3d without panaSKImg
+        sys.exit(run_native(run))
     load_pipeline_modules(run)
     prepare_output(run)
 

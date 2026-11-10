@@ -373,6 +373,57 @@ MAIN_NEW = '''    configs = step1_configure(run)                                
 '''
 
 
+def strip_native_engine(text):
+    """--engine native (src/native_pipeline.py) is comm_scripts-only: this version always runs panaSKImg. Removes
+    the engine help, --engine / --thresholds, the dispatch and the native section, and the optional parameters added
+    for it to env_ready / ensure_environment / step4_summary (so those read as before)."""
+    text = cut(text, "engine (--engine, default native):", "output (WADERs_analysis_<run name>/):", "")
+    text = cut(text, '    ap.add_argument("--engine", choices=("native", "waders"), default="native",',
+               '    ap.add_argument("--all-ext", action="store_true",', "")
+    text = sub(text, "    check_engine(args, auto)\n", "")
+    text = sub(text, '    ensure_environment(args.env, needed=NATIVE_MODULES if args.engine == "native" else NEEDED_MODULES)  # may re-run\n'
+                     '    # this script inside the conda environment and exit\n',
+               "    ensure_environment(args.env)          # may re-run this script inside the conda environment and exit\n")
+    text = sub(text, '    if args.engine == "native":           # --engine native: steps 1-3d without panaSKImg\n'
+                     '        sys.exit(run_native(run))\n', "")
+    text = cut(text, "# =============================================================================\n# --engine native:",
+               "def step4_summary(", "")
+    text = sub(text, '''def env_ready(needed=NEEDED_MODULES):
+    """True if this python can run everything."""
+    return all(importlib.util.find_spec(m) is not None for m in needed)''',
+               '''def env_ready():
+    """True if this python can run everything."""
+    return all(importlib.util.find_spec(m) is not None for m in NEEDED_MODULES)''')
+    text = sub(text, '''def ensure_environment(env_name, prog="run_WADERs", script=SCRIPT_PATH, inside_flag=INSIDE_FLAG, needed=NEEDED_MODULES):
+    """Return if this python is ready (has the modules `needed`); otherwise re-run `script` (this one, or bin/run_AGMX)
+    inside a conda env."""
+    if env_ready(needed):
+        return
+    missing = [m for m in needed if importlib.util.find_spec(m) is None]''',
+               '''def ensure_environment(env_name, prog="run_WADERs", script=SCRIPT_PATH, inside_flag=INSIDE_FLAG):
+    """Return if this python is ready; otherwise re-run `script` (this one, or bin/run_AGMX) inside a conda env."""
+    if env_ready():
+        return
+    missing = [m for m in NEEDED_MODULES if importlib.util.find_spec(m) is None]''')
+    text = sub(text, '''def step4_summary(run, configs, roots, failed, gc_lines, comp_lines, comp_failed, agmx_lines=(), agmx_failed=(),
+                  fit_rows=None, gain_details="json/<image>/<image>_gain_dc_summary.txt"):''',
+               "def step4_summary(run, configs, roots, failed, gc_lines, comp_lines, comp_failed, agmx_lines=(), agmx_failed=()):")
+    text = sub(text, '''    the cluster files, and the gain-correction and MakeComposite results. fit_rows: the per-CCD rows (held_quality
+    dicts with image, ext, gain_held) when they do not come from panaSKImg's root/dc_fits/ (--engine native);
+    gain_details: where the gain choice is documented.
+    """''', '''    the cluster files, and the gain-correction and MakeComposite results.
+    """''')
+    text = sub(text, '''    rows = list(fit_rows or [])
+    for path in ([] if fit_rows is not None else sorted(glob.glob(os.path.join(D["fits"], "*_FitDarkCurrentProcess_side*.root")))):''',
+               '''    rows = []
+    for path in sorted(glob.glob(os.path.join(D["fits"], "*_FitDarkCurrentProcess_side*.root"))):''')
+    text = sub(text, '''              f"gain used per CCD (gain_dc_split: all-peaks fit vs 0e-/1e- fit; details in {gain_details}):"]''',
+               '''              "gain used per CCD (gain_dc_split: all-peaks fit vs 0e-/1e- fit; details in "
+              "json/<image>/<image>_gain_dc_summary.txt):"]''')
+    assert "native" not in text.lower().replace("pysimdamicm", ""), "native engine left in the WADERs version"
+    return text
+
+
 def main():
     text = open(SRC).read()
     # module docstring and the comm_scripts src path
@@ -449,6 +500,7 @@ def main():
     text = sub(text, COMPOSITE_OLD, COMPOSITE_NEW)
     text = cut(text, MAIN_OLD_START, MAIN_OLD_END, MAIN_NEW)
     text = sub(text, "sys.exit(1 if failed or comp_failed or agmx_failed else 0)", "sys.exit(1 if failed or comp_failed else 0)")
+    text = strip_native_engine(text)
     with open(DST, "w") as fh:
         fh.write(text)
     os.chmod(DST, 0o755)
