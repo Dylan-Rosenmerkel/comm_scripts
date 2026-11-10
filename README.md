@@ -45,7 +45,10 @@ function does what. Everything still open: `docs/notes/OPEN_ITEMS.md`.
 `run_superWADERs` is `run_WADERs --engine native`: comm_scripts' own pedestal, fits, clustering and cluster files in
 panaSKImg's format (src/native_pipeline.py), one process per image, with the same options, output folders and
 summary; cluster thresholds in electrons from the dark charge (`--thresholds auto`). Both commands take
-`--engine native|waders`. Details and validation: docs/native_pipeline.md.
+`--engine native|waders`. It also takes the DAQ's raw files (`.RJ45ADCDATA<ch>`, directly or in a list):
+level-0 traces are decoded, checked and plotted (`L0/`); level-1 images become FITS images with N skips each
+(`--l1-skips 1,10,100,1000`, `L1/`) that run through the pipeline, with noise vs N and the fits side by side.
+Details and validation: docs/native_pipeline.md.
 
 Results go to `WADERs_analysis_<image or list name>/` in the current folder (`-o` to choose another):
 

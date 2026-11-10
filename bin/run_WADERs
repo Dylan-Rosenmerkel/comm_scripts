@@ -239,6 +239,14 @@ engine (--engine; default waders for run_WADERs, native for run_superWADERs):
           overscan) and --tune are done natively. Validated against panaSKImg (docs/native_pipeline.md,
           docs/native_pipeline_validation.md).
   waders  panaSKImg (pysimdamicm) once per CCD, as described below.
+  Raw DAQ files (native only; src/raw_data.py, readers copied from ccd_opt_ml into src/raw_levels/):
+    level-0 traces (trace_*, psd_* .RJ45ADCDATA<ch>): decoded, checked (inline sums vs raw samples) and plotted
+          (L0/<trace>/overview.png, viewer.html, summary.json); not images, so not run through the pipeline.
+    level-1 images (*_1x1_L1_*.RJ45ADCDATA<ch> + .meta): one FITS image per number of skips N (--l1-skips; the
+          mean of skips K..K+N-1, --l1-skip-first K), with the DAQ header from the .meta, written to L1/ and run
+          through the pipeline; then L1/noise_vs_skips.csv/.png (noise and gain per CCD against N) and
+          L1/compare/ (the DC-fit, baseline and sigma plots of every N side by side). Give the four channel
+          files of an image (or a .txt listing them); binned level-1 images are not read.
 
 output (WADERs_analysis_<run name>/):
   *.pdf, *_waders.fits.bz2     panaSKImg plots and processed images
@@ -458,6 +466,15 @@ def build_parser(full=False):
     ap.add_argument("--thresholds", metavar="auto|sigma0|PIX,SEED", default="auto",
                     help="--engine native: cluster thresholds. auto (default): in electrons from each CCD's dark "
                          "charge; sigma0: panaSKImg's 10 / 30 x pedestal sigma; PIX,SEED: fixed, in electrons")
+    ap.add_argument("--l1-skips", metavar="auto|N,N,...", default="auto",
+                    help="--engine native, level-1 inputs (*_1x1_L1_*.RJ45ADCDATA<ch>): one FITS image per number of "
+                         "skips N (mean of the first N skips), all run through the pipeline. auto (default): 1, 2, 5, "
+                         "10, 20, 50, ... and all; 'all' = every skip (details: -h -v)")
+    ap.add_argument("--l1-skip-first", metavar="K", type=int, default=0,
+                    help="--engine native, level-1 inputs: leave out the first K skips of every pixel (default 0, "
+                         "as an image taken with N skips; e.g. 20 removes the transient after the charge arrives)")
+    ap.add_argument("--l0-no-html", action="store_true",
+                    help="--engine native, level-0 traces: no interactive viewer (.html, a few MB per trace)")
     ap.add_argument("--all-ext", action="store_true",
                     help="also run CCDs flagged as flooded/unresolved (slow, fits not reliable); their clusters "
                          "are only searched with --autoconfig-args \"--cluster-all\" (which also runs them)")
@@ -689,7 +706,7 @@ class Run:
 def check_request(args):
     """Checks that need only the standard library, done before any conda environment is looked for (so mistakes
     give a clear message quickly). Returns (run_name, images, out, modules); resolves args.composite_macro."""
-    run_name, images = read_inputs(args.input)
+    run_name, images = read_inputs_any(args)
     out = os.path.join(os.path.abspath(args.parent), f"WADERs_analysis_{run_name}")
     if os.path.exists(out) and os.listdir(out) and not args.overwrite:
         sys.exit(f"run_WADERs: {out} already exists; use --overwrite to replace it")
@@ -697,7 +714,7 @@ def check_request(args):
     if args.jobs < 1:
         sys.exit("run_WADERs: -j/--jobs must be at least 1")
     stems = {}
-    for p in images:
+    for p in [q for q in images if not RAW_INPUT.search(q)]:     # raw channel files of one image share a name
         stems.setdefault(image_stem(p), []).append(p)
     dup = {s: ps for s, ps in stems.items() if len(ps) > 1}
     if dup:
@@ -1208,6 +1225,52 @@ def check_engine(args, auto):
             sys.exit("run_WADERs: --thresholds: auto, sigma0 or PIX,SEED in electrons (e.g. 2.5,9.5)")
 
 
+RAW_INPUT = re.compile(r"\.RJ45ADCDATA\d$")
+
+
+def read_inputs_any(args):
+    """read_inputs, also accepting the DAQ's raw files (.RJ45ADCDATA<ch>: level-0 traces, level-1 images) directly or
+    in a list, which only --engine native handles (standard library only)."""
+    path = args.input
+    if RAW_INPUT.search(path) and os.path.isfile(path):
+        run_name, images = RAW_INPUT.sub("", os.path.basename(path)), [os.path.abspath(path)]
+    else:
+        run_name, images = read_inputs(path)
+    raw = [p for p in images if RAW_INPUT.search(p)]
+    if raw and args.engine != "native":
+        sys.exit(f"{PROG}: raw DAQ files (.RJ45ADCDATA<ch>, e.g. {os.path.basename(raw[0])}) need --engine native "
+                 "(run_superWADERs)")
+    return run_name, images
+
+
+def native_raw_inputs(run, images):
+    """Level-0 traces and level-1 images among the inputs (src/raw_data.py): traces -> L0/ (decoded, checked,
+    plotted); level-1 images -> L1/ FITS images with --l1-skips skips each, which join the images of the run.
+    Returns (images for the pipeline, the FITS made from level-1 data, summary lines)."""
+    raw = [p for p in images if RAW_INPUT.search(p)]
+    if not raw:
+        return images, [], []
+    import raw_data as RD
+    args = run.args
+    kinds = {p: RD.kind(p) for p in raw}
+    lines = []
+    l0 = [p for p, k in kinds.items() if k == "L0"]
+    if l0:
+        print(f"  {run.stamp()} level-0 traces: {len(l0)}")
+        lines += RD.report_l0(l0, os.path.join(run.out, "L0"), html=not args.l0_no_html) + [""]
+    l1 = [p for p, k in kinds.items() if k == "L1"]
+    made = []
+    if l1:
+        print(f"  {run.stamp()} level-1 images -> FITS ({len({RD.base_of(p) for p in l1})} image(s))")
+        made, ls = RD.convert_l1(l1, args.l1_skips, args.l1_skip_first, os.path.join(run.out, "L1"))
+        lines += ["level-1 images -> FITS images with N skips (L1/; header from the .meta):"] + ls + [""]
+    other = [p for p, k in kinds.items() if k == "raw"]
+    if other:
+        lines += [f"not read (DAQ binaries of averaged images: give their avg_*.fits): "
+                  f"{', '.join(os.path.basename(p) for p in other)}", ""]
+    return [p for p in images if not RAW_INPUT.search(p)] + made, made, lines
+
+
 def native_record(img, s):
     """The per-image record the shared steps use (module_groups, measure_gain_curves, step3c_composite,
     compare_gain_corrections, step4_summary), from a native_pipeline.process_image summary."""
@@ -1279,19 +1342,27 @@ def run_native(run):
     shutil.rmtree(D.pop("fits"), ignore_errors=True)
     run.t0 = time.time()
     thr = args.thresholds if args.thresholds in ("auto", "sigma0") else tuple(float(v) for v in args.thresholds.split(","))
-    print(f"{PROG} (engine native, {NP.VERSION}): {len(run.images)} image(s) -> {run.out}   "
+    print(f"{PROG} (engine native, {NP.VERSION}): {len(run.images)} input(s) -> {run.out}   "
           f"({args.jobs} images at a time; thresholds {args.thresholds})")
     kw = dict(thresholds=thr, anchor=args.gain_anchor, autoconfig_args=shlex.split(args.autoconfig_args),
               crowded=args.agmx_crowded, crowded_shapes=args.agmx_crowded_shapes, all_ext=args.all_ext, tune=args.tune,
               verbose=False)
     failed = []
-    images = list(run.images)
+    images, l1_fits, raw_lines = native_raw_inputs(run, list(run.images))
+    if not images:                             # traces only: nothing for the image pipeline
+        text = "\n".join([f"{PROG} summary: {run.run_name}  ({len(run.images)} input file(s), "
+                          f"{time.time() - run.t0:.0f} s)", ""] + raw_lines)
+        with open(os.path.join(run.out, "summary.txt"), "w") as fh:
+            fh.write(text + "\n")
+        print("\n" + text + f"\nresults: {run.out}")
+        return 1 if any("FAILED" in l for l in raw_lines) else 0
 
     # ---- --gain-correction: fits first (each image's gain, for the gain periods), then g(n) from the raw images
     gc_lines, gc_dirs, curves = [], {}, {}
     if args.gain_correction:
         print(f"  {run.stamp()} fits of every CCD (for the g(n) groups)")
-        pre = native_process(run, NP, [(img, dict(kw, outputs=[], write=False)) for img in images], failed)
+        pre = native_process(run, NP, [(img, dict(kw, outputs=[], write=False, all_ext=args.all_ext or img in l1_fits))
+                                       for img in images], failed)
         images = [img for img in images if img in pre]
         configs = {img: native_record(img, pre[img]) for img in images}
         import gain_vs_charge as GVC
@@ -1324,7 +1395,8 @@ def run_native(run):
     print(f"  {run.stamp()} " + ("fits only (--no-clusters)" if args.no_clusters else
                                  "cluster files: " + ", ".join(os.path.basename(d) + "/" for _, _, d, _ in outputs(images[0]))
                                  if images else "nothing to do"))
-    final = native_process(run, NP, [(img, dict(kw, outputs=outputs(img), plots=True)) for img in images], failed)
+    final = native_process(run, NP, [(img, dict(kw, outputs=outputs(img), plots=True, all_ext=args.all_ext or img in l1_fits))
+                                     for img in images], failed)   # images made from level-1 data: every CCD (skip study)
     configs = {img: native_record(img, final[img]) for img in images if img in final}
     with open(os.path.join(run.out, "native_summary.json"), "w") as fh:
         json.dump([final[img] for img in images if img in final], fh, indent=1, default=str)
@@ -1356,13 +1428,17 @@ def run_native(run):
         for e, fit in sorted(r["final"].items()):
             q = G.held_quality(fit, r["refs"].get(e), r["held"].get(e))
             rows.append(dict(image=r["stem"], ext=e, gain_held=e in r["held"], **q))
+    if l1_fits:                                # images made from level-1 data: noise vs skips, fits side by side
+        import raw_data as RD
+        raw_lines += RD.l1_noise_summary(rows, os.path.join(run.out, "L1"), l1_fits)
+        raw_lines += RD.compare_skips(run.out, l1_fits, os.path.join(run.out, "L1")) + [""]
     thr_lines = ["cluster thresholds (--engine native, --thresholds " + args.thresholds + "):"]
     for r in sorted(configs.values(), key=lambda r: r["stem"]):
         for e, c in sorted(r["summary"]["ccds"].items()):
             if "thresholds" in c:
                 thr_lines.append(f"  {r['stem']} {e}: pixel > {c['thresholds']['pixel_e']:.2f} e-, seed >= "
                                  f"{c['thresholds']['seed_e']:.2f} e- ({c['thresholds']['note']})")
-    step4_summary(run, configs, roots, failed, ([] if args.no_clusters else thr_lines + [""]) + gc_lines, comp_lines,
+    step4_summary(run, configs, roots, failed, raw_lines + ([] if args.no_clusters else thr_lines + [""]) + gc_lines, comp_lines,
                   comp_failed, agmx_lines, fit_rows=rows, gain_details="native_summary.json")
     print(f"\nresults: {run.out}")
     return 1 if failed or comp_failed else 0

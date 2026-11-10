@@ -382,6 +382,9 @@ def strip_native_engine(text):
     text = cut(text, "    if SUPER:                                   # started as bin/run_superWADERs",
                '    ap.add_argument("--all-ext", action="store_true",', "")
     text = sub(text, "    check_engine(args, auto)\n", "")
+    text = sub(text, "    run_name, images = read_inputs_any(args)\n", "    run_name, images = read_inputs(args.input)\n")
+    text = sub(text, "    for p in [q for q in images if not RAW_INPUT.search(q)]:     # raw channel files of one image share a name\n",
+               "    for p in images:\n")
     text = sub(text, '    ensure_environment(args.env, prog=PROG, needed=NATIVE_MODULES if args.engine == "native" else NEEDED_MODULES)  # may re-run\n'
                      '    # this script inside the conda environment and exit\n',
                "    ensure_environment(args.env)          # may re-run this script inside the conda environment and exit\n")

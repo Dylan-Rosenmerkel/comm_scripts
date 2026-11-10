@@ -7,6 +7,11 @@ fits, clustering and panaSKImg-format cluster files, src/native_pipeline.py; no 
 
 Same command line, output folders and summary as run_WADERs (which keeps panaSKImg as its default); see
 run_WADERs -h -v and docs/native_pipeline.md.
+
+Raw DAQ files (.RJ45ADCDATA<ch>, src/raw_data.py), given directly or in a .txt list next to images:
+    run_superWADERs traces.txt                                 level-0 traces: decoded, checked, plotted -> L0/
+    run_superWADERs l1_image.txt --l1-skips 1,10,100,1000      level-1 image (its 4 channel files): FITS images with
+                                                               N skips -> L1/, through the pipeline, noise vs N
 """
 import os
 import runpy

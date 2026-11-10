@@ -11,6 +11,29 @@ against panaSKImg on the 3 DM09 Image_5 images (native_pipeline_validation.md), 
 with an overscan (2026-11-10: gain and noise equal to panaSKImg's on 80 CCD-images, median difference 0.00 %; up to
 2.8 % on unresolved 100-skip CCDs, where panaSKImg used a Gaussian-fit pedestal).
 
+Raw DAQ files (`src/raw_data.py`; native engine only; readers copied from ccd_opt_ml into `src/raw_levels/`,
+`utils/sync_from_ccd_opt_ml.py [--check]`):
+
+- **level-0 traces** (`trace_*`, `psd_*` `.RJ45ADCDATA<ch>`): decode_trace (raw samples, window flags, inline
+  per-skip sums; check: inline sums = sums of the flagged raw samples), then `L0/<trace>/overview.png`
+  (ccd_opt_ml's plot_trace: raw cycles, per-skip window means, folded cycle, noise spectrum; for psd_ traces without
+  windows: the samples and their spectrum), `viewer.html` (view_trace; `--l0-no-html` to skip) and `summary.json`.
+  Channel files that hold only the keyword words (a channel not recorded) are listed as such. Not images: they do
+  not enter the image pipeline.
+- **level-1 images** (`*_1x1_L1_*.RJ45ADCDATA<ch>` + `.meta`): read row by row (memory map, decode_l1's layout and
+  checks), one FITS image per N of `--l1-skips` (auto: 1, 2, 5, 10, ... and all; the mean of skips K..K+N-1,
+  `--l1-skip-first K`, default 0 as an image taken with N skips) with the DAQ header from the `.meta` (NDCM = N,
+  NROW = complete rows, L1SRC / L1SKIP0 / L1NSKIP / L1ALLSK) and one extension per channel (a missing channel: zeros,
+  dropped later as "no CCD signal"). They join the run's images (every CCD is processed, also unresolved ones, as
+  for a skip study) and afterwards `L1/noise_vs_skips.csv/.png` (noise, gain per CCD against N) and
+  `L1/compare/<image>/` (compare_dcfit_vs_skips: the DC fit, baseline and sigma of every N side by side) are made.
+  Rows cut by the end of the file are left out; pixels failing a layout check get their row's median.
+  Check (2026-11-10): synthetic level-1 file (decode_l1.write_l1) from a 25 x 250 crop of a DM09 Image 5, 4
+  channels, 1000 skips, 4 ADU per-skip noise of zero mean per pixel: N = 1000 reproduces the image to 2e-4 ADU
+  (float32), N = 10 / 100 leave 1.262 / 0.381 ADU (expected 1.265 / 0.379); end to end through run_superWADERs
+  (with an L0 trace and a psd trace) in 9 s. The real level-1 files on this machine (installation check
+  2026-10-06) are cut after 80 pixels (no complete row) or binned (20 x 20): both reported, no image made.
+
 In run_WADERs (`run_native`): with --gain-correction the fits run first without cluster files (each image's gain
 for the gain periods), g(n) is measured from the raw images as with panaSKImg (`measure_gain_curves`), then one
 process per image writes root/, root_gaincorr*/, root_agmx*/ from the same fits (`process_image(outputs=...)`).
