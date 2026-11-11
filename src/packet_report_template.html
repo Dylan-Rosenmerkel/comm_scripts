@@ -60,6 +60,20 @@ nav button .dot { display:inline-block; width:7px; height:7px; border-radius:50%
 .sw { display:inline-block; width:10px; height:10px; margin-right:4px; vertical-align:middle; border-radius:2px; }
 table.num tr.click { cursor:pointer; }
 table.num tr.click:hover td { color:var(--accent); }
+.ccdbar { flex-basis:100%; display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; font-size:13px; padding-top:6px; }
+.ccdbar label { cursor:pointer; display:inline-flex; align-items:center; gap:3px; padding:2px 6px; border:1px solid var(--line); border-radius:6px; background:var(--panel); }
+.ccdbar label.all { font-weight:600; }
+.ccdbar button.only { border:none; background:none; color:var(--accent); font-size:11px; padding:0 6px 0 0; margin-left:-6px; cursor:pointer; }
+.ccdbar .cflag { color:#c0392b; }
+.frames { display:flex; flex-wrap:wrap; gap:8px; align-items:center; font-size:13px; margin:6px 0 8px; padding:6px 10px; border:1px solid var(--line); border-radius:8px; background:var(--panel); }
+.frames input[type=range] { width:min(260px, 45vw); }
+.frames button { border:1px solid var(--line); background:var(--bg); color:var(--fg); border-radius:4px; padding:2px 9px; cursor:pointer; }
+.frames .cur { font-weight:600; }
+h2.ccdhead { margin-top:22px; padding-top:10px; border-top:2px solid var(--line); }
+.xscroll { overflow-x:auto; }
+table.num.cmp th, table.num.cmp td { padding-right:18px; min-width:150px; }
+table.num.cmp tr > th:first-child { min-width:190px; }
+table.num.cmp td.same { color:var(--muted); }
 .figure img { max-width:100%; border:1px solid var(--line); border-radius:6px; background:#fff; }
 @media print {
   nav, .noprint, .plot .help, .controls, input[type=file] { display:none !important; }
@@ -223,7 +237,9 @@ class LinePlot {
     });
     g.setLineDash([]); g.restore();
     let ly0 = T + 6; g.font = "11px sans-serif"; g.textAlign = "right";
-    this.series.forEach((s, k) => { if (!s.name) return; g.fillStyle = s.color || COLORS[k % COLORS.length]; g.fillText(s.name, L + pw - 6, ly0 + 8); ly0 += 14; });
+    const named = this.series.map((s, k) => [s, k]).filter(([s]) => s.name);
+    named.slice(0, named.length > 10 ? 9 : 10).forEach(([s, k]) => { g.fillStyle = s.color || COLORS[k % COLORS.length]; g.fillText(s.name, L + pw - 6, ly0 + 8); ly0 += 14; });
+    if (named.length > 10) { g.fillStyle = css("--muted"); g.fillText(`+ ${named.length - 9} more`, L + pw - 6, ly0 + 8); }
     g.strokeStyle = css("--muted"); g.strokeRect(L, T, pw, ph);
     if (this.sel) { g.fillStyle = "rgba(42,111,219,.15)"; const s = this.sel; g.fillRect(Math.min(s.a, s.b), T, Math.abs(s.b - s.a), ph); }
   }
@@ -279,7 +295,7 @@ const CMAPS = {
 };
 class ImageView {
   constructor(parent, img, w, h, o) {
-    this.img = img; this.w = w; this.h = h; this.o = o || {};
+    this.o = o || {};
     const ctl = document.createElement("div"); ctl.className = "controls"; parent.appendChild(ctl);
     ctl.innerHTML = `scale <select class="mode"><option value="auto">auto (background)</option><option value="z">99.5 %</option><option value="p99">99 %</option><option value="p95">95 %</option><option value="mm">min/max</option><option value="man">manual</option></select>
       min <input type="number" step="any" class="vmin"> max <input type="number" step="any" class="vmax">
@@ -290,9 +306,9 @@ class ImageView {
       <button class="png" title="save the current view as a picture">PNG</button>
       <span class="help">wheel: zoom · drag: pan · shift+drag: region statistics · click: row / column cut</span>`;
     if (this.o.overlay) {
-      const lg = document.createElement("div"); lg.className = "legend"; parent.appendChild(lg);
+      const lg = document.createElement("div"); lg.className = "legend"; parent.appendChild(lg); this.lg = lg;
       this.show = {};
-      this.o.overlay.types.forEach((ty, k) => { this.show[k + 1] = true; const l = document.createElement("label"); l.innerHTML = `<input type="checkbox" checked> <span class="sw" style="background:${ty.color}"></span>${ty.name} (${ty.n})`; l.querySelector("input").onchange = e => { this.show[k + 1] = e.target.checked; this.draw(); }; lg.appendChild(l); });
+      this.o.overlay.types.forEach((ty, k) => { this.show[k + 1] = true; const l = document.createElement("label"); l.innerHTML = `<input type="checkbox" checked> <span class="sw" style="background:${ty.color}"></span>${ty.name} (<span class="cnt">${ty.n}</span>)`; l.querySelector("input").onchange = e => { this.show[k + 1] = e.target.checked; this.draw(); }; lg.appendChild(l); });
       const l = document.createElement("label"); l.innerHTML = `<input type="checkbox" checked> show markings`; l.querySelector("input").onchange = e => { this.ovon = e.target.checked; this.draw(); }; this.ovon = true; lg.appendChild(l);
     }
     const wrap = document.createElement("div"); wrap.className = "imgwrap"; parent.appendChild(wrap);
@@ -305,9 +321,7 @@ class ImageView {
     const a = document.createElement("div"), b = document.createElement("div"); a.className = b.className = "card"; cuts.appendChild(a); cuts.appendChild(b);
     this.rowcut = new LinePlot(a, { title: "row cut (click in the image)", xlabel: "column", ylabel: this.o.unit || "", height: 200 });
     this.colcut = new LinePlot(b, { title: "column cut", xlabel: "row", ylabel: this.o.unit || "", height: 200 });
-    this.ctl = ctl; this.off = document.createElement("canvas"); this.off.width = w; this.off.height = h;
-    const sorted = Float32Array.from(img.filter((v, i) => i % Math.max(1, Math.floor(img.length / 200000)) === 0 && isFinite(v))).sort();
-    this.q = p => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))))];
+    this.ctl = ctl; this.off = document.createElement("canvas");
     ["mode", "cmap", "vmin", "vmax", "logs"].forEach(k => ctl.querySelector("." + k).addEventListener("change", () => this.render()));
     ctl.querySelector(".fit").onclick = () => { this.fit(); this.draw(); };
     ctl.querySelector(".one").onclick = () => { this.s = 1; this.draw(); };
@@ -315,7 +329,17 @@ class ImageView {
     ctl.querySelector(".zin").onclick = () => zoom(1.5); ctl.querySelector(".zout").onclick = () => zoom(1 / 1.5);
     ctl.querySelector(".png").onclick = () => { const a = document.createElement("a"); a.href = this.c.toDataURL("image/png"); a.download = "image_view.png"; a.click(); };
     this._events(); new ResizeObserver(() => { if (!this.s) this.fit(); this.draw(); }).observe(wrap);
-    this.render(); this.cut(w >> 1, h >> 1);           // start with the middle row and column
+    this.setImage(img, w, h, this.o.overlay);
+  }
+  setImage(img, w, h, overlay, unit) {     // show another image (ds9 frame): zoom, pan and cuts are kept when the size is the same
+    if (this.w !== w || this.h !== h) { this.s = undefined; this.lastcut = null; }
+    this.img = img; this.w = w; this.h = h; this.off.width = w; this.off.height = h;
+    if (unit) this.o.unit = unit;
+    const sorted = Float32Array.from(img.filter((v, i) => i % Math.max(1, Math.floor(img.length / 200000)) === 0 && isFinite(v))).sort();
+    this.q = p => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))))];
+    if (overlay) { this.o.overlay = overlay; if (this.lg) this.lg.querySelectorAll(".cnt").forEach((s, k) => { s.textContent = overlay.types[k].n; }); }
+    this.mark = null; this.box = null; this.stats.textContent = "";
+    this.render(); const [c, r] = this.lastcut || [w >> 1, h >> 1]; this.cut(c, r);   // first: the middle row and column
   }
   limits() {
     const m = this.ctl.querySelector(".mode").value;
@@ -381,6 +405,7 @@ class ImageView {
   }
   cut(col, row) {
     if (col < 0 || col >= this.w || row < 0 || row >= this.h) return;
+    this.lastcut = [col, row];
     this.rowcut.set([{ x0: 0, dx: 1, y: this.img.subarray(row * this.w, (row + 1) * this.w), name: `row ${row}` }]);
     const cc = new Float64Array(this.h); for (let r = 0; r < this.h; r++) cc[r] = this.img[r * this.w + col];
     this.colcut.set([{ x0: 0, dx: 1, y: cc, name: `column ${col}` }]);
@@ -395,7 +420,7 @@ class ImageView {
   }
 }
 
-// ---------------------------------------------------------------- page: tabs, comments, logs
+// ---------------------------------------------------------------- page: CCD selection, tabs, comments, logs
 function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; }
 function table(rows) { const t = el("table", "num"); for (const [k, v, flag] of rows) { const tr = el("tr"); tr.appendChild(el("th", "", k)); tr.appendChild(el("td", "v" + (flag ? " flag" : ""), v)); t.appendChild(tr); } return t; }
 function commentBox(parent, key, label) {
@@ -406,18 +431,89 @@ function commentBox(parent, key, label) {
   try { ta.value = (JSON.parse(localStorage.getItem(KEY) || "{}"))[key] || ""; } catch (e) {}
   pt.textContent = ta.value; ta.addEventListener("input", store); ta.dataset.key = key; parent.appendChild(box);
 }
+
+// The CCDs of the module (D.ccds): every tab with tb.per = {ccd key: data} shows the ticked CCDs
+const CCDS = D.ccds && D.ccds.length ? D.ccds : null;
+if (CCDS) CCDS.forEach((c, i) => { c.color = COLORS[i % COLORS.length]; });
+let SEL = CCDS ? CCDS.map(c => c.key) : [];
+try { const s = JSON.parse(localStorage.getItem(KEY + ":ccds") || "null"); if (CCDS && Array.isArray(s)) { const k = CCDS.map(c => c.key).filter(x => s.includes(x)); if (k.length) SEL = k; } } catch (e) {}
+const DASHES = [[], [6, 3], [2, 2], [8, 3, 2, 3]];
+const swatch = c => c ? `<span class="sw" style="background:${c.color}"></span>` : "";
+function chosen(tb) {     // [{c, d}]: data of the ticked CCDs that have this tab (one item without a CCD on a tab of the whole module)
+  if (!tb.per) return [{ c: null, d: tb.kind === "overview" && !tb.data ? { numbers: tb.numbers, files: tb.files } : tb.data }];
+  return CCDS.filter(c => SEL.includes(c.key) && tb.per[c.key] != null).map(c => ({ c, d: tb.per[c.key] }));
+}
+function logOf(tb) {
+  if (!tb.logs) return tb.log || [];
+  return CCDS.filter(c => SEL.includes(c.key) && tb.logs[c.key]).flatMap(c => [`--- ${c.label}`, ...tb.logs[c.key]]);
+}
+function ccdHead(parent, c) { if (c) parent.appendChild(el("h2", "ccdhead", `${swatch(c)}${c.label}`)); }
+function wrapX(node) { const w = el("div", "xscroll"); w.appendChild(node); return w; }
+function cmpTable(items) {   // numbers of several CCDs side by side: one column per CCD
+  if (items.length === 1) return table(items[0].rows || []);
+  const names = [], val = items.map(() => ({}));
+  items.forEach((it, j) => (it.rows || []).forEach(r => { if (!names.includes(r[0])) names.push(r[0]); val[j][r[0]] = r; }));
+  const t = el("table", "num cmp"), h = el("tr"); h.appendChild(el("th", "", ""));
+  items.forEach(it => h.appendChild(el("th", "", `${swatch(it.c)}${it.c.label}`))); t.appendChild(h);
+  for (const n of names) {
+    const tr = el("tr"); tr.appendChild(el("th", "", n));
+    if (val.every(v => v[n] && v[n][1] === val[0][n][1] && !v[n][2])) { const td = el("td", "v same", val[0][n][1]); td.colSpan = val.length; tr.appendChild(td); }   // the same for every CCD: once
+    else val.forEach(v => { const r = v[n]; tr.appendChild(el("td", "v" + (r && r[2] ? " flag" : ""), r ? r[1] : "&ndash;")); });
+    t.appendChild(tr);
+  }
+  return t;
+}
+function frameBar(parent, items, onChange) {   // ds9-like frames: one CCD at a time, slider / arrows / arrow keys / blink
+  const bar = el("div", "frames"); parent.appendChild(bar);
+  const cur = el("span", "cur"); let i0 = 0, timer = null;
+  const go = async i => { i0 = (i + items.length) % items.length; if (r) r.value = i0; cur.innerHTML = items[i0].c ? `${swatch(items[i0].c)}${items[i0].c.label}` + (items.length > 1 ? ` &nbsp;(${i0 + 1} of ${items.length})` : "") : ""; await onChange(i0); };
+  let r = null;
+  if (items.length > 1) {
+    bar.appendChild(el("span", "", "CCD"));
+    const prev = el("button", "", "&#9664;"); prev.title = "previous CCD (left arrow key)"; prev.onclick = () => go(i0 - 1);
+    r = el("input"); r.type = "range"; r.min = 0; r.max = items.length - 1; r.step = 1; r.value = 0; r.title = "slide to switch between the CCDs"; r.oninput = () => go(+r.value);
+    const next = el("button", "", "&#9654;"); next.title = "next CCD (right arrow key)"; next.onclick = () => go(i0 + 1);
+    const blink = el("button", "", "blink"); blink.title = "switch through the CCDs every second (as ds9 blink); again to stop";
+    blink.onclick = () => { if (timer) { clearInterval(timer); timer = null; blink.textContent = "blink"; } else { timer = setInterval(() => { if (!bar.isConnected || bar.offsetParent === null) { clearInterval(timer); timer = null; blink.textContent = "blink"; return; } go(i0 + 1); }, 1000); blink.textContent = "stop"; } };
+    bar.append(prev, r, next, cur, blink, el("span", "help", "zoom, pan, scale and the cut stay when you switch"));
+    document.addEventListener("keydown", e => { if (!bar.isConnected || bar.offsetParent === null || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return; if (e.key === "ArrowRight") go(i0 + 1); else if (e.key === "ArrowLeft") go(i0 - 1); });
+  } else bar.appendChild(cur);
+  if (!items[0].c) bar.style.display = "none";
+  return { go };
+}
 function logBox(parent, lines) { parent.appendChild(el("h3", "", "Log")); const l = el("div", "log"); l.textContent = (lines || []).join("\n"); parent.appendChild(l); }
 
 const nav = document.getElementById("nav"), main = document.getElementById("main"), tabs = [];
-function addTab(id, label, build, flagged) {
-  const b = el("button", "", label), t = el("section", "tab"); t.id = "tab_" + id; nav.appendChild(b); main.appendChild(t);
-  if (flagged) { const s = el("span", "dot"); s.title = "a number on this tab is outside the usual range"; b.appendChild(s); }
-  let built = false;
-  const show = async () => { tabs.forEach(x => { x.b.classList.remove("on"); x.t.classList.remove("on"); }); b.classList.add("on"); t.classList.add("on"); if (!built) { built = true; t.appendChild(el("p", "loading", "loading ...")); await build(t); t.querySelector(".loading")?.remove(); } location.hash = id; };
-  b.onclick = show; tabs.push({ id, b, t, show, build: async () => { if (!built) { built = true; await build(t); } } });
+function addTab(tb, render) {
+  const b = el("button", "", tb.label), t = el("section", "tab"); t.id = "tab_" + tb.id; nav.appendChild(b); main.appendChild(t);
+  const dot = el("span", "dot"); dot.title = "a number on this tab is outside the usual range (for a ticked CCD)"; b.appendChild(dot);
+  const content = el("div"), foot = el("div"); t.append(content, foot);
+  commentBox(foot, tb.id, "Comments on this page");
+  foot.appendChild(el("h3", "", "Log")); const lg = el("div", "log"); foot.appendChild(lg);
+  let fresh = false, gen = 0;
+  const build = async () => {
+    fresh = true; const my = ++gen;
+    content.replaceChildren(el("p", "loading", "loading ..."));
+    const box = el("div"), items = chosen(tb);
+    if (!items.length) box.appendChild(el("p", "loading", `No data here for the ticked CCD(s). This tab has data for: ${CCDS.filter(c => tb.per[c.key] != null).map(c => c.label).join(", ")}.`));
+    else await render(box, items);
+    if (my === gen) { content.replaceChildren(box); lg.textContent = logOf(tb).join("\n"); }
+  };
+  tabs.push({ tb, b, t, dot,
+    show: async () => { tabs.forEach(x => { x.b.classList.remove("on"); x.t.classList.remove("on"); }); b.classList.add("on"); t.classList.add("on"); location.hash = tb.id; if (!fresh) await build(); },
+    build: async () => { if (!fresh) await build(); },
+    stale: () => { if (tb.per) fresh = false; } });
 }
+function updateDots() { tabs.forEach(x => { const f = x.tb.per ? (x.tb.flagged_ccds || []).some(k => SEL.includes(k)) : x.tb.flagged; x.dot.style.display = f ? "" : "none"; }); }
 
-// ---------------------------------------------------------------- tab contents
+// ---------------------------------------------------------------- tab contents (items: [{c: CCD or null, d: data}])
+const each = f => async (t, items) => { for (const it of items) { const box = el("div"); t.appendChild(box); ccdHead(box, it.c); await f(box, it.d); } };
+async function overviewTab(t, items) {
+  t.appendChild(el("h2", "", "Overview"));
+  t.appendChild(wrapX(cmpTable(items.map(it => ({ c: it.c, rows: it.d.numbers })))));
+  const files = []; items.forEach(it => (it.d.files || []).forEach(f => { if (!files.some(g => g[1] === f[1])) files.push(f); }));
+  t.appendChild(el("h3", "", "Packet contents")); t.appendChild(table(files));
+}
 async function traceTab(t, tr) {
   t.appendChild(el("h2", "", `Trace: ${tr.file}`));
   t.appendChild(table(tr.numbers));
@@ -447,9 +543,10 @@ async function traceTab(t, tr) {
     f.set([{ x: await arr(tr.spectrum.f), y: await arr(tr.spectrum.a), color: "#b04fc8" }]);
   }
 }
-async function psdTab(t, ps) {
-  t.appendChild(el("h2", "", "PSD (noise traces)"));
-  t.appendChild(table(ps.numbers));
+async function psdTab(t, items) {     // the CCDs overlaid: one colour per CCD
+  const multi = items.length > 1;
+  t.appendChild(el("h2", "", multi ? `PSD (noise traces) of ${items.length} CCDs, overlaid` : "PSD (noise traces)"));
+  t.appendChild(table(items.flatMap(it => it.d.numbers.map(r => [multi ? `${swatch(it.c)}${it.c.label}: ${r[0]}` : r[0], r[1], r[2]]))));
   const grid = el("div", "grid"); t.appendChild(grid);
   const mk = (title, o) => { const a = el("div", "card"); grid.appendChild(a); return new LinePlot(a, Object.assign({ title, height: 290 }, o)); };
   const tr = mk("ADC trace", { xlabel: "time [us]", ylabel: "sample value [ADU]" });
@@ -457,102 +554,123 @@ async function psdTab(t, ps) {
   const wl = mk("Welch (linear)", { xlabel: "frequency [Hz]", ylabel: "ADU / sqrt(Hz)" });
   const wg = mk("Welch (log)", { xlabel: "frequency [Hz]", ylabel: "ADU / sqrt(Hz)", logx: true, logy: true });
   const S = { t: [], p: [], wl: [], wg: [] };
-  for (const [k, f] of ps.files.entries()) {
-    const col = COLORS[k % COLORS.length], v = await arr(f.values), fp = await arr(f.pf), ap = await arr(f.pa), fw = await arr(f.wf), aw = await arr(f.wa);
-    S.t.push({ x0: 0, dx: f.dt_us, y: v, color: col, name: f.label });
-    S.p.push({ x: fp, y: ap, color: col, name: f.label });
-    S.wl.push({ x: fw, y: aw, color: col, name: f.label });
-    S.wg.push({ x: fw, y: aw, color: col, name: `sigma_ADU ${fmt(f.sigma_adu)}  sigma_CDS ${fmt(f.sigma_cds)}` });
+  for (const it of items) for (const [k, f] of it.d.files.entries()) {
+    const col = multi ? it.c.color : COLORS[k % COLORS.length], dash = multi ? DASHES[k % DASHES.length] : undefined;
+    const lab = multi ? it.c.label + (it.d.files.length > 1 ? ` (${k + 1})` : "") : f.label;
+    const v = await arr(f.values), fp = await arr(f.pf), ap = await arr(f.pa), fw = await arr(f.wf), aw = await arr(f.wa);
+    S.t.push({ x0: 0, dx: f.dt_us, y: v, color: col, dash, name: lab });
+    S.p.push({ x: fp, y: ap, color: col, dash, name: lab });
+    S.wl.push({ x: fw, y: aw, color: col, dash, name: lab });
+    S.wg.push({ x: fw, y: aw, color: col, dash, name: `${multi ? lab + ": " : ""}sigma_ADU ${fmt(f.sigma_adu)}  sigma_CDS ${fmt(f.sigma_cds)}` });
   }
   tr.set(S.t); pg.set(S.p); wl.set(S.wl); wg.set(S.wg);
 }
-async function imageSummaryTab(t, ims) {
-  t.appendChild(el("h2", "", ims.length > 1 ? `Dark-current fits and profiles of ${ims.length} images` : `${ims[0].role}: numbers and profiles`));
-  for (const im of ims) {
+async function imageSummaryTab(t, items) {   // per image: numbers side by side, fit histogram per CCD, profiles overlaid
+  const multi = items.length > 1, files = [];
+  items.forEach(it => it.d.forEach(im => { if (!files.includes(im.file)) files.push(im.file); }));
+  const first = items[0].d[0];
+  t.appendChild(el("h2", "", files.length > 1 ? `Dark-current fits and profiles of ${files.length} images` : `${first.role}: numbers and profiles`));
+  for (const f of files) {
+    const per = items.map(it => ({ c: it.c, im: it.d.find(x => x.file === f) })).filter(x => x.im);
     const card = el("div", "card"); t.appendChild(card);
-    card.appendChild(el("h3", "", `${im.role}: ${im.file}`));
-    card.appendChild(table(im.numbers));
+    card.appendChild(el("h3", "", `${per[0].im.role}: ${f}`));
+    card.appendChild(wrapX(cmpTable(per.map(x => ({ c: x.c, rows: x.im.numbers })))));
     const grid = el("div", "grid"); card.appendChild(grid);
     const mk = (title, o) => { const a = el("div", "card"); grid.appendChild(a); return new LinePlot(a, Object.assign({ title, height: 250 }, o)); };
-    if (im.hist) {
-      const h = mk(im.hist.fitted ? "pixel charge and dark-current fit" : "pixel charge (electron peaks not resolved: no fit)", { xlabel: "pixel charge [ADU]", ylabel: "counts", logy: true });
-      const ser = [{ x: await arr(im.hist.x), y: await arr(im.hist.y), style: "step", color: css("--fg"), name: "pixels" }];
-      if (im.hist.mx) ser.push({ x: await arr(im.hist.mx), y: await arr(im.hist.my), color: "#c0392b", width: 2, name: "fit" });
+    for (const x of per) {
+      if (!x.im.hist) continue;
+      const h = mk((multi ? x.c.label + ": " : "") + (x.im.hist.fitted ? "pixel charge and dark-current fit" : "pixel charge (electron peaks not resolved: no fit)"), { xlabel: "pixel charge [ADU]", ylabel: "counts", logy: true });
+      const ser = [{ x: await arr(x.im.hist.x), y: await arr(x.im.hist.y), style: "step", color: multi ? x.c.color : css("--fg"), name: "pixels" }];
+      if (x.im.hist.mx) ser.push({ x: await arr(x.im.hist.mx), y: await arr(x.im.hist.my), color: "#c0392b", width: 2, name: "fit" });
       h.set(ser);
     }
-    const r1 = mk("pedestal (baseline) per row", { xlabel: "row", ylabel: "ADU" }); r1.set([{ x0: 0, dx: 1, y: await arr(im.mu_row), style: "points" }]);
-    const r2 = mk("pedestal sigma per row", { xlabel: "row", ylabel: "ADU" }); r2.set([{ x0: 0, dx: 1, y: await arr(im.sig_row), style: "points" }]);
-    if (im.lam_row) { const r3 = mk("dark charge per row (from the 0e- fraction)", { xlabel: "row", ylabel: "e- / pix" }); r3.set([{ x0: 0, dx: 1, y: await arr(im.lam_row), style: "points" }]); }
-    const r4 = mk("median per column", { xlabel: "column", ylabel: im.unit }); r4.set([{ x0: 0, dx: 1, y: await arr(im.col_med) }]);
-    const r5 = mk("median per row (active region)", { xlabel: "row", ylabel: im.unit }); r5.set([{ x0: 0, dx: 1, y: await arr(im.row_med) }]);
+    const prof = async (key, title, o) => {
+      const ser = [];
+      for (const x of per) if (x.im[key]) ser.push({ x0: 0, dx: 1, y: await arr(x.im[key]), style: o.style, color: multi ? x.c.color : undefined, name: multi ? x.c.label : undefined });
+      if (ser.length) mk(title + (multi ? " (CCDs overlaid)" : ""), o).set(ser);
+    };
+    await prof("mu_row", "pedestal (baseline) per row", { xlabel: "row", ylabel: "ADU", style: "points" });
+    await prof("sig_row", "pedestal sigma per row", { xlabel: "row", ylabel: "ADU", style: "points" });
+    await prof("lam_row", "dark charge per row (from the 0e- fraction)", { xlabel: "row", ylabel: "e- / pix", style: "points" });
+    await prof("col_med", "median per column", { xlabel: "column", ylabel: per[0].im.unit });
+    await prof("row_med", "median per row (active region)", { xlabel: "row", ylabel: per[0].im.unit });
   }
 }
-async function imageTab(t, im) {
-  t.appendChild(el("h2", "", `${im.role}: ${im.file}`));
-  t.appendChild(el("div", "readout", `${im.h} rows x ${im.w} columns${im.decimated ? ` (shown binned ${im.decimated}x${im.decimated})` : ""}; values: pedestal-subtracted, ${im.unit}`));
-  const v = await arr(im.pixels); new ImageView(t, v, im.w, im.h, { unit: im.unit });
+async function imageTab(t, items) {          // one viewer, the CCDs as frames
+  const d0 = items[0].d;
+  t.appendChild(el("h2", "", `${d0.role}: ${d0.file}`));
+  const info = el("div", "readout"), host = el("div"), cache = []; let iv = null;
+  const fb = frameBar(t, items, async i => {
+    const d = items[i].d;
+    info.textContent = `${d.h} rows x ${d.w} columns${d.decimated ? ` (shown binned ${d.decimated}x${d.decimated})` : ""}; values: pedestal-subtracted, ${d.unit}`;
+    const v = cache[i] || (cache[i] = await arr(d.pixels));
+    if (!iv) iv = new ImageView(host, v, d.w, d.h, { unit: d.unit }); else iv.setImage(v, d.w, d.h, null, d.unit);
+  });
+  t.append(info, host); await fb.go(0);
 }
-
-async function defectsTab(t, d) {
-  t.appendChild(el("h2", "", d.title));
-  t.appendChild(table(d.numbers));
-  t.appendChild(el("p", "readout", "Coloured marks: the defects found (tick to show / hide a type). Click a line of the defect list to go to it."));
-  const v = await arr(d.pixels), m = await arr(d.mask);
-  const iv = new ImageView(t, v, d.w, d.h, { unit: d.unit, overlay: { mask: m, types: d.types } });
-  t.appendChild(el("h3", "", `Defect list (${d.defects.length}${d.defects_more ? ", first " + d.defects.length + " of " + (d.defects.length + d.defects_more) : ""})`));
-  const tb = el("table", "num"); tb.innerHTML = "<tr><th>type</th><th>column</th><th>row</th><th>size</th><th>value</th><th>seen in</th></tr>";
-  for (const x of d.defects) { const tr = el("tr", "click"); tr.innerHTML = `<td>${x[0]}</td><td>${x[1]}</td><td>${x[2] < 0 ? "all" : x[2]}</td><td>${x[3]}</td><td>${fmt(x[4])}</td><td>${x[5]}</td>`; tr.onclick = () => { iv.goto(x[1], x[2] < 0 ? d.h >> 1 : x[2]); t.scrollIntoView({ behavior: "smooth" }); }; tb.appendChild(tr); }
-  t.appendChild(tb);
+async function defectsTab(t, items) {        // defect map, the CCDs as frames
+  const head = el("div"); t.appendChild(head);
+  const host = el("div"), list = el("div"), cache = []; let iv = null;
+  const fb = frameBar(t, items, async i => {
+    const d = items[i].d;
+    head.replaceChildren(el("h2", "", d.title), table(d.numbers), el("p", "readout", "Coloured marks: the defects found (tick to show / hide a type). Click a line of the defect list to go to it."));
+    const v = cache[i] || (cache[i] = [await arr(d.pixels), await arr(d.mask)]);
+    const ov = { mask: v[1], types: d.types };
+    if (!iv) iv = new ImageView(host, v[0], d.w, d.h, { unit: d.unit, overlay: ov }); else iv.setImage(v[0], d.w, d.h, ov, d.unit);
+    list.replaceChildren(el("h3", "", `Defect list (${d.defects.length}${d.defects_more ? ", first " + d.defects.length + " of " + (d.defects.length + d.defects_more) : ""})`));
+    const tb = el("table", "num"); tb.innerHTML = "<tr><th>type</th><th>column</th><th>row</th><th>size</th><th>value</th><th>seen in</th></tr>";
+    for (const x of d.defects) { const tr = el("tr", "click"); tr.innerHTML = `<td>${x[0]}</td><td>${x[1]}</td><td>${x[2] < 0 ? "all" : x[2]}</td><td>${x[3]}</td><td>${fmt(x[4])}</td><td>${x[5]}</td>`; tr.onclick = () => { iv.goto(x[1], x[2] < 0 ? d.h >> 1 : x[2]); host.scrollIntoView({ behavior: "smooth" }); }; tb.appendChild(tr); }
+    list.appendChild(tb);
+  });
+  t.append(host, list); await fb.go(0);
 }
 async function figureTab(t, d) {
   t.appendChild(el("h2", "", d.title));
   if (d.numbers) t.appendChild(table(d.numbers));
   for (const f of d.figures) { const c = el("div", "figure"); c.appendChild(el("h3", "", f.caption)); const im = el("img"); im.src = "data:image/png;base64," + f.png; c.appendChild(im); t.appendChild(c); }
 }
-async function plotsTab(t, d) {
-  t.appendChild(el("h2", "", d.title));
-  if (d.text) for (const p of d.text) t.appendChild(el("p", "", p));
-  if (d.numbers) t.appendChild(table(d.numbers));
-  if (d.table) {
-    const wrap = el("div", ""); wrap.style.overflowX = "auto"; const tb = el("table", "num");
-    tb.innerHTML = "<tr>" + d.table.head.map(h => `<th>${h}</th>`).join("") + "</tr>" + d.table.rows.map(r => "<tr>" + r.map(c => `<td class="v">${c}</td>`).join("") + "</tr>").join("");
-    wrap.appendChild(tb); t.appendChild(wrap);
+async function plotsTab(t, items) {          // the CCDs overlaid: one colour per CCD, tables with a CCD column
+  const d0 = items[0].d, multi = items.length > 1;
+  t.appendChild(el("h2", "", d0.title));
+  if (d0.text) for (const p of d0.text) t.appendChild(el("p", "", p));
+  const nums = items.filter(it => it.d.numbers);
+  if (nums.length) t.appendChild(wrapX(cmpTable(nums.map(it => ({ c: it.c, rows: it.d.numbers })))));
+  if (d0.table) {
+    const tb = el("table", "num"); let h = "<tr>" + (multi ? ["CCD"] : []).concat(d0.table.head).map(x => `<th>${x}</th>`).join("") + "</tr>";
+    for (const it of items) for (const r of (it.d.table ? it.d.table.rows : [])) h += "<tr>" + (multi ? `<td>${swatch(it.c)}${it.c.label}</td>` : "") + r.map(c => `<td class="v">${c}</td>`).join("") + "</tr>";
+    tb.innerHTML = h; t.appendChild(wrapX(tb));
   }
-  if (!d.plots || !d.plots.length) return;
+  if (!d0.plots || !d0.plots.length) return;
   const grid = el("div", "grid"); t.appendChild(grid);
-  for (const p of d.plots) {
+  for (const [j, p] of d0.plots.entries()) {
     const a = el("div", "card"); grid.appendChild(a);
     const lp = new LinePlot(a, { title: p.title, xlabel: p.xlabel, ylabel: p.ylabel, logx: !!p.logx, logy: !!p.logy, height: 270, yauto: true });
-    const ser = []; for (const s of p.series) ser.push({ x: await arr(s.x), y: await arr(s.y), name: s.name, style: s.style || "line", color: s.color });
+    const ns = p.series.length;
+    if (multi && ns > 1 && ns <= DASHES.length)      // one colour per CCD; the line style tells the series apart
+      a.firstChild.insertBefore(el("div", "help", p.series.map((s, k) => `${(s.style || "line") === "points" ? "points" : ["solid", "dashed", "dotted", "dash-dot"][k]}: ${s.name}`).join(" &middot; ")), a.firstChild.children[1]);
+    const ser = [];
+    for (const it of items) {
+      const q = (it.d.plots || [])[j]; if (!q) continue;
+      for (const [k, s] of q.series.entries()) ser.push({ x: await arr(s.x), y: await arr(s.y), style: s.style || "line", color: multi ? it.c.color : s.color,
+        dash: multi ? DASHES[k % DASHES.length] : undefined, name: !multi ? s.name : k === 0 ? it.c.label : "" });
+    }
     lp.set(ser);
   }
 }
 
 const HELP = `<h2 style="margin-top:0">How to use this report</h2>
-<p>One page per CCD. The buttons at the top switch between the tabs; a red dot on a tab means one of its numbers is outside the usual range (shown in red on the tab).</p>
+<p>One page per module. <b>CCDs</b> (below the tabs): tick the CCDs to show, <b>all CCDs in the module</b> for all of them, <b>only</b> next to a CCD for that one alone. Every tab follows the choice: traces one below the other, PSD and profiles overlaid (one colour per CCD), numbers side by side, images one CCD at a time. A red dot on a tab: one of its numbers is outside the usual range for a ticked CCD; a red dot on a CCD: that CCD has such numbers.</p>
 <h3>Plots</h3><p><kbd>drag</kbd> draw a box to zoom in on a range · <kbd>shift</kbd>+<kbd>drag</kbd> move the view · <kbd>wheel</kbd> zoom the x axis (with <kbd>alt</kbd>: the y axis) · <kbd>double-click</kbd> or <b>reset</b>: everything again · <b>log y</b>: switch the y axis · <b>PNG</b>: save the plot. Move the mouse over a plot to read the values.</p>
-<h3>Images</h3><p><kbd>wheel</kbd> or <b>+</b>/<b>&minus;</b> zoom · <kbd>drag</kbd> move · <kbd>click</kbd> a pixel: its row and column are plotted below · <kbd>shift</kbd>+<kbd>drag</kbd> a box: statistics of that region · <b>scale</b>: colour range (auto: around the background level, like ds9 zscale; 99.5 %: ignores the brightest pixels; manual: type min / max) · <b>asinh</b>: brings out faint structure · <b>fit</b> / <b>1:1</b> whole image / one image pixel per screen pixel. Row 0 is at the bottom (as ds9).</p>
+<h3>Images (like ds9 frames)</h3><p>The slider, <b>&#9664;</b> / <b>&#9654;</b> or the <kbd>&larr;</kbd> <kbd>&rarr;</kbd> keys switch between the ticked CCDs; zoom, pan, scale and the row / column cut stay, so the same spot can be compared. <b>blink</b> switches every second. <kbd>wheel</kbd> or <b>+</b>/<b>&minus;</b> zoom · <kbd>drag</kbd> move · <kbd>click</kbd> a pixel: its row and column are plotted below · <kbd>shift</kbd>+<kbd>drag</kbd> a box: statistics of that region · <b>scale</b>: colour range (auto: around the background level, like ds9 zscale; 99.5 %: ignores the brightest pixels; manual: type min / max) · <b>asinh</b>: brings out faint structure · <b>fit</b> / <b>1:1</b> whole image / one image pixel per screen pixel. Row 0 is at the bottom (as ds9).</p>
 <h3>Comments</h3><p>Type in the box at the bottom of any tab; it is kept in this browser automatically. <b>Save comments</b> writes them to a file (keep it next to the report, send it to others); <b>Load comments</b> reads such a file back.</p>
-<h3>PDF</h3><p><b>Export PDF</b> opens the print dialog with every tab on its own page and the comments included: choose "Save as PDF".</p>
-<h3>Log</h3><p>Each tab ends with the log of how its numbers were made: files, settings from the data header, checks, fit results.</p>`;
+<h3>PDF</h3><p><b>Export PDF</b> opens the print dialog with every tab on its own page (the ticked CCDs) and the comments included: choose "Save as PDF".</p>
+<h3>Log</h3><p>Each tab ends with the log of how its numbers were made (per ticked CCD): files, settings from the data header, checks, fit results.</p>`;
 
 (async function () {
   document.title = D.title; document.getElementById("title").textContent = D.title;
   document.getElementById("ident").textContent = D.ident;
-  for (const tb of D.tabs) {
-    addTab(tb.id, tb.label, async t => {
-      if (tb.kind === "overview") { t.appendChild(el("h2", "", "Overview")); t.appendChild(table(tb.numbers)); t.appendChild(el("h3", "", "Packet contents")); t.appendChild(table(tb.files)); }
-      else if (tb.kind === "trace") await traceTab(t, tb.data);
-      else if (tb.kind === "psd") await psdTab(t, tb.data);
-      else if (tb.kind === "summary") await imageSummaryTab(t, tb.data);
-      else if (tb.kind === "image") await imageTab(t, tb.data);
-      else if (tb.kind === "defects") await defectsTab(t, tb.data);
-      else if (tb.kind === "figure") await figureTab(t, tb.data);
-      else if (tb.kind === "plots") await plotsTab(t, tb.data);
-      commentBox(t, tb.id, "Comments on this page");
-      logBox(t, tb.log);
-    }, tb.flagged);
-  }
+  const R = { overview: overviewTab, trace: each(traceTab), psd: psdTab, summary: imageSummaryTab, image: imageTab, defects: defectsTab, figure: each(figureTab), plots: plotsTab };
+  for (const tb of D.tabs) addTab(tb, (t, items) => R[tb.kind](t, items));
   const sp = el("span", "sp"); nav.appendChild(sp);
   const save = el("button", "noprint", "Save comments"), load = el("button", "noprint", "Load comments"), pdf = el("button", "noprint", "Export PDF");
   const hb = el("button", "noprint", "? Help"); nav.appendChild(hb);
@@ -560,11 +678,32 @@ const HELP = `<h2 style="margin-top:0">How to use this report</h2>
   hb.onclick = () => { help.style.display = help.style.display === "block" ? "none" : "block"; };
   help.querySelector("#hclose").onclick = () => { help.style.display = "none"; };
   document.addEventListener("keydown", e => { if (e.key === "Escape") help.style.display = "none"; });
-  let seen = false; try { seen = localStorage.getItem("superWADERs:hint") === "1"; } catch (e) {}
-  if (!seen) { const h = el("div", "hint noprint", `<span>New here? Plots and images are interactive: drag to zoom, double-click to reset. Comments are saved as you type. Press <b>? Help</b> for everything.</span><button>got it</button>`); document.querySelector("header").after(h); h.querySelector("button").onclick = () => { h.remove(); try { localStorage.setItem("superWADERs:hint", "1"); } catch (e) {} }; }
+  let seen = false; try { seen = localStorage.getItem("superWADERs:hint2") === "1"; } catch (e) {}
+  if (!seen) { const h = el("div", "hint noprint", `<span>New here? Tick the CCDs to show below the tabs (all, or one with <b>only</b>). Plots and images are interactive: drag to zoom, double-click to reset; in an image, the slider or the arrow keys switch CCD. Comments are saved as you type. Press <b>? Help</b> for everything.</span><button>got it</button>`); document.querySelector("header").after(h); h.querySelector("button").onclick = () => { h.remove(); try { localStorage.setItem("superWADERs:hint2", "1"); } catch (e) {} }; }
   save.title = "write all comments of this report to a .json file"; load.title = "read comments from such a file"; pdf.title = "print every tab (with comments) - choose Save as PDF";
   const file = el("input"); file.type = "file"; file.accept = ".json"; file.style.display = "none";
   nav.append(save, load, pdf, file);
+  if (CCDS) {
+    const bar = el("div", "ccdbar noprint"); bar.appendChild(el("b", "", "CCDs"));
+    const all = el("label", "all", `<input type="checkbox"> all CCDs in the module`); all.title = "show every CCD of the module"; bar.appendChild(all);
+    const boxes = [];
+    const setSel = keys => {
+      if (keys.length) { SEL = CCDS.map(c => c.key).filter(k => keys.includes(k)); try { localStorage.setItem(KEY + ":ccds", JSON.stringify(SEL)); } catch (e) {} }
+      boxes.forEach(([c, i]) => { i.checked = SEL.includes(c.key); }); all.querySelector("input").checked = SEL.length === CCDS.length;
+      if (!keys.length) return;                                // at least one CCD stays ticked
+      updateDots(); tabs.forEach(x => x.stale()); const cur = tabs.find(x => x.b.classList.contains("on")); if (cur) cur.show();
+    };
+    for (const c of CCDS) {
+      const l = el("label", "", `<input type="checkbox"> ${swatch(c)}${c.label}` + ((c.flagged || []).length ? ` <span class="cflag" title="numbers outside the usual range on: ${c.flagged.join(", ")}">&#9679;</span>` : ""));
+      const i = l.querySelector("input"); i.onchange = () => setSel(i.checked ? [...SEL, c.key] : SEL.filter(k => k !== c.key));
+      const o = el("button", "only", "only"); o.title = `show ${c.label} alone`; o.onclick = () => setSel([c.key]);
+      bar.append(l, o); boxes.push([c, i]);
+    }
+    all.querySelector("input").onchange = e => setSel(e.target.checked ? CCDS.map(c => c.key) : [CCDS[0].key]);
+    nav.appendChild(bar);
+    boxes.forEach(([c, i]) => { i.checked = SEL.includes(c.key); }); all.querySelector("input").checked = SEL.length === CCDS.length;
+  }
+  updateDots();
   save.onclick = () => {
     const out = { report: D.report_id, saved: new Date().toISOString(), comments: {} };
     document.querySelectorAll(".comment textarea").forEach(ta => out.comments[ta.dataset.key] = ta.value);
@@ -577,7 +716,7 @@ const HELP = `<h2 style="margin-top:0">How to use this report</h2>
     document.querySelectorAll(".comment textarea").forEach(ta => { ta.value = (j.comments || {})[ta.dataset.key] || ""; ta.nextElementSibling.textContent = ta.value; });
   };
   pdf.onclick = async () => { for (const x of tabs) await x.build(); tabs.forEach(x => x.t.classList.add("on")); setTimeout(() => { window.print(); tabs.forEach(x => x.t.classList.remove("on")); (tabs.find(x => x.b.classList.contains("on")) || tabs[0]).t.classList.add("on"); }, 400); };
-  const want = location.hash.slice(1); (tabs.find(x => x.id === want) || tabs[0]).show();
+  const want = location.hash.slice(1); (tabs.find(x => x.tb.id === want) || tabs[0]).show();
 })();
 </script>
 </body>

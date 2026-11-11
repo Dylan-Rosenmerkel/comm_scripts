@@ -219,7 +219,8 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
         except Exception as e:                             # report and go on with the other groups
             lines.append(f"  {name}: FAILED ({type(e).__name__}: {e})")
             continue
-        tabs = []
+        tabs = [dict(id="map", label="Defect map", kind="defects", per={}, logs={})]     # one viewer, the CCDs as frames
+        ccd_list = []
         csv_rows = []
         for ch in range(4):
             ext = ch + 1
@@ -236,18 +237,21 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
                 dec *= 2
             counts = {t: sum(1 for r in rows if r[0] == t) for t, _ in TYPES}
             shown = sorted(rows, key=lambda r: -abs(r[4]))[:1500]
-            tabs.append(dict(id=f"ext{ext}", label=f"EXT{ext} {ccd}", kind="defects", log=[
+            key = f"ACM{acm}_EXT{ext}"
+            ccd_list.append(dict(key=key, label=f"EXT{ext} · {ccd}"))
+            tabs[0]["logs"][key] = [
                 f"composite median of {len(files)} image(s) of {itype} (rows x columns _ binning); types: {', '.join(kinds)}; "
                 f"noise {noises[ch]} ADU",
-                f"geometry: prescan {geo['prescan']}, first overscan column {geo['overscan_start']}, vertical overscan from row {geo['y_overscan_start']}"]
-                + [f"{t}: {n}" for t, n in counts.items()] + ([f"view binned {dec}x{dec}; the defect list uses full-resolution positions"] if dec > 1 else []),
-                data=dict(title=f"EXT{ext} {ccd}: composite median of {len(files)} image(s)", unit="ADU", w=int(view.shape[1]),
+                f"geometry: prescan {geo['prescan']}, first overscan column {geo['overscan_start']}, vertical overscan from row {geo['y_overscan_start']}"] \
+                + [f"{t}: {n}" for t, n in counts.items()] + ([f"view binned {dec}x{dec}; the defect list uses full-resolution positions"] if dec > 1 else [])
+            tabs[0]["per"][key] = dict(
+                          title=f"EXT{ext} {ccd}: composite median of {len(files)} image(s)", unit="ADU", w=int(view.shape[1]),
                           h=int(view.shape[0]), pixels=PR.enc(view), mask=PR.enc(vmask, "u1"),
                           types=[dict(name=t, color=c, n=counts[t]) for t, c in TYPES],
                           defects=[[r[0], int(r[1] // dec), int(r[2] // dec) if r[2] >= 0 else -1, r[3], r[4], r[5]] for r in shown],
                           defects_more=max(0, len(rows) - len(shown)),
                           numbers=[["images", str(len(files))], ["noise (overscan)", f"{noises[ch]} ADU"]]
-                          + [[t, str(n), t.endswith("column") and n > 0] for t, n in counts.items()])))
+                          + [[t, str(n), t.endswith("column") and n > 0] for t, n in counts.items()])
         figs = []
         for png in sorted(glob.glob(os.path.join(d, "*.png"))):
             import base64
@@ -259,8 +263,8 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
             tabs.append(dict(id="scripts", label="Group scripts", kind="figure",
                              data=dict(title="Image_4 (composite) and Image_2 (per image): their figures", figures=figs), log=logs))
         if script_note:
-            for tb in tabs:
-                tb["log"].insert(0, script_note)
+            for lg in list(tabs[0]["logs"].values()) + [tb["log"] for tb in tabs[1:]]:
+                lg.insert(0, script_note)
         import csv
         with open(os.path.join(d, "defects.csv"), "w", newline="") as fh:
             w = csv.writer(fh)
@@ -268,7 +272,7 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
                         "value_adu", "seen_in"])
             w.writerows(csv_rows)
         size = PR.write_page(os.path.join(d, "defect_map.html"), name, f"{module} · ACM {acm} · {itype} · defect map",
-                             f"defect map (run_superWADERs --defect-map), {len(files)} image(s)", tabs)
+                             f"defect map (run_superWADERs --defect-map), {len(files)} image(s)", tabs, ccd_list)
         nums = [[f"EXT{c + 1}", ", ".join(f"{t}: {sum(1 for r in csv_rows if r[2] == c + 1 and r[5] == t)}" for t, _ in TYPES)] for c in range(4)]
         index.append((module, acm, itype, "4 CCDs", os.path.join(name, "defect_map.html"), [t["label"] for t in tabs], nums, size, []))
         lines.append(f"  {name}: {len(files)} image(s) ({', '.join(kinds)}), {len(csv_rows)} defects (defects.csv, defect_map.html"

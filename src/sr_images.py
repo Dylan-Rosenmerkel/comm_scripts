@@ -9,8 +9,9 @@ image (pedestal and fits from the native engine):
                   the pixels just above and below it are also above threshold (confined to its row)
   numbers         streaks per image, per read (row) and per 1000 reads, lengths, charge, position along the register
   DC plots        dark charge per read (row, from the 0e- fraction) against the read number / time, and the fit's DC
-Outputs (out_dir/sr/): sr_streaks.csv (one line per streak), sr_summary.csv, per module and image a PNG, and one
-interactive page per CCD (streak counts, DC per read, the image with the streaks marked, a clickable streak list).
+Outputs (out_dir/sr/): sr_streaks.csv (one line per streak), sr_summary.csv, per CCD a PNG, and one interactive
+page per module (CCD check boxes; streak counts, DC per read, the image with the streaks marked with a slider over the
+CCDs, a clickable streak list).
 Tested only on synthetic data so far (no SR image files yet): thresholds may need tuning on real SR images.
 """
 import os
@@ -94,7 +95,7 @@ def run(images, summaries, out_dir, mods_of, meta_of, thr_sigma=4.0, min_len=3, 
         w.writerows(sum_csv)
     lines = [f"serial-register images (--sr; streaks = runs >= {min_len} pixels > {thr_sigma} x noise along a read, confined "
              f"to it; {d}/):"]
-    index = []
+    modules = {}                         # module -> [(acm, ext, ccd, tabs, streaks)]: one page per module
     for (acm, n, ccd), items in sorted(per_ccd.items()):
         mod = mods_of(acm, n, ccd)
         rid = f"{mod}_ACM{acm}_EXT{n}_{ccd}_sr"
@@ -132,10 +133,16 @@ def run(images, summaries, out_dir, mods_of, meta_of, thr_sigma=4.0, min_len=3, 
                 pixels=PR.enc(it["img"]), mask=PR.enc(mask, "u1"), types=[dict(name="streak", color="#ff3b30", n=len(it["streaks"]))],
                 defects=[["streak", r[1], r[0], r[3], r[4], it["unit"]] for r in sorted(it["streaks"], key=lambda r: -r[4])[:1500]],
                 defects_more=max(0, len(it["streaks"]) - 1500), numbers=[["streaks", str(len(it["streaks"]))], ["reads", str(it["rows"])]])))
-        size = PR.write_page(os.path.join(d, rid + ".html"), rid, f"{mod} · ACM {acm} · EXT{n} · {ccd} · serial register",
-                             "serial-register images (run_superWADERs --sr)", tabs)
         nst = sum(len(it["streaks"]) for it in items)
-        index.append((mod, acm, n, ccd, rid + ".html", [t["label"] for t in tabs], [["streaks", str(nst)]], size, []))
+        modules.setdefault(mod, []).append((acm, n, ccd, tabs, nst))
         lines.append(f"  {mod} ACM {acm} EXT{n} {ccd}: {nst} streaks in {len(items)} image(s)")
+    index = []
+    for mod, its in sorted(modules.items()):
+        rid, name, ccds, tabs = PR.module_page(mod, [it[:4] for it in its])
+        size = PR.write_page(os.path.join(d, rid + "_sr.html"), rid + "_sr", f"{name} · serial register",
+                             "serial-register images (run_superWADERs --sr)", tabs, ccds)
+        index.append((mod, ", ".join(sorted({str(a) for a, *_ in its})), ", ".join(f"EXT{e}" for _, e, *_ in its),
+                      ", ".join(c for _, _, c, *_ in its), rid + "_sr.html", [t["label"] for t in tabs],
+                      [[f"EXT{e} streaks", str(k)] for _, e, _, _, k in its], size, []))
     PR.write_index(d, index, "Serial-register images")
     return lines

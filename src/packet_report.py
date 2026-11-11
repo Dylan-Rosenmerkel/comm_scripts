@@ -1,4 +1,4 @@
-"""Commissioning packet report (run_superWADERs --packet): one interactive HTML page per CCD from the files of a
+"""Commissioning packet report (run_superWADERs --packet): one interactive HTML page per module from the files of a
 packet, plus an index.
 
 A packet is a list of files in any order (.txt), of these types (recognised from the file, not the order):
@@ -11,9 +11,11 @@ DAQ binaries of averaged (L2) images are not read (give their avg_*.fits). A cha
 channels a trace did not record) is left out.
 
 Every CCD is identified by its ACM (board) id, extension number (= channel + 1), CCD name (the channel's name in the
-header / .meta, e.g. CCD_D) and module name (from --module-list, see read_module_list; else ACM<id>). Its report
-(packet/<module>_ACM<id>_EXT<n>_<ccd>.html) has the tabs for which the packet has data:
-  Overview, Trace, PSD, Image summary (fits per image; no clustering), one image viewer per image.
+header / .meta, e.g. CCD_D) and module name (from --module-list, see read_module_list; else ACM<id>). The report of
+a module (packet/<module>_ACM<id>.html) has the tabs for which the packet has data:
+  Overview, Trace, PSD, Image summary (fits per image; no clustering), one image viewer per image,
+and check boxes for its CCDs (all of them or single ones): traces are shown one below the other, PSDs and profiles
+overlaid, numbers side by side, images one CCD at a time with a slider (as ds9 frames).
 Each tab has a comment box (kept in the browser; 'Save comments' / 'Load comments' as a JSON file) and a log, and
 the page has 'Export PDF' (all tabs, comments included, through the browser's print). The page is self-contained:
 data are gzip + base64 in the page, plots and the image viewer are drawn by its own script (no network needed).
@@ -376,7 +378,7 @@ def build(paths, out_dir, module_list=None, autoconfig_args=(), log=print, mods_
             s["ccd"] = s["ccd"] or meta.get(f"CH{n - 1}")
             s["images"].append(res)
             s["files"].append(["image", os.path.basename(p)])
-    index = []
+    pages = {}                                  # module -> [(acm, ext, ccd, tabs, first image numbers, files)]
     for (acm, ext), s in sorted(ccds.items()):
         ccd = s["ccd"] or f"ch{ext - 1}"
         module = mods_of(acm, ext, ccd)
@@ -396,21 +398,48 @@ def build(paths, out_dir, module_list=None, autoconfig_args=(), log=print, mods_
                      f"{f['n']} samples"] for f, _ in s["psds"]]
             tabs.append(dict(id="psd", label="PSD", kind="psd", data=dict(files=[f for f, _ in s["psds"]], numbers=nums),
                              log=sum((lg for _, lg in s["psds"]), [])))
-        for k, (summ, view, lg) in enumerate(sorted(s["images"], key=lambda x: x[0]["role"])):
+        for summ, view, lg in sorted(s["images"], key=lambda x: x[0]["role"]):
             short = summ["role"].replace(" image", "")
-            tabs.append(dict(id=f"summary{k}", label=f"{short}: numbers", kind="summary", data=[summ], log=lg))
+            slug = re.sub(r"\W+", "_", short)                 # the same tab id for every CCD of the module
+            tabs.append(dict(id=f"summary_{slug}", label=f"{short}: numbers", kind="summary", data=[summ], log=lg))
             if view is not None:
-                tabs.append(dict(id=f"image{k}", label=f"{short}: image", kind="image", data=view, log=lg))
-        path = os.path.join(pdir, rid + ".html")
-        size = write_page(path, rid, f"{module} · ACM {acm} · EXT{ext} · {ccd}",
-                          f"commissioning packet report (run_superWADERs --packet), {len(s['files'])} file(s)", tabs)
+                tabs.append(dict(id=f"image_{slug}", label=f"{short}: image", kind="image", data=view, log=lg))
         first = next((a for a, _, _ in s["images"] if a["numbers"][0][0] == "image"), None)
-        index.append((module, acm, ext, ccd, os.path.basename(path), [tb["label"] for tb in tabs[1:]],
-                      first["numbers"][2:5] if first else [], size, [tb["label"] for tb in tabs if tb.get("flagged")]))
-        lines.append(f"  {rid}: {', '.join(t['label'] for t in tabs)}  ({os.path.getsize(path) / 1e6:.1f} MB)")
-    write_index(pdir, index)
+        pages.setdefault(module, []).append((acm, ext, ccd, tabs, first["numbers"][2:4] if first else [], s["files"]))
+    index = []
+    for module, items in sorted(pages.items()):
+        rid, name, ccd_list, tabs = module_page(module, [it[:4] for it in items])
+        path = os.path.join(pdir, rid + ".html")
+        nfiles = len({f[1] for it in items for f in it[5]})
+        size = write_page(path, rid, f"{name} · {len(items)} CCD(s)",
+                          f"commissioning packet report (run_superWADERs --packet), {nfiles} file(s)", tabs, ccd_list)
+        index.append((module, ", ".join(sorted({str(a) for a, *_ in items})), ", ".join(f"EXT{e}" for _, e, *_ in items),
+                      ", ".join(c for _, _, c, *_ in items), os.path.basename(path), [tb["label"] for tb in tabs[1:]],
+                      [[f"EXT{e} " + str(k), v] for _, e, _, _, nums, _ in items for k, v, *_ in nums], size,
+                      [tb["label"] for tb in tabs if tb.get("flagged")]))
+        lines.append(f"  {rid}: CCDs {', '.join(c['label'] for c in ccd_list)}; {', '.join(t['label'] for t in tabs)}  "
+                     f"({os.path.getsize(path) / 1e6:.1f} MB)")
+    write_index(pdir, index, "Commissioning packet: module reports")
     lines.append(f"  index: {os.path.join(pdir, 'index.html')}")
     return lines
+
+
+def module_page(module, items):
+    """One page per module from the pages of its CCDs, items [(acm, ext, ccd name, tabs)]. Returns (page id, title,
+    CCD list for the page's check boxes, tabs). A tab of the module holds the data of every CCD that has it:
+    tab['per'][ccd key] (and its log in tab['logs'][ccd key])."""
+    acms = sorted({a for a, *_ in items})
+    ccds = [dict(key=f"ACM{a}_EXT{e}", label=f"EXT{e} · {c}" + (f" · ACM {a}" if len(acms) > 1 else "")) for a, e, c, _ in items]
+    tabs, by = [], {}
+    for a, e, _, ts in items:
+        for tb in ts:
+            m = by.get(tb["id"])
+            if m is None:
+                m = by[tb["id"]] = dict(id=tb["id"], label=tb["label"], kind=tb["kind"], per={}, logs={})
+                tabs.append(m)
+            m["per"][f"ACM{a}_EXT{e}"] = tb["data"] if "data" in tb else dict(numbers=tb.get("numbers"), files=tb.get("files"))
+            m["logs"][f"ACM{a}_EXT{e}"] = tb.get("log") or []
+    return f"{module}_ACM{'_'.join(map(str, acms))}", f"{module} · ACM {', '.join(map(str, acms))}", ccds, tabs
 
 
 def flagged(rows):
@@ -418,18 +447,25 @@ def flagged(rows):
     return any(len(r) > 2 and r[2] for r in rows or [])
 
 
-def write_page(path, rid, title, ident, tabs):
+def write_page(path, rid, title, ident, tabs, ccds=None):
     """One self-contained report page (packet_report_template.html) with the given tabs; a tab gets the red dot when
-    one of its numbers is flagged. Returns the file size."""
-    for tb in tabs:
-        d = tb.get("data")
-        nums = list(tb.get("numbers") or [])
+    one of its numbers is flagged. ccds: the CCDs of a module page (module_page), for tabs with per-CCD data.
+    Returns the file size."""
+    def nums_of(d):
         if isinstance(d, dict):
-            nums += d.get("numbers") or []
-        elif isinstance(d, list):
-            nums += [r for x in d if isinstance(x, dict) for r in x.get("numbers") or []]
-        tb["flagged"] = flagged(nums)
-    page = dict(report_id=rid, title=title, ident=ident, tabs=tabs)
+            return list(d.get("numbers") or [])
+        if isinstance(d, list):
+            return [r for x in d if isinstance(x, dict) for r in x.get("numbers") or []]
+        return []
+    for tb in tabs:
+        if "per" in tb:
+            tb["flagged_ccds"] = [k for k, d in tb["per"].items() if flagged(nums_of(d))]
+            tb["flagged"] = bool(tb["flagged_ccds"])
+        else:
+            tb["flagged"] = flagged(list(tb.get("numbers") or []) + nums_of(tb.get("data")))
+    for c in ccds or []:
+        c["flagged"] = [tb["label"] for tb in tabs if c["key"] in tb.get("flagged_ccds", [])]
+    page = dict(report_id=rid, title=title, ident=ident, tabs=tabs, ccds=ccds)
     body = json.dumps(page, separators=(",", ":")).replace("</", "<\\/")
     body = re.sub(r"(?<=[:,\[])(-?Infinity|NaN)(?=[,\]}])", "null", body)     # JSON has no NaN
     with open(os.path.join(HERE, "packet_report_template.html")) as fh:
@@ -439,8 +475,8 @@ def write_page(path, rid, title, ident, tabs):
     return os.path.getsize(path)
 
 
-def write_index(pdir, rows, title="Commissioning packet: CCD reports"):
-    """packet/index.html: one row per CCD report."""
+def write_index(pdir, rows, title="Commissioning packet: module reports"):
+    """<dir>/index.html: one row per report (module)."""
     tr = []
     for module, acm, ext, ccd, fname, tabs, nums, size, flags in rows:
         n = " · ".join(html.escape(f"{k}: {v}") for k, v, *_ in nums)
@@ -461,7 +497,7 @@ input{{font-size:14px;padding:5px 8px;width:min(420px,100%);margin:6px 0 12px;ba
 </style></head><body><h1 style="font-size:19px">{html.escape(title)}</h1>
 <p class="muted">{len(rows)} report(s). Type to filter (module, ACM, CCD, ...); click a column title to sort. "flags": tabs with a number outside the usual range.</p>
 <input id="q" placeholder="filter, e.g. DM24 or 101 or CCD_A">
-<table id="t"><thead><tr><th>module</th><th>ACM</th><th>ext</th><th>CCD</th><th>report</th><th>flags</th><th>tabs</th><th>first image</th><th>size</th></tr></thead>
+<table id="t"><thead><tr><th>module</th><th>ACM</th><th>ext</th><th>CCDs</th><th>report</th><th>flags</th><th>tabs</th><th>summary</th><th>size</th></tr></thead>
 <tbody>{''.join(tr)}</tbody></table>
 <script>
 const q=document.getElementById("q"),tb=document.querySelector("#t tbody");

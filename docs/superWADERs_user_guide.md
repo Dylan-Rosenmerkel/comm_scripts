@@ -67,17 +67,18 @@ samples, pixels x skips, skip cycle, inline vs raw sums (agree = decoder and fir
 run_superWADERs packet.txt --packet --module-list modules.csv
 ```
 `packet.txt`: the packet's files in any order (traces, PSD traces, images, L1 files). Output `packet/`:
-`index.html` (one line per CCD: module, ACM, EXT, CCD name, flags; filter box, click a column title to sort) and
-one report per CCD `<module>_ACM<id>_EXT<n>_<CCD>.html`. No clustering. Tabs (only those the packet has data for):
+`index.html` (one line per module: ACM, extensions, CCD names, flags; filter box, click a column title to sort) and
+one report per module `<module>_ACM<id>.html` with check boxes for its CCDs (see section 3). No clustering. Tabs
+(only those the packet has data for):
 - **Overview**: identity, files, the main numbers of every image.
-- **Trace**: the whole trace (zoom down to single skip cycles; pedestal / signal windows shaded red / green),
+- **Trace** (the ticked CCDs one below the other): the whole trace (zoom down to single skip cycles; pedestal / signal windows shaded red / green),
   per-skip window means, CDS per skip, the folded skip cycle (mean +- 1 sigma), noise spectrum, decoder checks.
 - **PSD**: ADC trace, periodogram, Welch (linear and log) with sigma_ADU and sigma_CDS (CDS of windows of the
-  delayInt length); several PSD files of the CCD overlaid.
+  delayInt length); the ticked CCDs overlaid, one colour per CCD.
 - **Image summary**: per image gain, noise, dark current (fit and 0e-/1e- counts), chi2, pedestal method, gain
-  choice; the pixel-charge histogram with the fit; pedestal and sigma per row; dark charge per row; column and row
-  medians. Numbers outside the usual range are red, and the tab gets a red dot.
-- **One viewer per image** (ds9-like): see section 3.
+  choice (the CCDs side by side); the pixel-charge histogram with the fit (one per CCD); pedestal and sigma per row,
+  dark charge per row, column and row medians (CCDs overlaid). Numbers outside the usual range are red, and the tab gets a red dot.
+- **One viewer per image** (ds9-like, a slider switches between the CCDs as ds9 frames): see section 3.
 
 ### Dark current over a series (`--dc-series`)
 ```
@@ -85,7 +86,9 @@ run_superWADERs series.txt --dc-series [--dc-limit 0.01] [--no-clusters] --modul
 ```
 The usual run, plus `dc_series/`: `dc_report.pdf` (summary table; one page per module: rates of its CCDs vs time;
 one page per CCD: dark charge per image (fit and 0e-/1e- counts), rate vs time with the settling fit, dark charge per
-row vs the row's waiting time), `dc_series.csv`, `index.html` + one interactive page per CCD.
+row vs the row's waiting time), `dc_series.csv`, `index.html` + one interactive page per module `<module>_ACM<id>_dc.html` (tabs Rates, Fits, Per
+row, Data, Method; the ticked CCDs overlaid in the plots, side by side in the tables; Fits: every image's
+pixel-charge histogram with the dark-current fit, per CCD).
 Rates in e-/pix/day: DC / (exposure + readout/2); the row fit gives the rate from the growth along the rows
 (slope) and the charge that does not grow with time (intercept: made during the readout). Flags: above
 `--dc-limit`, still falling at the end. A settling fit (plateau + exponential) is shown with 5 or more images.
@@ -102,8 +105,8 @@ Per module and image size: all images of one ACM with the same rows x columns an
 - `defects.csv`, the defect log: type (bright / dark column, hot / cold pixel spot), column, row, size, value,
   number of images it is seen in;
 - `composite_EXT<n>.fits`;
-- `defect_map.html`: per CCD the composite with the defects marked (tick boxes per type), the defect list (click a
-  line to jump to it), and a tab with the scripts' figures and logs. `defects/index.html` lists the modules.
+- `defect_map.html`: the composite with the defects marked (tick boxes per type), one CCD at a time with the frame
+  slider, the defect list of that CCD (click a line to jump to it), and a tab with the scripts' figures and logs. `defects/index.html` lists the modules.
 
 ### Serial-register images (`--sr`)
 ```
@@ -112,19 +115,28 @@ run_superWADERs sr_images.txt --sr [--sr-threshold 4] [--sr-min-length 3] [--no-
 Streaks = serial-register events (readout artifacts): runs of >= `--sr-min-length` pixels above `--sr-threshold` x
 noise along one read (row), confined to it. `sr/`: `sr_streaks.csv` (one line per streak), `sr_summary.csv` (per
 image and CCD: streaks, per 1000 reads, median length, DC), per CCD a PNG (counts per image, lengths, positions
-along the register, dark charge per read) and an interactive page (the images with the streaks marked).
+along the register, dark charge per read) and one interactive page per module `<module>_ACM<id>_sr.html` (the
+images with the streaks marked, the frame slider over the CCDs).
 
 ## 3. Using the HTML pages
 
 Every page works offline (no network) in Chrome, Safari or Firefox; open it by double-click.
 - **First visit**: a blue hint line; **? Help** (top right) explains everything; Esc closes it.
+- **CCDs** (the row below the tabs, on every module page): tick the CCDs to show; **all CCDs in the module** ticks
+  them all; **only** next to a CCD shows that one alone. Every tab follows: traces one below the other; PSD,
+  profiles and series plots overlaid (one colour per CCD; with two or more series per CCD the line style is
+  explained above the plot); numbers side by side (a value the same for every CCD is shown once, grey); fit
+  histograms and figures one per CCD; images one CCD at a time. The choice is remembered in the browser. A red dot
+  next to a CCD: it has numbers outside the usual range.
 - **Plots**: drag a box to zoom; shift + drag to move; mouse wheel zooms x (alt + wheel: y); double-click or
   **reset** shows everything again; **log y** / **lin y** switches the y axis; **PNG** saves the plot. Hover to
   read values.
 - **Images**: wheel or **+** / **-** zoom, drag to move, **fit** / **1:1**; click a pixel: its row and column are
   plotted below (the middle row / column at start); shift + drag a box: mean, median, std, min, max of the region;
   **scale** (99.5 % hides the brightest pixels; manual: type min / max), **colormap**, **asinh** (faint
-  structure), colour bar below; row 0 at the bottom as in ds9; **PNG** saves the view. Defect pages: tick boxes per
+  structure), colour bar below; row 0 at the bottom as in ds9; **PNG** saves the view. **Frames**: the slider,
+  the arrow buttons or the left / right arrow keys switch between the ticked CCDs, keeping zoom, position, scale
+  mode and the cut (to compare the same spot); **blink** switches every second. Defect pages: tick boxes per
   defect type, "show markings", click a defect in the list to jump to it.
 - **Comments**: one box per tab; saved in the browser as you type. **Save comments** writes all of a report's
   comments to `<report>_comments.json` (keep it next to the report or send it), **Load comments** reads it back.

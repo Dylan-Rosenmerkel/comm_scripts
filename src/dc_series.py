@@ -222,7 +222,7 @@ def report(records, meta_of, mods_of, out_dir, limit=None, autoconfig_args=()):
     write_csv(series, mods_of, os.path.join(d, "dc_series.csv"))
     write_pdf(series, sums, mods_of, os.path.join(d, "dc_report.pdf"), limit)
     lines = [f"dark-current series (--dc-series; {d}/: dc_report.pdf, dc_series.csv, index.html):"]
-    index = []
+    modules = {}                     # module -> [(acm, ext, ccd, tabs, numbers, flags)]: one page per module
     for (acm, ext), pts in sorted(series.items()):
         s = sums[(acm, ext)]
         ccd, mod = pts[0]["ccd"], mods_of(acm, ext, pts[0]["ccd"])
@@ -278,9 +278,7 @@ def report(records, meta_of, mods_of, out_dir, limit=None, autoconfig_args=()):
             "comparable, their dark charge per image is not."]
         log = [f"{p['image']}: DATEINI {p['time']}, exposure {p['exposure']} s, readout {p['readout']:.0f} s, DC {p['dc']:.4g} "
                f"+- {p['dc_err']:.2g} e-/pix, rate {p['rate']:.4g} e-/pix/day" for p in pts]
-        rid = f"{mod}_ACM{acm}_EXT{ext}_{ccd}_dc"
-        size = PR.write_page(os.path.join(d, rid + ".html"), rid, f"{mod} · ACM {acm} · EXT{ext} · {ccd} · dark current",
-                             "dark current over the series (run_superWADERs --dc-series)",
+        modules.setdefault(mod, []).append((acm, ext, ccd,
                              [dict(id="dc", label="Rates", kind="plots", data=dict(title="Dark current over the series",
                                                                                    numbers=nums, plots=plots), log=log),
                               dict(id="fits", label="Fits", kind="summary",
@@ -293,9 +291,18 @@ def report(records, meta_of, mods_of, out_dir, limit=None, autoconfig_args=()):
                               dict(id="data", label="Data", kind="plots", data=dict(title="The numbers of every image",
                                                                                    table=dict(head=head, rows=rows), plots=[]), log=log),
                               dict(id="method", label="Method", kind="plots", data=dict(title="Where these numbers come from",
-                                                                                       text=method, plots=[]), log=[])])
-        index.append((mod, acm, ext, ccd, rid + ".html", ["Dark current"], nums[1:3], size, ["Dark current"] if flags else []))
+                                                                                       text=method, plots=[]), log=[])],
+                                            nums, flags))
         lines.append(f"  {mod} ACM {acm} EXT{ext} {ccd}: {s['n']} images, median {s['median']:.4g}, last {s['last']:.4g} e-/pix/day"
                      + (f", plateau {s['fit'][0]:.4g} (tau {s['fit'][2]:.3g} h)" if s["fit"] else "") + (f"  [{', '.join(flags)}]" if flags else ""))
+    index = []
+    for mod, items in sorted(modules.items()):
+        rid, name, ccds, tabs = PR.module_page(mod, [it[:4] for it in items])
+        size = PR.write_page(os.path.join(d, rid + "_dc.html"), rid + "_dc", f"{name} · dark current",
+                             "dark current over the series (run_superWADERs --dc-series)", tabs, ccds)
+        index.append((mod, ", ".join(sorted({str(a) for a, *_ in items})), ", ".join(f"EXT{e}" for _, e, *_ in items),
+                      ", ".join(c for _, _, c, *_ in items), rid + "_dc.html", [t["label"] for t in tabs],
+                      [[f"EXT{e} median rate", nums[1][1]] for _, e, _, _, nums, _ in items], size,
+                      [f"EXT{e}: {', '.join(fl)}" for _, e, _, _, _, fl in items if fl]))
     PR.write_index(d, index, "Dark current over the series")
     return lines
