@@ -246,12 +246,17 @@ def image_data(path, autoconfig_args):
         x1 = plot_range(st, {"resolved": resolved, "gain": g}, 5)
         data = ps[NP.fit_mask(ps.shape, active, st)]
         nb = max(int(round((x1 - st["x_min"]) / st["binning_size"])), 10)
-        hy, he = np.histogram(data[(data > st["x_min"]) & (data < x1)], nb, (st["x_min"], x1))
+        if resolved:                            # the dark-current fit's histogram and model
+            hy, he = np.histogram(data[(data > st["x_min"]) & (data < x1)], nb, (st["x_min"], x1))
+            mx = np.linspace(st["x_min"], x1, 1500)
+            p = [fit[k][0] for k in ("norm", "mu", "sigma", "lam", "gain")]
+            npk = max(st["n_peaks"], int(math.ceil((x1 - p[1]) / max(p[4], 1e-6))) + 1)
+            my = NP.comb_model(mx, p, npk)
+        else:                                   # no electron peaks: no comb fit; the pixel distribution only
+            lo_, hi_ = np.percentile(data, [0.5, 99.5])
+            hy, he = np.histogram(data[(data > lo_) & (data < hi_)], 400, (lo_, hi_))
+            mx = my = None
         hx = he[:-1]
-        mx = np.linspace(st["x_min"], x1, 1500)
-        p = [fit[k][0] for k in ("norm", "mu", "sigma", "lam", "gain")]
-        npk = max(st["n_peaks"], int(math.ceil((x1 - p[1]) / max(p[4], 1e-6))) + 1)
-        my = NP.comb_model(mx, p, npk)
         e = ps / g
         lam_row = None
         if resolved:
@@ -260,17 +265,28 @@ def image_data(path, autoconfig_args):
                 lam_row = -np.log(fr0)
         row_med = np.array([np.median(ps[r][active[r]]) if active[r].any() else np.nan for r in range(ps.shape[0])])
         held = c.get("held")
-        numbers = [["image", os.path.basename(path)], ["type", role],
-                   ["gain", f"{g:.4f} +- {c['gain_err']:.4f} ADU/e-" + (" (held: many-peak fit)" if held else "")],
-                   ["noise", f"{c['noise_e']:.4f} e- = {fit['sigma'][0]:.3f} ADU", c["noise_e"] > 0.3],
-                   ["dark charge (fit)", f"{c['dc_e']:.4f} e-/pix" + ("" if resolved else " (peaks not resolved: not meaningful)"), not resolved],
-                   ["dark charge (0e-/1e- counts)", f"{c['lam01']:.4f} e-/pix" if c.get("lam01") is not None else "-"],
-                   ["chi2 / ndf", f"{c['chi2ndf']:.2f}"], ["electron peaks resolved", "yes" if resolved else "no"],
-                   ["pedestal", c["pedestal"]["description"]], ["gain choice", c["gain_note"]],
+        act_px = ps[active]
+        if resolved:
+            numbers = [["image", os.path.basename(path)], ["type", role],
+                       ["gain", f"{g:.4f} +- {c['gain_err']:.4f} ADU/e-" + (" (held: many-peak fit)" if held else "")],
+                       ["noise", f"{c['noise_e']:.4f} e- = {fit['sigma'][0]:.3f} ADU", c["noise_e"] > 0.3],
+                       ["dark charge (fit)", f"{c['dc_e']:.4f} e-/pix"],
+                       ["dark charge (0e-/1e- counts)", f"{c['lam01']:.4f} e-/pix" if c.get("lam01") is not None else "-"],
+                       ["chi2 / ndf", f"{c['chi2ndf']:.2f}"], ["electron peaks resolved", "yes"]]
+        else:                                   # nothing to fit: what the pixels show
+            numbers = [["image", os.path.basename(path)], ["type", role],
+                       ["electron peaks resolved", "no: no gain or dark-current fit (single electrons not visible)"],
+                       ["read noise (pedestal sigma, mean over rows)", f"{np.nanmean(c['sig_row']):.3f} ADU"],
+                       ["active area: median level", f"{np.median(act_px):.2f} ADU (~{np.median(act_px) / g:.1f} e- with the nominal gain {g:.3f})"],
+                       ["active area: spread (MAD)", f"{1.4826 * np.median(np.abs(act_px - np.median(act_px))):.2f} ADU"],
+                       ["pixels > 10 x noise", f"{np.mean(act_px > 10 * np.nanmean(c['sig_row'])) * 100:.2f} %"]]
+        numbers += [
+                   ["pedestal", c["pedestal"]["description"]]] + ([["gain choice", c["gain_note"]]] if resolved else []) + [
                    ["pedestal sigma (mean over rows)", f"{np.nanmean(c['sig_row']):.3f} ADU"],
                    ["size", f"{ps.shape[0]} rows x {ps.shape[1]} columns"]]
         summ = dict(role=role, file=os.path.basename(path), numbers=numbers, unit=unit,
-                    hist=dict(x=enc(hx, "f8"), y=enc(hy.astype(float)), mx=enc(mx, "f8"), my=enc(my)),
+                    hist=dict(x=enc(hx, "f8"), y=enc(hy.astype(float)), mx=enc(mx, "f8") if mx is not None else None,
+                              my=enc(my) if my is not None else None, fitted=bool(resolved)),
                     mu_row=enc(c["mu_row"]), sig_row=enc(c["sig_row"]), lam_row=enc(lam_row) if lam_row is not None else None,
                     col_med=enc(np.median(ps, axis=0)), row_med=enc(row_med))
         view, dec = ps, 1
@@ -380,12 +396,11 @@ def build(paths, out_dir, module_list=None, autoconfig_args=(), log=print, mods_
                      f"{f['n']} samples"] for f, _ in s["psds"]]
             tabs.append(dict(id="psd", label="PSD", kind="psd", data=dict(files=[f for f, _ in s["psds"]], numbers=nums),
                              log=sum((lg for _, lg in s["psds"]), [])))
-        if s["images"]:
-            tabs.append(dict(id="summary", label="Image summary", kind="summary", data=[a for a, _, _ in s["images"]],
-                             log=sum((lg for _, _, lg in s["images"]), [])))
-            for k, (summ, view, lg) in enumerate(s["images"]):
-                if view is not None:
-                    tabs.append(dict(id=f"image{k}", label=summ["role"].replace(" image", ""), kind="image", data=view, log=lg))
+        for k, (summ, view, lg) in enumerate(sorted(s["images"], key=lambda x: x[0]["role"])):
+            short = summ["role"].replace(" image", "")
+            tabs.append(dict(id=f"summary{k}", label=f"{short}: numbers", kind="summary", data=[summ], log=lg))
+            if view is not None:
+                tabs.append(dict(id=f"image{k}", label=f"{short}: image", kind="image", data=view, log=lg))
         path = os.path.join(pdir, rid + ".html")
         size = write_page(path, rid, f"{module} · ACM {acm} · EXT{ext} · {ccd}",
                           f"commissioning packet report (run_superWADERs --packet), {len(s['files'])} file(s)", tabs)

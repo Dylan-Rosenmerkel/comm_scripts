@@ -281,7 +281,7 @@ class ImageView {
   constructor(parent, img, w, h, o) {
     this.img = img; this.w = w; this.h = h; this.o = o || {};
     const ctl = document.createElement("div"); ctl.className = "controls"; parent.appendChild(ctl);
-    ctl.innerHTML = `scale <select class="mode"><option value="z">99.5 %</option><option value="p99">99 %</option><option value="p95">95 %</option><option value="mm">min/max</option><option value="man">manual</option></select>
+    ctl.innerHTML = `scale <select class="mode"><option value="auto">auto (background)</option><option value="z">99.5 %</option><option value="p99">99 %</option><option value="p95">95 %</option><option value="mm">min/max</option><option value="man">manual</option></select>
       min <input type="number" step="any" class="vmin"> max <input type="number" step="any" class="vmax">
       colormap <select class="cmap"><option>gray</option><option>viridis</option><option>heat</option></select>
       <label><input type="checkbox" class="logs"> asinh</label>
@@ -319,9 +319,13 @@ class ImageView {
   }
   limits() {
     const m = this.ctl.querySelector(".mode").value;
-    const r = { z: [0.0025, 0.9975], p99: [0.005, 0.995], p95: [0.025, 0.975], mm: [0, 1] }[m];
     if (m === "man") return [parseFloat(this.ctl.querySelector(".vmin").value), parseFloat(this.ctl.querySelector(".vmax").value)];
-    const lo = this.q(r[0]), hi = this.q(r[1]); this.ctl.querySelector(".vmin").value = (+lo.toPrecision(5)); this.ctl.querySelector(".vmax").value = (+hi.toPrecision(5)); return [lo, hi];
+    let lo, hi;
+    if (m === "auto") {       // like ds9 zscale: around the background, so faint structure and tracks both show
+      const med = this.q(0.5), mad = Math.max(this.q(0.75) - this.q(0.25), 1e-6) / 1.349;
+      lo = Math.max(this.q(0), med - 3 * mad); hi = Math.min(this.q(1), med + 10 * mad);
+      if (!(hi > lo)) { lo = this.q(0.0025); hi = this.q(0.9975); }
+    } else { const r = { z: [0.0025, 0.9975], p99: [0.005, 0.995], p95: [0.025, 0.975], mm: [0, 1] }[m]; lo = this.q(r[0]); hi = this.q(r[1]); } this.ctl.querySelector(".vmin").value = (+lo.toPrecision(5)); this.ctl.querySelector(".vmax").value = (+hi.toPrecision(5)); return [lo, hi];
   }
   render() {
     const [lo, hi] = this.limits(), cm = CMAPS[this.ctl.querySelector(".cmap").value], asinh = this.ctl.querySelector(".logs").checked;
@@ -463,7 +467,7 @@ async function psdTab(t, ps) {
   tr.set(S.t); pg.set(S.p); wl.set(S.wl); wg.set(S.wg);
 }
 async function imageSummaryTab(t, ims) {
-  t.appendChild(el("h2", "", "Image summaries (pedestal, fits; no clustering)"));
+  t.appendChild(el("h2", "", ims.length > 1 ? "Image summaries (pedestal, fits; no clustering)" : `${ims[0].role}: numbers and profiles`));
   for (const im of ims) {
     const card = el("div", "card"); t.appendChild(card);
     card.appendChild(el("h3", "", `${im.role}: ${im.file}`));
@@ -471,7 +475,7 @@ async function imageSummaryTab(t, ims) {
     const grid = el("div", "grid"); card.appendChild(grid);
     const mk = (title, o) => { const a = el("div", "card"); grid.appendChild(a); return new LinePlot(a, Object.assign({ title, height: 250 }, o)); };
     if (im.hist) {
-      const h = mk("pixel charge and dark-current fit (window solid, model continued dashed)", { xlabel: "pixel charge [ADU]", ylabel: "counts", logy: true });
+      const h = mk(im.hist.fitted ? "pixel charge and dark-current fit" : "pixel charge (electron peaks not resolved: no fit)", { xlabel: "pixel charge [ADU]", ylabel: "counts", logy: true });
       const ser = [{ x: await arr(im.hist.x), y: await arr(im.hist.y), style: "step", color: css("--fg"), name: "pixels" }];
       if (im.hist.mx) ser.push({ x: await arr(im.hist.mx), y: await arr(im.hist.my), color: "#c0392b", width: 2, name: "fit" });
       h.set(ser);
@@ -520,7 +524,7 @@ async function plotsTab(t, d) {
 const HELP = `<h2 style="margin-top:0">How to use this report</h2>
 <p>One page per CCD. The buttons at the top switch between the tabs; a red dot on a tab means one of its numbers is outside the usual range (shown in red on the tab).</p>
 <h3>Plots</h3><p><kbd>drag</kbd> draw a box to zoom in on a range · <kbd>shift</kbd>+<kbd>drag</kbd> move the view · <kbd>wheel</kbd> zoom the x axis (with <kbd>alt</kbd>: the y axis) · <kbd>double-click</kbd> or <b>reset</b>: everything again · <b>log y</b>: switch the y axis · <b>PNG</b>: save the plot. Move the mouse over a plot to read the values.</p>
-<h3>Images</h3><p><kbd>wheel</kbd> or <b>+</b>/<b>&minus;</b> zoom · <kbd>drag</kbd> move · <kbd>click</kbd> a pixel: its row and column are plotted below · <kbd>shift</kbd>+<kbd>drag</kbd> a box: statistics of that region · <b>scale</b>: colour range (99.5 % ignores the brightest pixels; manual: type min / max) · <b>asinh</b>: brings out faint structure · <b>fit</b> / <b>1:1</b> whole image / one image pixel per screen pixel. Row 0 is at the bottom (as ds9).</p>
+<h3>Images</h3><p><kbd>wheel</kbd> or <b>+</b>/<b>&minus;</b> zoom · <kbd>drag</kbd> move · <kbd>click</kbd> a pixel: its row and column are plotted below · <kbd>shift</kbd>+<kbd>drag</kbd> a box: statistics of that region · <b>scale</b>: colour range (auto: around the background level, like ds9 zscale; 99.5 %: ignores the brightest pixels; manual: type min / max) · <b>asinh</b>: brings out faint structure · <b>fit</b> / <b>1:1</b> whole image / one image pixel per screen pixel. Row 0 is at the bottom (as ds9).</p>
 <h3>Comments</h3><p>Type in the box at the bottom of any tab; it is kept in this browser automatically. <b>Save comments</b> writes them to a file (keep it next to the report, send it to others); <b>Load comments</b> reads such a file back.</p>
 <h3>PDF</h3><p><b>Export PDF</b> opens the print dialog with every tab on its own page and the comments included: choose "Save as PDF".</p>
 <h3>Log</h3><p>Each tab ends with the log of how its numbers were made: files, settings from the data header, checks, fit results.</p>`;
