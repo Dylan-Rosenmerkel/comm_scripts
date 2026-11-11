@@ -499,8 +499,9 @@ function addTab(tb, render) {
     else await render(box, items);
     if (my === gen) { content.replaceChildren(box); lg.textContent = logOf(tb).join("\n"); }
   };
-  tabs.push({ tb, b, t, dot,
-    show: async () => { tabs.forEach(x => { x.b.classList.remove("on"); x.t.classList.remove("on"); }); b.classList.add("on"); t.classList.add("on"); location.hash = tb.id; if (!fresh) await build(); },
+  const show = async () => { tabs.forEach(x => { x.b.classList.remove("on"); x.t.classList.remove("on"); }); b.classList.add("on"); t.classList.add("on"); location.hash = tb.id; if (!fresh) await build(); };
+  b.onclick = show;
+  tabs.push({ tb, b, t, dot, show,
     build: async () => { if (!fresh) await build(); },
     stale: () => { if (tb.per) fresh = false; } });
 }
