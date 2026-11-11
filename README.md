@@ -11,9 +11,11 @@ Scripts to analyse skipper-CCD images with panaSKImg (WADERs) without writing JS
 comm_scripts/
   README.md
   bin/     commands to run          run_WADERs (and the alias runWADERs), run_superWADERs (run_WADERs with the native
-                                    engine as default), run_AGMX (A_GMX clusters for a finished run)
+                                    engine as default, plus the commissioning tools), run_AGMX (A_GMX clusters for a
+                                    finished run)
   src/     the pipeline modules     autoconfig_panaSKImg.py, gain_dc_split.py,
-                                    gain_vs_charge.py, fit_quality.py, agmx_root.py (A_GMX -> panaSKImg cluster files)
+                                    gain_vs_charge.py, fit_quality.py, agmx_root.py (A_GMX -> panaSKImg cluster files);
+                                    native engine and commissioning tools of run_superWADERs (see that section)
   utils/   standalone helpers       compare_dcfit_vs_skips.py, split_clustersRec_by_ext.py,
                                     skip_noise_L1.py, compare_runs.py
   clustering_tests/  research code   alternative clustering methods (A_GMX, GMX, MHC, MFD+G, ...) and the
@@ -42,16 +44,9 @@ function does what. Everything still open: `docs/notes/OPEN_ITEMS.md`.
 /path/to/comm_scripts/bin/run_superWADERs my_images.txt   # the same without panaSKImg (native engine)
 ```
 
-`run_superWADERs` is `run_WADERs --engine native`: comm_scripts' own pedestal, fits, clustering and cluster files in
-panaSKImg's format (src/native_pipeline.py), one process per image, with the same options, output folders and
-summary; cluster thresholds in electrons from the dark charge (`--thresholds auto`). Both commands take
-`--engine native|waders`. It also takes the DAQ's raw files (`.RJ45ADCDATA<ch>`, directly or in a list):
-level-0 traces are decoded, checked and plotted (`L0/`); level-1 images become FITS images with N skips each
-(`--l1-skips 1,10,100,1000`, `L1/`) that run through the pipeline, with noise vs N and the fits side by side.
-With `--packet` (and `--module-list FILE`) a list of a commissioning packet's
-files (traces, PSD traces, images, in any order) gives one interactive HTML report per CCD (`packet/`).
-Details and validation: docs/native_pipeline.md; plans: docs/superWADERs_commissioning_next_steps.md; how to use everything: docs/superWADERs_user_guide.md.
-Commissioning flags (native): `--packet`, `--dc-series`, `--defect-map`, `--sr`, `--l1-skips`, `--module-list`.
+`run_superWADERs` is `run_WADERs` without panaSKImg (its own "native" engine), plus the commissioning tools: raw
+L0 / L1 files, commissioning packet reports, dark current over a series, defect maps and serial-register images.
+See [run_superWADERs](#run_superwaders-native-engine-and-commissioning-tools) below.
 
 Results go to `WADERs_analysis_<image or list name>/` in the current folder (`-o` to choose another):
 
@@ -107,6 +102,131 @@ charge; it is not the default because on the Am-241 lines (AMtest EXT4, 2026-10-
 gain periods by 0.6 % (on Fe-55 it was as good or slightly better).
 On the 2025-08-27 Image 5s the per-image and pooled curves gave the same front-side K-alpha to
 within a few eV whenever an image's own comb was usable.
+
+## run_superWADERs: native engine and commissioning tools
+
+`run_superWADERs` = `run_WADERs --engine native`: comm_scripts' own pedestal, fits, clustering and cluster files in
+panaSKImg's format (`src/native_pipeline.py`), one process per image, with the same options, output folders and
+`summary.txt`. `run_WADERs` still runs panaSKImg by default; `--engine native|waders` switches either command. It
+needs the `damic` conda environment (found automatically, as for `run_WADERs`).
+
+```bash
+run_superWADERs INPUT [-o PARENT] [-j N] [--overwrite] [options]    # INPUT: one file, or a .txt list (one path per line)
+run_superWADERs -h                                                  # every flag;  -h -v: the full guide
+```
+
+Results: `PARENT/WADERs_analysis_<input name>/`; read `summary.txt` first. The full user guide, with what every
+number and plot means and what data are still needed to validate each tool, is
+[docs/superWADERs_user_guide.md](docs/superWADERs_user_guide.md).
+
+### Inputs
+
+| file | what it is | what happens to it |
+|---|---|---|
+| `avg_*.fits`, `.fits.bz2`, `.fz` | averaged images from the DAQ (any size, binning, number of skips) | image pipeline: pedestal, fits, clusters |
+| `trace_*.RJ45ADCDATA<ch>` (+ `.meta`) | level-0 trace: raw video samples of one channel | decoded, checked, plotted (`L0/`) |
+| `psd_*.RJ45ADCDATA<ch>` (+ `.meta`) | level-0 noise trace (no skip windows) | samples and noise spectra |
+| `*_L1_*.RJ45ADCDATA0..3` + `.meta` | level-1 image: every skip of every pixel (binned or not) | FITS images with N skips each, then the pipeline (`L1/`) |
+
+Files in a list may come in any order: the type is read from the file, the four channel files of an L1 image are
+grouped by name. Give averaged (L2) images as their `avg_*.fits`.
+
+**Module names** (`--module-list FILE`): a correlation list, one line per ACM (or per CCD when one board carries
+CCDs of different modules); comma, tab or space separated, `#` comments and a header line are ignored:
+
+```
+# ACM, module[, EXT<n> or CCD name]
+101, DM24
+102, DM25
+103, PA03, EXT2
+```
+
+Without an entry the name comes from `--module ACM=NAME`, then the data folder name (`..._DMa_DMb_DMc_...`), else
+`ACM<id>`.
+
+### What to run
+
+| task | command | output (in the run folder) |
+|---|---|---|
+| ordinary analysis without panaSKImg | `run_superWADERs images.txt [--gain-correction] [--clusterer both] [--composite]` | as run_WADERs |
+| L0 traces / PSD traces | `run_superWADERs traces.txt [--l0-no-html]` | `L0/<trace>/`: `overview.png`, `viewer.html`, `summary.json` |
+| L1 images at several skip counts | `run_superWADERs l1.txt --l1-skips 1,10,100,1000 [--l1-skip-first K]` | `L1/`: one FITS per N (all through the pipeline), `noise_vs_skips.csv/.png`, `compare/`, `<image>_diagnostics/` |
+| commissioning packet | `run_superWADERs packet.txt --packet --module-list modules.csv` | `packet/index.html` + one page per module |
+| dark current over a series | `run_superWADERs series.txt --dc-series [--dc-limit X] [--no-clusters]` | `dc_series/`: `dc_report.pdf`, `dc_series.csv`, one page per module |
+| defect maps | `run_superWADERs images.txt --defect-map [--defect-sigma 5] [--no-clusters]` | `defects/<module>_ACM<id>_<size>/`: `defects.csv`, `defect_map.html`, composites, the group's Image_4 / Image_2 outputs |
+| serial-register images | `run_superWADERs sr.txt --sr [--sr-threshold 4] [--sr-min-length 3] [--no-clusters]` | `sr/`: `sr_streaks.csv`, `sr_summary.csv`, PNGs, one page per module |
+
+The commissioning flags can be combined in one run (e.g. `--dc-series --defect-map --sr`), and every report folder
+has an `index.html` listing its pages. Add `--no-clusters` when you need no cluster files: it is much faster.
+
+What each tool does:
+
+- **Native engine**: the same steps as run_WADERs (autoconfig, gain from the many-peak fit where better, dark current
+  from the 0e-/1e- peaks, every panaSKImg pedestal method, `--tune`), and panaSKImg's `--save-plots` PDFs. Cluster
+  thresholds: `--thresholds auto` (default; in electrons from each CCD's dark charge), `sigma0` (WADERs' 10 / 30
+  sigma) or `PIX,SEED`.
+- **L1** (`--l1-skips`, `--l1-skip-first K`): one image per number of skips N (mean of skips K..K+N-1) with the DAQ
+  header from the `.meta`; noise and gain per CCD against N with the 1/sqrt(N) line; the DC-fit, baseline and sigma
+  plots of every N side by side; diagnostics per channel (start-of-pixel transient and the suggested
+  `--l1-skip-first`, single-skip noise, noise vs N within a pixel, spectrum over the skips, drift during a pixel).
+- **Packet** (`--packet`): a list of a commissioning packet's files (traces, PSD traces, 1-skip and 500-skip images
+  of any size and binning, L1 files; any order). One report per module with the tabs it has data for: Overview,
+  Trace, PSD (sigma_ADU, sigma_CDS), per image a numbers tab (gain, noise, dark current, chi2, the pixel-charge
+  histogram with the dark-current fit when the electron peaks are resolved, profiles) and an image viewer. No
+  clustering.
+- **Dark current** (`--dc-series`): every image of the list is one point in time (DATEINI). Rate = DC /
+  (exposure + readout/2) in e-/pix/day, and from the growth of the dark charge along the rows (slope; the intercept
+  is charge made during the readout). Settling fit (plateau + exponential) with 5 or more images; flags "above
+  limit" (`--dc-limit`) and "still falling". Pages: Rates, Fits (each image's histogram with its dark-current fit),
+  Per row, Data (table of every number), Method.
+- **Defect map** (`--defect-map`): images of one ACM with the same size and binning form a group (any type or skip
+  count). Median composite per CCD; bright / dark columns and hot / cold pixel spots (persistent local excess,
+  `--defect-sigma`); the group's `Image_4` / `Image_2` scripts (`src/lsm_defects/`) run when the images have an
+  overscan. `defects.csv` is the defect log.
+- **Serial-register images** (`--sr`): streaks in the serial register (readout artifacts): runs of >=
+  `--sr-min-length` pixels above `--sr-threshold` x noise along one read, confined to it. Streak list, counts per
+  1000 reads, lengths, positions along the register, dark charge per read.
+
+### The interactive pages
+
+Every page is one self-contained HTML file: it works offline in Chrome, Safari or Firefox (double-click it), and it
+can be sent to others as it is.
+
+- **One page per module.** The row below the tabs lists its CCDs: tick the ones to show, **all CCDs in the module**
+  for all of them, **only** next to a CCD for that one alone (remembered in the browser). Traces are shown one below
+  the other; PSD spectra, profiles and series plots are overlaid with one colour per CCD; numbers are side by side
+  (a value that is the same for every CCD is shown once, in grey); fit histograms one per CCD.
+- **Images, like ds9 frames**: one CCD at a time; the slider, the arrow buttons or the left / right arrow keys switch
+  CCD and keep zoom, position, scale mode and the row / column cut, so the same spot can be compared; **blink**
+  switches every second. Wheel or + / - zoom, drag to move, click a pixel for its row and column cut, shift + drag a
+  box for the region's statistics, scale (auto = around the background, like zscale), colormap, asinh, PNG. Defect
+  and streak pages mark what was found (tick boxes per type); click a line of the list to jump to it.
+- **Plots**: drag a box to zoom, shift + drag to move, wheel zooms x (alt + wheel: y), double-click or **reset**,
+  **log y / lin y**, **PNG**; hover to read values.
+- **Flags**: a red number is outside the usual range (noise > 0.3 e-, peaks not resolved, defects found, DC above the
+  limit, ...); a red dot marks the tab and the CCD it belongs to.
+- **Comments**: a box at the bottom of every tab, saved in the browser as you type; **Save comments** writes them to a
+  `.json` file (keep it next to the page or send it), **Load comments** reads one back.
+- **Export PDF**: every tab on its own page (the ticked CCDs) with the comments; choose "Save as PDF".
+- **Log**: at the bottom of each tab, how its numbers were made (files, header settings, checks, fit results).
+- **? Help** (top right) explains all of this on the page itself.
+
+### Where the code is
+
+| file | what |
+|---|---|
+| `bin/run_superWADERs` | the command (starts `bin/run_WADERs` with the native engine as default) |
+| `src/native_pipeline.py`, `native_kernels.py`, `native_rootio.py`, `native_plots.py` | native engine: pedestal, fits, clustering, cluster files, plots |
+| `src/raw_data.py`, `src/raw_levels/` | L0 / L1 readers, L1 -> FITS, diagnostics (`raw_levels/`: copies from ccd_opt_ml, `utils/sync_from_ccd_opt_ml.py`) |
+| `src/packet_report.py`, `src/packet_report_template.html` | packet reports and the page used by every report |
+| `src/dc_series.py` | `--dc-series` |
+| `src/defects.py`, `src/lsm_defects/` | `--defect-map` (the group's scripts: copies, `utils/sync_from_lsm_analysis.py`) |
+| `src/sr_images.py` | `--sr` |
+| `docs/superWADERs_user_guide.md`, `docs/native_pipeline.md`, `docs/superWADERs_commissioning_next_steps.md` | user guide, native-engine validation, plan and open items |
+
+**Not yet validated on real data** (see the user guide, section 5, for the data needed): a full commissioning packet
+(5-minute 1x1 1-skip and 10x10 500-skip images), serial-register images (tested only on synthetic data), the defect
+thresholds against known defects, and dark-current limits.
 
 ## Requirements
 
