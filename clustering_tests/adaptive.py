@@ -82,10 +82,13 @@ def hysteresis(Q, region, sigma, k_pix, n_pix=10.0, n_seed=30.0, seed_e=9.5):
 
 CROWDED = os.environ.get("AGMX_CROWDED", "auto")      # default of adaptive_cluster(crowded=...): auto | on | off
 CROWDED_SHAPES = os.environ.get("AGMX_CROWDED_SHAPES", "on")    # in crowded mode: muon lines + topology split: on | off
+FEWE = os.environ.get("AGMX_FEWE", "off")    # Bayesian few-electron finder switch (wip/lowdc/bayes): off | auto | on
+FEWE_DIR = os.path.join(os.path.dirname(HERE), "wip", "lowdc", "bayes")
 
 
 def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.3, box=31, margin=8, excess_ratio=3.0,
-                     return_info=False, engine="mhc", return_pixels=False, noise_max=1.0, crowded=None, crowd_fill=None, crowded_shapes=None, **kw):
+                     return_info=False, engine="mhc", return_pixels=False, noise_max=1.0, crowded=None, crowd_fill=None, crowded_shapes=None,
+                     fewe=None, fewe_lam=None, fewe_RN=None, fewe_threshold=None, fewe_nm=None, **kw):
     """engine='mhc' : unmodelled -> hysteresis; else per region crowded -> hysteresis, sparse -> MHC.
     engine='gmx' : unmodelled -> hysteresis; else GMX on the whole image (GMX shares charge by model responsibility,
                    so it needs no crowded / sparse split; occupancy is still reported per cluster). A_GMX.
@@ -101,6 +104,15 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
     crowded_shapes: 'on' | 'off' (default $AGMX_CROWDED_SHAPES, else 'on'): in crowded mode the straight tracks become line
              components of the mixture and the clusters get the topology split (crowded_shapes.py) instead of the
              hint grouping. info: crowded_shapes, n_lines, n_topology_splits
+    fewe: engine 'gmx' only: 'off' | 'auto' | 'on' (default $AGMX_FEWE, else 'off'): the Bayesian few-electron finder
+             (wip/lowdc/bayes/agmx_switch.py, validation: wip/lowdc/switch_validation/VALIDATION.md): after GMX, in
+             sparse regions (soft-candidate fraction f_c <= 1.5e-2 per 100 x 100 block, counted outside the big deposits;
+             'on': everywhere unless unmodelled) the clusters of <= 20 e- farther than 15 px from every pixel of a bigger
+             one are replaced by the Bayesian catalogue (cls 'few-e', regime 'bayes', finder 'bayes', p_ev, N_mean,
+             sigma_post); kept clusters get finder 'agmx'. Crowded mode and 'unmodelled' images stay A_GMX. fewe_lam /
+             fewe_RN / fewe_threshold / fewe_nm: the run-pooled dark-charge map of this image, event rates, P(event) cut
+             and noise model (agmx_switch.prepare_run(..., full=True): lam_maps[k], R_N, threshold, nm); without them
+             single-image estimates and this image's own fake budget are used (conservative). info: fewe (decision record)
     Each cluster: E [keV], y, x, sxy, cls, regime ('sparse' / 'crowded' / 'unmodelled'), occ; with engine 'gmx'
     also the quality flags edge, blend, ped [e-/pix], peakfrac, chi2, sig (gmx.fill_flags for clusters that were
     not fitted by the mixture: blend 0, peakfrac 1, chi2 NaN)."""
@@ -160,6 +172,11 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
     occ = occupancy(Q, valid, sigma, box, lam, bg)
     if engine == "gmx":
         import gmx as GX
+        fmode = (fewe or FEWE).lower()
+        if fmode not in ("off", "auto", "on"):
+            raise ValueError(f"adaptive_cluster: fewe={fmode!r} (use 'off', 'auto' or 'on')")
+        # the switch needs the pixel lists (footprints of the big deposits, ownership); dropped again below
+        rpix = return_pixels or fmode != "off"
         out = []
         cm = info.get("crowded_mode", False)
         shapes = cm and (crowded_shapes or CROWDED_SHAPES).lower() == "on"
@@ -171,7 +188,7 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
         elif cm:
             res = GX.general_cluster(Q, valid, bg, return_pixels=True, split_crossings=True, hints=hints, **kw)
         else:
-            res = GX.general_cluster(Q, valid, bg, return_pixels=return_pixels, **kw)
+            res = GX.general_cluster(Q, valid, bg, return_pixels=rpix, **kw)
         for c in res:
             y, x = int(round(c["y"])), int(round(c["x"]))
             o = float(occ[y, x]) if 0 <= y < Q.shape[0] and 0 <= x < Q.shape[1] else np.nan
@@ -181,9 +198,17 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
             out = out + [dict(c, occ=np.nan) for c in streak_cl]
             out, info["n_linked"] = CR.link_tracks(out)
             info["n_glow"] = CR.glow_flag(out, bg)
-            if not return_pixels:
+            if not rpix:
                 for c in out: c.pop("_pix", None)
         info.update(regime="gmx", occ=occ, crowded_frac=float(((occ >= occ_thr) & valid).sum() / max(valid.sum(), 1)))
+        if fmode != "off":
+            if FEWE_DIR not in sys.path:
+                sys.path.insert(0, FEWE_DIR)
+            import agmx_switch as SW
+            out, info = SW.apply(Q, valid, out, info, AM.E_PER_E, fmode, fewe_lam, fewe_RN, return_pixels, fewe_threshold,
+                                 fewe_nm)
+            if not return_pixels:
+                for c in out: c.pop("_pix", None)
         return (out, info) if return_info else out
     crowded = (occ >= occ_thr) & valid
     sparse = valid & ~crowded
