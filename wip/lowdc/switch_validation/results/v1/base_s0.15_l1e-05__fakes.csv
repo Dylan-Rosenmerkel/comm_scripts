@@ -1,0 +1,4 @@
+tag,config,img,near_big,y,x,q,npix,cls,finder,p_ev
+agmx,blank_s0.15_l1e-05,32,0,341.0,1124.0,1.999,1,low-E,agmx,
+agmx,blank_s0.15_l1e-05,53,0,23.76,565.28,1.0,12,low-E,agmx,
+agmx,blank_s0.15_l1e-05,53,0,242.78,686.31,1.0,12,low-E,agmx,

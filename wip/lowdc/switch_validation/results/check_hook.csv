@@ -1,0 +1,8 @@
+image,off_identical_pix1,off_identical_pix0,regime,crowded,auto_eq_apply,nopix_eq,used,reason,f_c,n_bayes,n_off,n_auto,pooled_eq_apply
+base_s0.15_l1e-05,1,1,gmx,0,1,1,True,,0.004567057291666667,26,24,26,1.0
+busy_s0.15_l0.0001,1,1,gmx,0,1,1,True,,0.004574544541918114,28,33,32,1.0
+base_s0.06_l0.0001,1,1,gmx,0,1,1,True,,0.000302734375,27,29,27,1.0
+art_s0.10_l1e-05,1,1,gmx,0,1,1,True,,0.0006579978578332768,28,38,32,1.0
+base_s0.25_l1e-05,1,1,gmx,0,1,1,False,f_c above the cut everywhere,0.1985205078125,0,20,20,
+crowded_l0.5,1,1,gmx,0,1,1,False,f_c above the cut everywhere,0.7948827271212522,0,8,8,
+unmodelled_s1.5,1,1,unmodelled,0,1,1,,,,0,0,0,

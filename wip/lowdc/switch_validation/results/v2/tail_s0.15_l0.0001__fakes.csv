@@ -1,0 +1,6 @@
+tag,config,img,near_big,y,x,q,npix,cls,finder,p_ev
+agmx,tail_s0.15_l0.0001,8,0,130.0,1180.0,1.999,1,low-E,agmx,
+single,tail_s0.15_l0.0001,2,0,241.5,319.5,2.0,2,few-e,bayes,0.9635733764037174
+single,tail_s0.15_l0.0001,14,0,349.0,469.5,2.0,2,few-e,bayes,0.9869790272838277
+pooled,tail_s0.15_l0.0001,11,0,167.5,631.0,2.003,2,few-e,bayes,0.9405018480637948
+pooled,tail_s0.15_l0.0001,14,0,349.0,469.5,2.0,2,few-e,bayes,0.941153437533639

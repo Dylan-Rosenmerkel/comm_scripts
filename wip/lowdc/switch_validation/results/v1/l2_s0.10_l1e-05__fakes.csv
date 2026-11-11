@@ -1,0 +1,8 @@
+tag,config,img,near_big,y,x,q,npix,cls,finder,p_ev
+agmx,l2_s0.10_l1e-05,3,0,36.0,243.0,1.0,1,low-E,agmx,
+agmx,l2_s0.10_l1e-05,3,0,81.0,341.0,1.0,1,low-E,agmx,
+agmx,l2_s0.10_l1e-05,12,0,86.0,20.0,1.0,1,low-E,agmx,
+agmx,l2_s0.10_l1e-05,23,0,99.0,105.0,1.0,1,low-E,agmx,
+agmx,l2_s0.10_l1e-05,36,0,42.0,31.0,1.0,1,low-E,agmx,
+agmx,l2_s0.10_l1e-05,137,0,6.0,290.0,1.0,1,low-E,agmx,
+agmx,l2_s0.10_l1e-05,168,0,93.0,342.0,1.0,1,low-E,agmx,

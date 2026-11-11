@@ -1,0 +1,5 @@
+tag,config,img,near_big,y,x,q,npix,cls,finder,p_ev
+agmx,hotcol_s0.15_l0.0001,12,0,13.0,153.0,1.999,1,low-E,agmx,
+agmx,hotcol_s0.15_l0.0001,14,0,403.92,640.07,2.0,20,low-E,agmx,
+single,hotcol_s0.15_l0.0001,4,0,454.5,640.0,2.0,2,few-e,bayes,0.9920488178859619
+single,hotcol_s0.15_l0.0001,7,0,39.5,640.0,2.0,2,few-e,bayes,0.9927825028394351

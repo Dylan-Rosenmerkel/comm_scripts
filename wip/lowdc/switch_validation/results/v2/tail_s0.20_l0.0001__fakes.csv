@@ -1,0 +1,7 @@
+tag,config,img,near_big,y,x,q,npix,cls,finder,p_ev
+agmx,tail_s0.20_l0.0001,2,0,62.0,806.0,2.0,1,low-E,agmx,
+agmx,tail_s0.20_l0.0001,3,0,351.33,617.67,2.999,2,low-E,agmx,
+agmx,tail_s0.20_l0.0001,13,0,176.5,849.75,3.996,3,low-E,agmx,
+single,tail_s0.20_l0.0001,2,0,62.0,806.0,2.0,1,low-E,agmx,
+single,tail_s0.20_l0.0001,3,0,351.33,617.67,2.999,2,low-E,agmx,
+single,tail_s0.20_l0.0001,13,0,176.5,849.75,3.996,3,low-E,agmx,

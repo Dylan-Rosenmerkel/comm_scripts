@@ -1,0 +1,225 @@
+1485 images to run (0 done)
+1/1485 base_s0.15_l1e-05 #0  5 s
+11/1485 base_s0.15_l1e-05 #11  28 s
+21/1485 base_s0.15_l1e-05 #20  51 s
+31/1485 tail_s0.15_l1e-05 #0  75 s
+41/1485 tail_s0.15_l1e-05 #10  100 s
+51/1485 hotcol_s0.15_l1e-05 #5  124 s
+61/1485 base_s0.15_l0.0001 #0  149 s
+71/1485 base_s0.15_l0.0001 #10  173 s
+81/1485 base_s0.15_l0.0001 #20  197 s
+91/1485 tail_s0.15_l0.0001 #0  220 s
+101/1485 tail_s0.15_l0.0001 #10  245 s
+111/1485 hotcol_s0.15_l0.0001 #5  268 s
+121/1485 base_s0.15_l0.001 #0  292 s
+131/1485 base_s0.15_l0.001 #10  316 s
+141/1485 base_s0.15_l0.001 #20  339 s
+151/1485 tail_s0.15_l0.001 #0  363 s
+161/1485 tail_s0.15_l0.001 #10  387 s
+171/1485 hotcol_s0.15_l0.001 #5  412 s
+181/1485 base_s0.15_l0.01 #0  436 s
+191/1485 base_s0.15_l0.01 #10  463 s
+201/1485 base_s0.15_l0.01 #20  489 s
+211/1485 tail_s0.15_l0.01 #0  515 s
+221/1485 tail_s0.15_l0.01 #10  541 s
+231/1485 hotcol_s0.15_l0.01 #5  568 s
+241/1485 base_s0.05_l1e-05 #0  594 s
+251/1485 base_s0.05_l1e-05 #11  618 s
+261/1485 base_s0.05_l0.0001 #5  641 s
+271/1485 base_s0.06_l1e-05 #0  665 s
+281/1485 base_s0.06_l1e-05 #10  688 s
+291/1485 base_s0.06_l0.0001 #5  712 s
+301/1485 base_s0.10_l1e-05 #0  736 s
+311/1485 base_s0.10_l1e-05 #10  759 s
+321/1485 base_s0.10_l0.0001 #5  782 s
+331/1485 base_s0.20_l1e-05 #0  807 s
+341/1485 base_s0.20_l1e-05 #10  833 s
+351/1485 base_s0.20_l0.0001 #5  859 s
+361/1485 base_s0.25_l1e-05 #0  885 s
+371/1485 base_s0.25_l1e-05 #10  912 s
+381/1485 base_s0.25_l0.0001 #5  940 s
+391/1485 base_s0.06_l3e-06 #0  967 s
+401/1485 base_s0.06_l3e-06 #10  992 s
+411/1485 base_s0.15_l3e-06 #5  1015 s
+421/1485 tail_s0.10_l0.0001 #0  1039 s
+431/1485 tail_s0.10_l0.0001 #10  1063 s
+441/1485 hotcol_s0.10_l0.0001 #6  1087 s
+451/1485 tail_s0.20_l0.0001 #0  1111 s
+461/1485 tail_s0.20_l0.0001 #10  1138 s
+471/1485 hotcol_s0.20_l0.0001 #5  1164 s
+481/1485 art_s0.10_l1e-05 #0  1190 s
+491/1485 art_s0.10_l1e-05 #10  1213 s
+501/1485 busy_s0.15_l0.0001 #5  1238 s
+511/1485 grad_s0.15_l0.0001 #0  1262 s
+521/1485 grad_s0.15_l0.0001 #10  1288 s
+531/1485 blank_s0.15_l1e-05 #5  1312 s
+541/1485 blank_s0.15_l1e-05 #15  1337 s
+551/1485 blank_s0.15_l1e-05 #25  1362 s
+561/1485 blank_s0.15_l1e-05 #35  1387 s
+571/1485 blank_s0.15_l1e-05 #45  1411 s
+Process SpawnPoolWorker-12:
+Traceback (most recent call last):
+  File "/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/pool.py", line 131, in worker
+    put((job, i, result))
+  File "/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/queues.py", line 399, in put
+    self._writer.send_bytes(obj)
+  File "/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/connection.py", line 427, in _send_bytes
+    self._send(header + buf)
+  File "/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/pool.py", line 136, in worker
+    put((job, i, (False, wrapped)))
+  File "/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/queues.py", line 399, in put
+    self._writer.send_bytes(obj)
+  File "/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/connection.py", line 427, in _send_bytes
+    self._send(header + buf)
+  File "/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+Process SpawnPoolWorker-11:
+Traceback (most recent call last):
+  File "/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/pool.py", line 131, in worker
+    put((job, i, result))
+  File "/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/queues.py", line 399, in put
+    self._writer.send_bytes(obj)
+  File "/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/connection.py", line 427, in _send_bytes
+    self._send(header + buf)
+  File "/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/pool.py", line 136, in worker
+    put((job, i, (False, wrapped)))
+  File "/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/queues.py", line 399, in put
+    self._writer.send_bytes(obj)
+  File "/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/connection.py", line 200, in send_bytes
+    self._send_bytes(m[offset:offset + size])
+  File "/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/connection.py", line 427, in _send_bytes
+    self._send(header + buf)
+  File "/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/connection.py", line 384, in _send
+    n = write(self._handle, buf)
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+BrokenPipeError: [Errno 32] Broken pipe
+/opt/homebrew/Caskroom/miniforge/base/envs/damic/lib/python3.12/multiprocessing/resource_tracker.py:279: UserWarning: resource_tracker: There appear to be 6 leaked semaphore objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
+934 images to run (551 done)
+1/934 blank_s0.15_l1e-05 #27  5 s
+11/934 blank_s0.15_l1e-05 #37  15 s
+21/934 blank_s0.15_l1e-05 #46  31 s
+31/934 blank_s0.15_l1e-05 #56  41 s
+41/934 blank_s0.15_l0.0001 #6  56 s
+51/934 blank_s0.15_l0.0001 #16  66 s
+61/934 blank_s0.15_l0.0001 #26  80 s
+71/934 blank_s0.15_l0.0001 #36  91 s
+81/934 blank_s0.15_l0.0001 #46  106 s
+91/934 blank_s0.15_l0.0001 #56  118 s
+101/934 blank_s0.15_l0.001 #6  132 s
+111/934 blank_s0.15_l0.001 #16  143 s
+121/934 blank_s0.15_l0.001 #26  158 s
+131/934 blank_s0.15_l0.001 #36  169 s
+141/934 blank_s0.15_l0.001 #46  183 s
+151/934 blank_s0.15_l0.001 #56  195 s
+161/934 blank_s0.15_l0.01 #7  210 s
+171/934 blank_s0.15_l0.01 #16  223 s
+181/934 blank_s0.15_l0.01 #26  238 s
+191/934 blank_s0.15_l0.01 #36  250 s
+201/934 blank_s0.15_l0.01 #46  265 s
+211/934 blank_s0.15_l0.01 #56  277 s
+221/934 blank_s0.06_l1e-05 #6  290 s
+231/934 blank_s0.06_l1e-05 #16  300 s
+241/934 blank_s0.06_l1e-05 #26  313 s
+251/934 blank_s0.06_l1e-05 #36  324 s
+261/934 blank_s0.06_l1e-05 #46  337 s
+271/934 blank_s0.06_l1e-05 #56  348 s
+281/934 blank_s0.10_l1e-05 #6  361 s
+291/934 blank_s0.10_l1e-05 #16  372 s
+301/934 blank_s0.10_l1e-05 #26  385 s
+311/934 blank_s0.10_l1e-05 #37  396 s
+321/934 blank_s0.10_l1e-05 #46  408 s
+331/934 blank_s0.10_l1e-05 #56  420 s
+341/934 l2_s0.06_l1e-05 #7  423 s
+351/934 l2_s0.06_l1e-05 #16  425 s
+361/934 l2_s0.06_l1e-05 #26  427 s
+371/934 l2_s0.06_l1e-05 #36  428 s
+381/934 l2_s0.06_l1e-05 #46  430 s
+391/934 l2_s0.06_l1e-05 #56  432 s
+401/934 l2_s0.06_l1e-05 #66  434 s
+411/934 l2_s0.06_l1e-05 #76  436 s
+421/934 l2_s0.06_l1e-05 #86  438 s
+431/934 l2_s0.06_l1e-05 #96  439 s
+441/934 l2_s0.06_l1e-05 #106  441 s
+451/934 l2_s0.06_l1e-05 #116  442 s
+461/934 l2_s0.06_l1e-05 #126  444 s
+471/934 l2_s0.06_l1e-05 #136  445 s
+481/934 l2_s0.06_l1e-05 #146  447 s
+491/934 l2_s0.06_l1e-05 #155  448 s
+501/934 l2_s0.06_l1e-05 #166  450 s
+511/934 l2_s0.06_l1e-05 #175  452 s
+521/934 l2_s0.06_l1e-05 #186  453 s
+531/934 l2_s0.06_l1e-05 #195  455 s
+541/934 l2_s0.10_l1e-05 #6  457 s
+551/934 l2_s0.10_l1e-05 #16  458 s
+561/934 l2_s0.10_l1e-05 #26  460 s
+571/934 l2_s0.10_l1e-05 #36  461 s
+581/934 l2_s0.10_l1e-05 #47  463 s
+591/934 l2_s0.10_l1e-05 #56  464 s
+601/934 l2_s0.10_l1e-05 #65  466 s
+611/934 l2_s0.10_l1e-05 #77  468 s
+621/934 l2_s0.10_l1e-05 #86  470 s
+631/934 l2_s0.10_l1e-05 #95  471 s
+641/934 l2_s0.10_l1e-05 #106  473 s
+651/934 l2_s0.10_l1e-05 #116  475 s
+661/934 l2_s0.10_l1e-05 #126  476 s
+671/934 l2_s0.10_l1e-05 #136  478 s
+681/934 l2_s0.10_l1e-05 #146  480 s
+691/934 l2_s0.10_l1e-05 #156  481 s
+701/934 l2_s0.10_l1e-05 #166  483 s
+711/934 l2_s0.10_l1e-05 #176  484 s
+721/934 l2_s0.10_l1e-05 #186  486 s
+731/934 l2_s0.10_l1e-05 #196  487 s
+741/934 l2_s0.15_l0.0001 #6  489 s
+751/934 l2_s0.15_l0.0001 #16  491 s
+761/934 l2_s0.15_l0.0001 #26  493 s
+771/934 l2_s0.15_l0.0001 #36  494 s
+781/934 l2_s0.15_l0.0001 #47  496 s
+791/934 l2_s0.15_l0.0001 #56  497 s
+801/934 l2_s0.15_l0.0001 #66  499 s
+811/934 l2_s0.15_l0.0001 #76  501 s
+821/934 l2_s0.15_l0.0001 #86  503 s
+831/934 l2_s0.15_l0.0001 #96  505 s
+841/934 l2_s0.15_l0.0001 #106  506 s
+851/934 l2_s0.15_l0.0001 #116  508 s
+861/934 l2_s0.15_l0.0001 #126  510 s
+871/934 l2_s0.15_l0.0001 #136  511 s
+881/934 l2_s0.15_l0.0001 #146  513 s
+891/934 l2_s0.15_l0.0001 #156  514 s
+901/934 l2_s0.15_l0.0001 #166  516 s
+911/934 l2_s0.15_l0.0001 #176  518 s
+921/934 l2_s0.15_l0.0001 #186  519 s
+931/934 l2_s0.15_l0.0001 #196  521 s
+done in 522 s

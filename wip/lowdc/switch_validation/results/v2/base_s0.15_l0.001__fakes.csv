@@ -1,0 +1,8 @@
+tag,config,img,near_big,y,x,q,npix,cls,finder,p_ev
+agmx,blank_s0.15_l0.001,14,0,12.0,465.0,1.999,1,low-E,agmx,
+agmx,blank_s0.15_l0.001,15,0,431.0,594.0,1.999,1,low-E,agmx,
+agmx,blank_s0.15_l0.001,38,0,116.33,265.33,2.995,3,low-E,agmx,
+agmx,blank_s0.15_l0.001,42,0,107.67,981.0,2.997,3,low-E,agmx,
+single,base_s0.15_l0.001,17,0,178.97,79.63,3.0,3,few-e,bayes,0.9725635550151286
+pooled,base_s0.15_l0.001,17,0,178.97,79.62,2.899,3,few-e,bayes,0.7838857943058586
+pooled,base_s0.15_l0.001,21,0,369.37,325.31,2.909,2,few-e,bayes,0.8952990538157091
