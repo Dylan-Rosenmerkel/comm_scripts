@@ -94,7 +94,7 @@ Rates in e-/pix/day: DC / (exposure + readout/2); the row fit gives the rate fro
 ```
 run_superWADERs images.txt --defect-map [--defect-sigma 5] [--no-clusters] --module-list modules.csv
 ```
-Per module and image type, `defects/<module>_ACM<id>_<type>/`:
+Per module and image size: all images of one ACM with the same rows x columns and binning form one group, whatever their type or number of skips; `defects/<module>_ACM<id>_<rows>x<cols>_<binning>/`:
 - the group's scripts (D. Venegas-Vargas, copies in src/lsm_defects/): `Image_4` composite median of all images
   (PNG + log with column defects and the event rate per pixel per day), `Image_2` per image (PNG + log: column
   defects, CTI), with their geometry set from each image's header (they need an overscan; without one they are
@@ -160,8 +160,7 @@ Every page works offline (no network) in Chrome, Safari or Firefox; open it by d
    peaks.
 4. **A dark-current series**: the images of one cool-down or a long run (with DATEINI/DATEEND), plus the dark-current
    limit(s) the group uses, and (if logged) the cool-down time.
-5. **Defect-map images**: the image type normally used (Image 2 / Image 4 runs: full-frame 1-skip, several images per
-   module), with a module whose defects are known (a list or a previous Image_4 / Image_2 log) to tune
+5. **Defect-map images**: any images of the same size (several per module; e.g. the Image 2 / Image 4 runs), with a module whose defects are known (a list or a previous Image_4 / Image_2 log) to tune
    `--defect-sigma` and compare the defect log.
 6. **Serial-register images**: a few SR images (with .meta), and an example of the plots / numbers the group makes
    for them now, to tune the streak finder (threshold, minimum length) and the DC-per-read plots.

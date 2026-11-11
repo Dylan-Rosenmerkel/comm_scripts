@@ -17,7 +17,9 @@ Added here, per CCD, on the composite median:
                least half of the images (all of them with < 3 images): persistent, not an event; grouped into
                connected spots; 'seen in' = number of images in which the pixel is above that threshold
   cold pixels  the same residual below -5 x the spread
-Outputs (out_dir/defects/<module>_<type>/): the scripts' PNG / log files, defects.csv (the defect log: one line per
+Images are grouped per ACM by size and binning (rows x columns, NPBIN x NSBIN): any images of the same size form
+one composite, whatever their type or number of skips (e.g. Image 2, Image 4, Image 5, 1-skip or 500-skip).
+Outputs (out_dir/defects/<module>_ACM<id>_<rows>x<cols>_<binning>/): the scripts' PNG / log files, defects.csv (the defect log: one line per
 defect), composite_EXT<n>.fits, and one interactive page per module (defect_map.html: per CCD the composite with
 the defects marked, a clickable defect list; the scripts' figures and logs), plus defects/index.html.
 """
@@ -154,11 +156,15 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
     for p in images:
         geo, h0 = set_geometry(p, autoconfig_args)
         acm = h0.get("ACMID") or PR.acm_of(p)
-        groups.setdefault((int(acm) if acm else 0, image_type(p, h0)), []).append((p, geo, h0))
-    lines = [f"defect maps (--defect-map; group scripts Image_4 / Image_2 + defect log; {base}/index.html):"]
+        hd = fits.getheader(p, 1)                         # images of the same size and binning go together,
+        size = f"{hd['NAXIS2']}x{hd['NAXIS1']}_{h0.get('NPBIN', 1) or 1}x{h0.get('NSBIN', 1) or 1}"   # whatever their type
+        groups.setdefault((int(acm) if acm else 0, size), []).append((p, geo, h0))
+    lines = [f"defect maps (--defect-map; images grouped by ACM, size and binning; group scripts Image_4 / Image_2 + "
+             f"defect log; {base}/index.html):"]
     index = []
     for (acm, itype), items in sorted(groups.items()):
         files = [p for p, _, _ in items]
+        kinds = sorted({image_type(p, h) for p, _, h in items})
         geo, h0 = items[0][1], items[0][2]
         from astropy.io import fits as _f
         apply_geometry(geo, _f.getdata(files[0], 1).shape[0])
@@ -231,7 +237,8 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
             counts = {t: sum(1 for r in rows if r[0] == t) for t, _ in TYPES}
             shown = sorted(rows, key=lambda r: -abs(r[4]))[:1500]
             tabs.append(dict(id=f"ext{ext}", label=f"EXT{ext} {ccd}", kind="defects", log=[
-                f"composite median of {len(files)} image(s) ({itype}); noise {noises[ch]} ADU (overscan, Image_4)",
+                f"composite median of {len(files)} image(s) of {itype} (rows x columns _ binning); types: {', '.join(kinds)}; "
+                f"noise {noises[ch]} ADU",
                 f"geometry: prescan {geo['prescan']}, first overscan column {geo['overscan_start']}, vertical overscan from row {geo['y_overscan_start']}"]
                 + [f"{t}: {n}" for t, n in counts.items()] + ([f"view binned {dec}x{dec}; the defect list uses full-resolution positions"] if dec > 1 else []),
                 data=dict(title=f"EXT{ext} {ccd}: composite median of {len(files)} image(s)", unit="ADU", w=int(view.shape[1]),
@@ -264,7 +271,7 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
                              f"defect map (run_superWADERs --defect-map), {len(files)} image(s)", tabs)
         nums = [[f"EXT{c + 1}", ", ".join(f"{t}: {sum(1 for r in csv_rows if r[2] == c + 1 and r[5] == t)}" for t, _ in TYPES)] for c in range(4)]
         index.append((module, acm, itype, "4 CCDs", os.path.join(name, "defect_map.html"), [t["label"] for t in tabs], nums, size, []))
-        lines.append(f"  {name}: {len(files)} image(s), {len(csv_rows)} defects (defects.csv, defect_map.html"
+        lines.append(f"  {name}: {len(files)} image(s) ({', '.join(kinds)}), {len(csv_rows)} defects (defects.csv, defect_map.html"
                      + (", Image_4/Image_2 PNG + log)" if not script_note else f"); {script_note}"))
     PR.write_index(base, index, "Defect maps")
     return lines
