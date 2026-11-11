@@ -1,0 +1,1 @@
+native pipeline moved to src/ (native_pipeline.py, native_kernels.py, native_rootio.py), utils/validate_native.py and docs/native_pipeline*.md; composite/ is the MakeComposite copy used for the compatibility test.
