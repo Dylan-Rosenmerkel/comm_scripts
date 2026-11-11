@@ -473,6 +473,12 @@ def build_parser(full=False):
     ap.add_argument("--l1-skip-first", metavar="K", type=int, default=0,
                     help="--engine native, level-1 inputs: leave out the first K skips of every pixel (default 0, "
                          "as an image taken with N skips; e.g. 20 removes the transient after the charge arrives)")
+    ap.add_argument("--packet", action="store_true",
+                    help="--engine native: the input list is a commissioning packet (traces, PSD traces, images in any "
+                         "order): one interactive HTML report per CCD (packet/), no clustering (details: -h -v)")
+    ap.add_argument("--module-list", metavar="FILE",
+                    help="module names (DM#, PA#, ...) per ACM id (or per CCD) for the packet reports: lines "
+                         "'ACM, module[, EXT<n> or CCD name]'")
     ap.add_argument("--l0-no-html", action="store_true",
                     help="--engine native, level-0 traces: no interactive viewer (.html, a few MB per trace)")
     ap.add_argument("--all-ext", action="store_true",
@@ -1271,6 +1277,21 @@ def native_raw_inputs(run, images):
     return [p for p in images if not RAW_INPUT.search(p)] + made, made, lines
 
 
+def run_packet(run):
+    """--packet: the inputs are the files of a commissioning packet (traces, PSD traces, images, level-1 images; any
+    order). One interactive HTML report per CCD in packet/ (src/packet_report.py: Overview, Trace, PSD, Image
+    summary, one image viewer per image; comments, logs, PDF export), an index, and summary.txt. No clustering."""
+    import packet_report as PR
+    print(f"  {run.stamp()} commissioning packet: {len(run.images)} file(s)")
+    lines = PR.build(run.images, run.out, run.args.module_list, shlex.split(run.args.autoconfig_args),
+                     log=lambda m: print(f"  {run.stamp()}{m}", flush=True))
+    text = "\n".join([f"{PROG} --packet: {run.run_name}  ({len(run.images)} file(s), {time.time() - run.t0:.0f} s)", ""] + lines)
+    with open(os.path.join(run.out, "summary.txt"), "w") as fh:
+        fh.write(text + "\n")
+    print("\n" + text + f"\nresults: {run.out}")
+    return 1 if any("FAILED" in l for l in lines) else 0
+
+
 def native_record(img, s):
     """The per-image record the shared steps use (module_groups, measure_gain_curves, step3c_composite,
     compare_gain_corrections, step4_summary), from a native_pipeline.process_image summary."""
@@ -1348,6 +1369,8 @@ def run_native(run):
               crowded=args.agmx_crowded, crowded_shapes=args.agmx_crowded_shapes, all_ext=args.all_ext, tune=args.tune,
               verbose=False)
     failed = []
+    if args.packet:                             # commissioning packet: reports per CCD, nothing else
+        return run_packet(run)
     images, l1_fits, raw_lines = native_raw_inputs(run, list(run.images))
     if not images:                             # traces only: nothing for the image pipeline
         text = "\n".join([f"{PROG} summary: {run.run_name}  ({len(run.images)} input file(s), "

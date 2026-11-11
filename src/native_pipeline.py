@@ -970,7 +970,7 @@ def process_image(path, out_dir, curve=None, clusterer="threshold", thresholds="
         rec.update(gain=gain, gain_err=fit["gain"][1], noise_e=fit["sigma"][0] / gain, dc_e=fit["lam"][0] / gain,
                    mu0=fit["mu"][0], chi2ndf=fit["chi2"] / max(fit["ndf"], 1), gain_note=note, sigma0_e=sigma0_e,
                    lam_rows_median=r.get("lam_all_median"), read_noise_autoconfig_e=r["sigma"] / r["gain"],
-                   pedestal_region="overscan" if use_ovs else "active", held=held,
+                   pedestal_region="overscan" if use_ovs else "active", held=held, fit_settings=fit["settings"],
                    fits=dict({k: {p: v[p] for p in FIT_PARAMS + ["chi2", "ndf"]} for k, v in fits.items()},
                              final={p: fit[p] for p in FIT_PARAMS + ["chi2", "ndf"]}))
         info = info_branches(n, mu_row, sig_row, fit, ccd, nfile, h0)

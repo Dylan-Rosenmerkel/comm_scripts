@@ -95,20 +95,26 @@ def l1_skip_means(path, ncol, nskip, skip_first, ns):
     first = np.flatnonzero(head == L1.LINE)
     if not len(first):
         raise ValueError(f"{os.path.basename(path)}: no LINE marker at the start: not a 1x1 level-1 image")
-    row_len = 1 + ncol * pix
+    row_len = ncol * pix
     out = {n: [] for n in ns}
     problems, r = [], 0
+    o = int(first[0])
     while True:
-        o = int(first[0]) + r * row_len
+        # a row starts after its LINE markers: one per vertical shift (NPBIN of them in a binned image, the first
+        # NPBIN - 1 with no pixels), then NCOL pixel records of 4 x NDCM + 2 + 13 words (binned or not)
+        if o >= len(w) or int(w[o]) != L1.LINE:
+            if o < len(w) - 1:
+                problems.append(f"row {r}: no LINE marker; stopped")
+            break
+        while o < len(w) and int(w[o]) == L1.LINE:
+            o += 1
         if o + row_len > len(w):
             if o < len(w) - 1:
-                k = (len(w) - o - 1) // pix
+                k = (len(w) - o) // pix
                 problems.append(f"row {r}: file ends after {k} of {ncol} pixels (row left out)")
             break
-        if int(w[o]) != L1.LINE:
-            problems.append(f"row {r}: no LINE marker; stopped")
-            break
-        p = np.asarray(w[o + 1:o + row_len], np.int64).reshape(ncol, pix)
+        p = np.asarray(w[o:o + row_len], np.int64).reshape(ncol, pix)
+        o += row_len
         hdr = p[:, 0:4 * nskip:2]
         counts = hdr & 0xFFFFF
         n = int(np.median(counts))
@@ -158,12 +164,11 @@ def l1_to_fits(base, chans, ns_text, skip_first, outdir):
     warnings.simplefilter("ignore", VerifyWarning)        # long .meta values: the comment is cut, not the value
     stem = os.path.basename(base)
     lines = [f"  {stem}: level-1 image, channels {', '.join(str(c) for c in sorted(chans))}"]
-    geo = L1.geometry_from_name(stem)
-    if geo is None:
-        lines.append("    not read: only unbinned (_1x1_L1_) level-1 images are supported (binned ones have another "
-                     "layout)")
+    m = re.search(r"_(\d+)x(\d+)x(\d+)_(\d+)x(\d+)_L1_", stem)
+    if m is None:
+        lines.append("    not read: no <rows>x<cols>x<skips>_<binning>_L1_ in the name")
         return [], lines
-    nrow, ncol, nskip = geo
+    nrow, ncol, nskip = (int(v) for v in m.groups()[:3])         # columns: binned columns, as the DAQ's NCOL
     ns, dropped = parse_skips(ns_text, nskip, skip_first)
     if dropped:
         lines.append(f"    skip counts not possible ({nskip} skips, first {skip_first} left out): {dropped}")

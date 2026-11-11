@@ -48,7 +48,9 @@ summary; cluster thresholds in electrons from the dark charge (`--thresholds aut
 `--engine native|waders`. It also takes the DAQ's raw files (`.RJ45ADCDATA<ch>`, directly or in a list):
 level-0 traces are decoded, checked and plotted (`L0/`); level-1 images become FITS images with N skips each
 (`--l1-skips 1,10,100,1000`, `L1/`) that run through the pipeline, with noise vs N and the fits side by side.
-Details and validation: docs/native_pipeline.md.
+With `--packet` (and `--module-list FILE`) a list of a commissioning packet's
+files (traces, PSD traces, images, in any order) gives one interactive HTML report per CCD (`packet/`).
+Details and validation: docs/native_pipeline.md; plans: docs/superWADERs_commissioning_next_steps.md.
 
 Results go to `WADERs_analysis_<image or list name>/` in the current folder (`-o` to choose another):
 

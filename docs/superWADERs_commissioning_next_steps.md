@@ -5,6 +5,28 @@ panaSKImg-style plots, all pedestal methods, --tune, L0 traces (decode / check /
 images -> FITS per number of skips -> pipeline -> noise vs N (docs/native_pipeline.md). Everything below builds on
 `src/native_pipeline.py` (fits per CCD), `src/raw_data.py` (L0 / L1) and `src/raw_levels/` (ccd_opt_ml readers).
 
+## Status (2026-11-11)
+
+- **1. Binned L1: done.** `raw_data.l1_skip_means` finds each row after its run of LINE markers; works for binned and
+  unbinned files. 20x20 file of 2026-10-06: 80 of 80 rows; at N = 1 its prescan / active / overscan levels (316 / 183
+  / 149 ADU on EXT1) match a DAQ avg 20x20 1-skip image of the same board (349 / 184 / 143, other time); unbinned
+  round trip unchanged (2e-4 ADU). Not yet ported to ccd_opt_ml's decode_l1.
+- **3. Packet report: first version done** (`run_superWADERs PACKET.txt --packet [--module-list FILE]`,
+  src/packet_report.py + src/packet_report_template.html). Inputs in any order, classified by file type (trace_,
+  psd_, avg_*.fits, level-1 channel files); module names from the correlation list (lines `ACM, module[, EXT<n> or
+  CCD name]`); one self-contained HTML per CCD (`packet/<module>_ACM<id>_EXT<n>_<CCD>.html`) + `packet/index.html`.
+  Tabs (only those with data): Overview, Trace (whole trace zoomable with window shading, per-skip means, CDS,
+  folded cycle, spectrum), PSD (ADC trace, periodogram, Welch linear / log with sigma_ADU and sigma_CDS; several PSD
+  files overlaid), Image summary (native fits, DC-fit histogram, pedestal and sigma per row, dark charge per row,
+  column / row medians), one ds9-like viewer per image (pan / zoom, scale, colormaps, asinh, pixel readout, region
+  statistics, row / column cuts). Comments per tab (browser storage + JSON save / load), a log per tab, Export PDF
+  (print of all tabs with the comments). CCDs without CCD signal: image and raw statistics still shown. Tested on
+  the 2026-09-16 PA03/DR03 files (68 files shuffled: 8 reports of ~8.5 MB, 17 s; rendered in headless Chrome, no
+  script errors). To do: more image examples (5 min 1x1 1-skip, 10x10 500-skip), report size for full-size images
+  (viewer bins 2x2 above 4 M pixels), PSD comparisons across dates.
+- **6. SR images**: serial-register events = streaks in the serial register, readout artifacts (horizontal streaks
+  along a row) - the finder will look for those, not for particle clusters.
+
 ## Order of work
 
 | # | item | why this order | size |
@@ -134,8 +156,9 @@ Images of the horizontal register only (no vertical transfers: NROW = number of 
   autoconfig geometry may need an SR mode (no hot-column logic across rows, rows not independent exposures).
 - DC: charge per register pixel per read time (exposure per row = time the register is held); fit per row as now,
   DC vs read number and vs register position (hot register pixels).
-- serial-register events: clusters confined to one row (horizontal tracks / single-pixel events in the register);
-  count per image, per read time, energy / size distributions, figure of the number of SR events found.
+- serial-register events: streaks in the serial register (readout artifacts): runs of charged pixels along a row,
+  confined to that row; count per image and per read, length / charge distributions, position along the register,
+  figure of the number of SR events found.
 Need: example SR image files and the group's current SR plots to match (to be provided); then add `--sr` to the
 native engine (fits per row, SR event finder = threshold clusters restricted to 1 row, report page).
 

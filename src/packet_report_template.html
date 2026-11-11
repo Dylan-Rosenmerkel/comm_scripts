@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+:root { --bg:#ffffff; --fg:#1d1d1f; --muted:#6b6b70; --line:#d8d8dc; --panel:#f6f6f8; --accent:#2a6fdb; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#16171a; --fg:#e8e8ea; --muted:#a0a0a8; --line:#34353a; --panel:#1f2024; --accent:#6a9cff; } }
+:root[data-theme="dark"] { --bg:#16171a; --fg:#e8e8ea; --muted:#a0a0a8; --line:#34353a; --panel:#1f2024; --accent:#6a9cff; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+header { padding:14px 20px 8px; border-bottom:1px solid var(--line); }
+header h1 { font-size:19px; margin:0 0 4px; }
+header .id { color:var(--muted); font-size:13px; }
+nav { display:flex; flex-wrap:wrap; gap:4px; padding:8px 20px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); z-index:5; }
+nav button { border:1px solid var(--line); background:var(--panel); color:var(--fg); padding:5px 12px; border-radius:6px; cursor:pointer; font-size:13px; }
+nav button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+nav .sp { flex:1; }
+main { padding:14px 20px 40px; max-width:1500px; }
+.tab { display:none; }
+.tab.on { display:block; }
+h2 { font-size:16px; margin:6px 0 10px; }
+h3 { font-size:14px; margin:16px 0 6px; color:var(--muted); font-weight:600; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(460px, 1fr)); gap:14px; }
+.card { border:1px solid var(--line); border-radius:8px; padding:10px; background:var(--panel); min-width:0; }
+.plot { position:relative; width:100%; }
+.plot canvas { width:100%; display:block; cursor:crosshair; }
+.plot .tip { position:absolute; pointer-events:none; background:rgba(0,0,0,.75); color:#fff; font:11px monospace; padding:2px 5px; border-radius:3px; display:none; white-space:nowrap; z-index:3; }
+.plot .ptitle { font-size:13px; font-weight:600; margin-bottom:2px; }
+.plot .help { font-size:11px; color:var(--muted); }
+table.num { border-collapse:collapse; font-size:13px; }
+table.num td, table.num th { border-bottom:1px solid var(--line); padding:3px 10px 3px 0; text-align:left; }
+table.num td.v { font-variant-numeric:tabular-nums; }
+.flag { color:#c0392b; font-weight:600; }
+.log { font:12px/1.4 monospace; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:8px; white-space:pre-wrap; max-height:260px; overflow:auto; }
+.comment textarea { width:100%; min-height:90px; font:13px/1.4 inherit; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:8px; }
+.comment .saved { font-size:11px; color:var(--muted); }
+.printtext { display:none; white-space:pre-wrap; border:1px solid #999; padding:6px; }
+.controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; font-size:12px; margin:4px 0 6px; }
+.controls input[type=number] { width:90px; }
+.controls select, .controls input { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:2px 4px; }
+.imgwrap { position:relative; width:100%; height:560px; border:1px solid var(--line); background:#000; overflow:hidden; }
+.imgwrap canvas { width:100%; height:100%; display:block; cursor:grab; image-rendering:pixelated; }
+.readout { font:12px monospace; color:var(--muted); min-height:16px; }
+.loading { color:var(--muted); font-style:italic; }
+@media print {
+  nav, .noprint, .plot .help, .controls, input[type=file] { display:none !important; }
+  .tab { display:block !important; page-break-after:always; }
+  .comment textarea { display:none; }
+  .printtext { display:block; }
+  .log { max-height:none; }
+  .imgwrap { height:420px; }
+  body { background:#fff; color:#000; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title"></h1>
+  <div class="id" id="ident"></div>
+</header>
+<nav id="nav"></nav>
+<main id="main"></main>
+<script id="data" type="application/json">__DATA__</script>
+<script>
+"use strict";
+const D = JSON.parse(document.getElementById("data").textContent);
+const KEY = "superWADERs:" + D.report_id;
+
+// ---------------------------------------------------------------- data arrays (gzip + base64)
+async function arr(a) {
+  if (!a) return null;
+  const bin = Uint8Array.from(atob(a.b64), c => c.charCodeAt(0));
+  const buf = await new Response(new Blob([bin]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
+  let out;
+  if (a.dtype === "f4") out = new Float32Array(buf);
+  else if (a.dtype === "f8") out = new Float64Array(buf);
+  else if (a.dtype === "u1") out = new Uint8Array(buf);
+  else { const d = new Int32Array(buf); out = new Float64Array(d.length); let s = 0; for (let i = 0; i < d.length; i++) { s += d[i]; out[i] = s; } }  // i4d: deltas
+  if (a.scale) for (let i = 0; i < out.length; i++) out[i] = out[i] * a.scale + a.offset;
+  return out;
+}
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const COLORS = ["#2a6fdb", "#e0832b", "#2a9d6f", "#b04fc8", "#c0392b", "#7f8c8d"];
+
+// ---------------------------------------------------------------- interactive line plot
+function nice(lo, hi, n, log) {
+  if (log) { const e0 = Math.floor(Math.log10(lo)), e1 = Math.ceil(Math.log10(hi)), k = Math.max(1, Math.ceil((e1 - e0) / n)), t = [];
+    for (let e = e0; e <= e1; e += k) t.push(Math.pow(10, e)); return t.filter(v => v >= lo * 0.999 && v <= hi * 1.001); }
+  const span = hi - lo; if (!(span > 0)) return [lo];
+  const step0 = span / n, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 5, 10].map(m => m * mag).find(s => span / s <= n);
+  const t = []; for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-9; v += step) t.push(Math.abs(v) < step * 1e-9 ? 0 : v);
+  return t;
+}
+const fmt = v => { const a = Math.abs(v); return (a !== 0 && (a < 1e-3 || a >= 1e5)) ? v.toExponential(2) : (+v.toPrecision(5)).toString(); };
+
+class LinePlot {
+  constructor(parent, o) {
+    this.o = Object.assign({ height: 300, logx: false, logy: false, xlabel: "", ylabel: "", title: "", yauto: true }, o);
+    const box = document.createElement("div"); box.className = "plot"; parent.appendChild(box);
+    if (this.o.title) { const t = document.createElement("div"); t.className = "ptitle"; t.textContent = this.o.title; box.appendChild(t); }
+    this.c = document.createElement("canvas"); box.appendChild(this.c);
+    this.tip = document.createElement("div"); this.tip.className = "tip"; box.appendChild(this.tip);
+    const h = document.createElement("div"); h.className = "help";
+    h.textContent = "drag: zoom box · shift+drag: pan · wheel: zoom x (alt: y) · double-click: reset"; box.appendChild(h);
+    this.series = []; this.masks = []; this.box = box; this.view = null;
+    this.c.style.height = this.o.height + "px";
+    this._events(); new ResizeObserver(() => this.draw()).observe(box);
+  }
+  set(series, masks) { this.series = series || []; this.masks = masks || []; this.home = this._extent(); this.view = Object.assign({}, this.home); this.draw(); }
+  _tx(v, log) { return log ? Math.log10(v) : v; }
+  _extent() {
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const s of this.series) {
+      const n = s.y.length;
+      for (let i = 0; i < n; i++) {
+        const x = s.x ? s.x[i] : s.x0 + i * s.dx, y = s.y[i];
+        if (!isFinite(y) || (this.o.logy && y <= 0) || (this.o.logx && x <= 0)) continue;
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      }
+    }
+    if (!isFinite(x0)) return { x0: 0, x1: 1, y0: 0, y1: 1 };
+    if (this.o.ylim) { y0 = this.o.ylim[0]; y1 = this.o.ylim[1]; }
+    if (this.o.logy) y0 = Math.max(y0, y1 * 1e-7);      // a model tail at 1e-300 would squash the data
+    return this._pad({ x0, x1, y0, y1 });
+  }
+  _pad(v) {
+    const ly = this.o.logy;
+    if (ly) return { x0: v.x0, x1: v.x1, y0: v.y0 / 1.5, y1: v.y1 * 1.5 };
+    const d = (v.y1 - v.y0) || Math.abs(v.y1) || 1; return { x0: v.x0, x1: v.x1, y0: v.y0 - 0.05 * d, y1: v.y1 + 0.05 * d };
+  }
+  _yfit() {      // y range of the visible x range
+    let y0 = Infinity, y1 = -Infinity; const v = this.view;
+    for (const s of this.series) {
+      const [i0, i1] = this._range(s);
+      for (let i = i0; i < i1; i++) { const y = s.y[i]; if (!isFinite(y) || (this.o.logy && y <= 0)) continue; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    }
+    if (isFinite(y0)) { if (this.o.logy) y0 = Math.max(y0, y1 * 1e-7); const p = this._pad({ x0: v.x0, x1: v.x1, y0, y1 }); v.y0 = p.y0; v.y1 = p.y1; }
+  }
+  _range(s) {     // indices of the points inside the x view (x sorted)
+    const n = s.y.length, v = this.view;
+    if (!s.x) { return [Math.max(0, Math.floor((v.x0 - s.x0) / s.dx) - 1), Math.min(n, Math.ceil((v.x1 - s.x0) / s.dx) + 2)]; }
+    const bs = t => { let lo = 0, hi = n; while (lo < hi) { const m = (lo + hi) >> 1; if (s.x[m] < t) lo = m + 1; else hi = m; } return lo; };
+    return [Math.max(0, bs(v.x0) - 1), Math.min(n, bs(v.x1) + 1)];
+  }
+  draw() {
+    if (!this.view) return;
+    const dpr = window.devicePixelRatio || 1, W = this.c.clientWidth, H = this.o.height;
+    if (!W) return;
+    this.c.width = W * dpr; this.c.height = H * dpr;
+    const g = this.c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const L = 64, R = 12, T = 8, B = 38, pw = W - L - R, ph = H - T - B; this.geom = { L, T, pw, ph };
+    const v = this.view, lx = this.o.logx, ly = this.o.logy;
+    const X = x => L + (this._tx(x, lx) - this._tx(v.x0, lx)) / (this._tx(v.x1, lx) - this._tx(v.x0, lx)) * pw;
+    const Y = y => T + ph - (this._tx(y, ly) - this._tx(v.y0, ly)) / (this._tx(v.y1, ly) - this._tx(v.y0, ly)) * ph;
+    this.X = X; this.Y = Y;
+    g.fillStyle = css("--bg"); g.fillRect(0, 0, W, H);
+    g.font = "11px sans-serif"; g.strokeStyle = css("--line"); g.fillStyle = css("--muted"); g.lineWidth = 1;
+    for (const t of nice(v.x0, v.x1, Math.max(3, pw / 90), lx)) { const x = X(t); g.beginPath(); g.moveTo(x, T); g.lineTo(x, T + ph); g.stroke(); g.textAlign = "center"; g.fillText(fmt(t), x, T + ph + 14); }
+    for (const t of nice(v.y0, v.y1, Math.max(3, ph / 45), ly)) { const y = Y(t); g.beginPath(); g.moveTo(L, y); g.lineTo(L + pw, y); g.stroke(); g.textAlign = "right"; g.fillText(fmt(t), L - 4, y + 4); }
+    g.textAlign = "center"; g.fillStyle = css("--fg"); g.fillText(this.o.xlabel, L + pw / 2, H - 4);
+    g.save(); g.translate(12, T + ph / 2); g.rotate(-Math.PI / 2); g.fillText(this.o.ylabel, 0, 0); g.restore();
+    g.save(); g.beginPath(); g.rect(L, T, pw, ph); g.clip();
+    for (const m of this.masks) {       // shaded x ranges (e.g. window flags): per pixel column
+      const s = m.ref; const [i0, i1] = this._range(s); const step = Math.max(1, (i1 - i0) / pw);
+      g.fillStyle = m.color;
+      for (let c = 0; c < pw; c++) {
+        const a = Math.floor(i0 + c * step), b = Math.min(i1, Math.floor(i0 + (c + 1) * step) + 1);
+        for (let i = a; i < b; i++) if (m.m[i]) { g.fillRect(L + c, T, 1, ph); break; }
+      }
+    }
+    this.series.forEach((s, k) => {
+      const col = s.color || COLORS[k % COLORS.length]; g.strokeStyle = col; g.fillStyle = col; g.lineWidth = s.width || 1.2;
+      g.setLineDash(s.dash || []);
+      const [i0, i1] = this._range(s); const n = i1 - i0;
+      const xv = i => s.x ? s.x[i] : s.x0 + i * s.dx;
+      if (s.style === "points") { for (let i = i0; i < i1; i++) { const y = s.y[i]; if (isFinite(y) && (!ly || y > 0)) g.fillRect(X(xv(i)) - 1.5, Y(y) - 1.5, 3, 3); } return; }
+      if (n > 3 * pw && !lx) {         // min / max per pixel column
+        const step = n / pw; g.beginPath();
+        for (let c = 0; c < pw; c++) {
+          const a = Math.floor(i0 + c * step), b = Math.min(i1, Math.floor(i0 + (c + 1) * step));
+          let lo = Infinity, hi = -Infinity;
+          for (let i = a; i < b; i++) { const y = s.y[i]; if (y < lo) lo = y; if (y > hi) hi = y; }
+          if (lo === Infinity || (ly && hi <= 0)) continue;
+          if (ly && lo <= 0) lo = hi;
+          g.moveTo(L + c + 0.5, Y(lo)); g.lineTo(L + c + 0.5, Y(hi));
+        }
+        g.stroke(); return;
+      }
+      g.beginPath(); let pen = false;
+      for (let i = i0; i < i1; i++) {
+        const x = xv(i), y = s.y[i];
+        if (!isFinite(y) || (ly && y <= 0) || (lx && x <= 0)) { pen = false; continue; }
+        if (s.style === "step") { const x2 = i + 1 < s.y.length ? xv(i + 1) : x + (s.dx || 0); if (!pen) g.moveTo(X(x), Y(y)); else g.lineTo(X(x), Y(y)); g.lineTo(X(x2), Y(y)); pen = true; continue; }
+        if (!pen) { g.moveTo(X(x), Y(y)); pen = true; } else g.lineTo(X(x), Y(y));
+      }
+      g.stroke();
+    });
+    g.setLineDash([]); g.restore();
+    let ly0 = T + 6; g.font = "11px sans-serif"; g.textAlign = "right";
+    this.series.forEach((s, k) => { if (!s.name) return; g.fillStyle = s.color || COLORS[k % COLORS.length]; g.fillText(s.name, L + pw - 6, ly0 + 8); ly0 += 14; });
+    g.strokeStyle = css("--muted"); g.strokeRect(L, T, pw, ph);
+    if (this.sel) { g.fillStyle = "rgba(42,111,219,.15)"; const s = this.sel; g.fillRect(Math.min(s.a, s.b), T, Math.abs(s.b - s.a), ph); }
+  }
+  _inv(px, py) {
+    const { L, T, pw, ph } = this.geom, v = this.view, lx = this.o.logx, ly = this.o.logy;
+    const fx = (px - L) / pw, fy = (T + ph - py) / ph;
+    const ix = this._tx(v.x0, lx) + fx * (this._tx(v.x1, lx) - this._tx(v.x0, lx)), iy = this._tx(v.y0, ly) + fy * (this._tx(v.y1, ly) - this._tx(v.y0, ly));
+    return [lx ? Math.pow(10, ix) : ix, ly ? Math.pow(10, iy) : iy];
+  }
+  _events() {
+    const c = this.c; let drag = null;
+    const pos = e => { const r = c.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+    c.addEventListener("mousedown", e => { const [x, y] = pos(e); drag = { x, y, pan: e.shiftKey, v: Object.assign({}, this.view) }; });
+    window.addEventListener("mouseup", e => {
+      if (!drag) return; const [x] = pos(e);
+      if (!drag.pan && Math.abs(x - drag.x) > 4) { const [a] = this._inv(Math.min(x, drag.x), 0), [b] = this._inv(Math.max(x, drag.x), 0); this.view.x0 = a; this.view.x1 = b; if (this.o.yauto) this._yfit(); }
+      drag = null; this.sel = null; this.draw();
+    });
+    c.addEventListener("mousemove", e => {
+      const [x, y] = pos(e);
+      if (drag && drag.pan) {
+        const [ax, ay] = this._inv(drag.x, drag.y), [bx, by] = this._inv(x, y), v = this.view, lx = this.o.logx, ly = this.o.logy;
+        const sh = (a, b, d0, d1, lg) => lg ? [d0 * a / b, d1 * a / b] : [d0 + a - b, d1 + a - b];
+        [v.x0, v.x1] = sh(ax, bx, drag.v.x0, drag.v.x1, lx); [v.y0, v.y1] = sh(ay, by, drag.v.y0, drag.v.y1, ly);
+        drag.x = x; drag.y = y; drag.v = Object.assign({}, v); this.draw(); return;
+      }
+      if (drag) { this.sel = { a: drag.x, b: x }; this.draw(); }
+      if (!this.series.length || !this.geom) return;
+      const [vx] = this._inv(x, y); const s = this.series[0]; let i;
+      if (s.x) { let lo = 0, hi = s.y.length - 1; while (lo < hi) { const m = (lo + hi) >> 1; if (s.x[m] < vx) lo = m + 1; else hi = m; } i = lo; } else i = Math.round((vx - s.x0) / s.dx);
+      if (i < 0 || i >= s.y.length) { this.tip.style.display = "none"; return; }
+      const xx = s.x ? s.x[i] : s.x0 + i * s.dx;
+      this.tip.textContent = `x ${fmt(xx)}  y ${fmt(s.y[i])}` + this.series.slice(1).map(t => { const j = t.x ? null : Math.round((xx - t.x0) / t.dx); return (j !== null && j >= 0 && j < t.y.length) ? `  ${t.name || ""} ${fmt(t.y[j])}` : ""; }).join("");
+      this.tip.style.display = "block"; this.tip.style.left = Math.min(x + 12, c.clientWidth - 220) + "px"; this.tip.style.top = (y + 16) + "px";
+    });
+    c.addEventListener("mouseleave", () => { this.tip.style.display = "none"; });
+    c.addEventListener("dblclick", () => { this.view = Object.assign({}, this.home); this.draw(); });
+    c.addEventListener("wheel", e => {
+      e.preventDefault(); const [x, y] = pos(e); const f = e.deltaY > 0 ? 1.25 : 0.8, v = this.view;
+      const [cx, cy] = this._inv(x, y);
+      const z = (c0, a, b, lg) => lg ? [c0 * Math.pow(a / c0, f), c0 * Math.pow(b / c0, f)] : [c0 + (a - c0) * f, c0 + (b - c0) * f];
+      if (e.altKey) [v.y0, v.y1] = z(cy, v.y0, v.y1, this.o.logy); else { [v.x0, v.x1] = z(cx, v.x0, v.x1, this.o.logx); if (this.o.yauto) this._yfit(); }
+      this.draw();
+    }, { passive: false });
+  }
+}
+
+// ---------------------------------------------------------------- ds9-like image viewer
+const CMAPS = {
+  gray: t => [t, t, t],
+  viridis: t => { const s = [[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]]; const x = t * 4, i = Math.min(3, Math.floor(x)), f = x - i; return s[i].map((a, k) => (a + (s[i + 1][k] - a) * f) / 255); },
+  heat: t => [Math.min(1, 3 * t), Math.min(1, Math.max(0, 3 * t - 1)), Math.max(0, 3 * t - 2)],
+};
+class ImageView {
+  constructor(parent, img, w, h, o) {
+    this.img = img; this.w = w; this.h = h; this.o = o || {};
+    const ctl = document.createElement("div"); ctl.className = "controls"; parent.appendChild(ctl);
+    ctl.innerHTML = `scale <select class="mode"><option value="z">99.5 %</option><option value="p99">99 %</option><option value="p95">95 %</option><option value="mm">min/max</option><option value="man">manual</option></select>
+      min <input type="number" step="any" class="vmin"> max <input type="number" step="any" class="vmax">
+      colormap <select class="cmap"><option>gray</option><option>viridis</option><option>heat</option></select>
+      <label><input type="checkbox" class="logs"> asinh</label>
+      <button class="fit">fit</button> <button class="one">1:1</button>
+      <span class="help">wheel: zoom · drag: pan · shift+drag: region statistics · click: row / column cut</span>`;
+    const wrap = document.createElement("div"); wrap.className = "imgwrap"; parent.appendChild(wrap);
+    this.c = document.createElement("canvas"); wrap.appendChild(this.c);
+    this.ro = document.createElement("div"); this.ro.className = "readout"; parent.appendChild(this.ro);
+    this.stats = document.createElement("div"); this.stats.className = "readout"; parent.appendChild(this.stats);
+    const cuts = document.createElement("div"); cuts.className = "grid"; parent.appendChild(cuts);
+    const a = document.createElement("div"), b = document.createElement("div"); a.className = b.className = "card"; cuts.appendChild(a); cuts.appendChild(b);
+    this.rowcut = new LinePlot(a, { title: "row cut (click in the image)", xlabel: "column", ylabel: this.o.unit || "", height: 200 });
+    this.colcut = new LinePlot(b, { title: "column cut", xlabel: "row", ylabel: this.o.unit || "", height: 200 });
+    this.ctl = ctl; this.off = document.createElement("canvas"); this.off.width = w; this.off.height = h;
+    const sorted = Float32Array.from(img.filter((v, i) => i % Math.max(1, Math.floor(img.length / 200000)) === 0 && isFinite(v))).sort();
+    this.q = p => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))))];
+    ["mode", "cmap", "vmin", "vmax", "logs"].forEach(k => ctl.querySelector("." + k).addEventListener("change", () => this.render()));
+    ctl.querySelector(".fit").onclick = () => { this.fit(); this.draw(); };
+    ctl.querySelector(".one").onclick = () => { this.s = 1; this.draw(); };
+    this._events(); new ResizeObserver(() => { if (!this.s) this.fit(); this.draw(); }).observe(wrap);
+    this.render();
+  }
+  limits() {
+    const m = this.ctl.querySelector(".mode").value;
+    const r = { z: [0.0025, 0.9975], p99: [0.005, 0.995], p95: [0.025, 0.975], mm: [0, 1] }[m];
+    if (m === "man") return [parseFloat(this.ctl.querySelector(".vmin").value), parseFloat(this.ctl.querySelector(".vmax").value)];
+    const lo = this.q(r[0]), hi = this.q(r[1]); this.ctl.querySelector(".vmin").value = (+lo.toPrecision(5)); this.ctl.querySelector(".vmax").value = (+hi.toPrecision(5)); return [lo, hi];
+  }
+  render() {
+    const [lo, hi] = this.limits(), cm = CMAPS[this.ctl.querySelector(".cmap").value], asinh = this.ctl.querySelector(".logs").checked;
+    const g = this.off.getContext("2d"), id = g.createImageData(this.w, this.h), d = id.data, span = (hi - lo) || 1;
+    const lut = new Uint8ClampedArray(256 * 3); for (let k = 0; k < 256; k++) { const c = cm(k / 255); lut[3 * k] = c[0] * 255; lut[3 * k + 1] = c[1] * 255; lut[3 * k + 2] = c[2] * 255; }
+    const A = Math.asinh(10);
+    for (let r = 0; r < this.h; r++) for (let c = 0; c < this.w; c++) {
+      const v = this.img[r * this.w + c]; let t = (v - lo) / span; t = t < 0 ? 0 : t > 1 ? 1 : t; if (asinh) t = Math.asinh(10 * t) / A;
+      const k = isFinite(v) ? Math.round(t * 255) : 0, o = 4 * ((this.h - 1 - r) * this.w + c);   // row 0 at the bottom (as ds9)
+      d[o] = lut[3 * k]; d[o + 1] = lut[3 * k + 1]; d[o + 2] = lut[3 * k + 2]; d[o + 3] = 255;
+    }
+    g.putImageData(id, 0, 0); this.draw();
+  }
+  fit() { const W = this.c.clientWidth, H = this.c.clientHeight; this.s = Math.min(W / this.w, H / this.h); this.ox = (W - this.w * this.s) / 2; this.oy = (H - this.h * this.s) / 2; }
+  draw() {
+    const dpr = window.devicePixelRatio || 1, W = this.c.clientWidth, H = this.c.clientHeight; if (!W) return;
+    if (this.s === undefined) this.fit(); if (this.ox === undefined) { this.ox = 0; this.oy = 0; }
+    this.c.width = W * dpr; this.c.height = H * dpr; const g = this.c.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0); g.imageSmoothingEnabled = false; g.fillStyle = "#000"; g.fillRect(0, 0, W, H);
+    g.drawImage(this.off, this.ox, this.oy, this.w * this.s, this.h * this.s);
+    if (this.box) { g.strokeStyle = "#ff0"; const [x0, y0, x1, y1] = this.box; g.strokeRect(this.ox + x0 * this.s, this.oy + (this.h - y1) * this.s, (x1 - x0) * this.s, (y1 - y0) * this.s); }
+  }
+  pix(px, py) { return [Math.floor((px - this.ox) / this.s), this.h - 1 - Math.floor((py - this.oy) / this.s)]; }   // (col, row)
+  _events() {
+    const c = this.c; let drag = null;
+    const pos = e => { const r = c.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+    c.addEventListener("wheel", e => { e.preventDefault(); const [x, y] = pos(e), f = e.deltaY > 0 ? 0.8 : 1.25; this.ox = x - (x - this.ox) * f; this.oy = y - (y - this.oy) * f; this.s *= f; this.draw(); }, { passive: false });
+    c.addEventListener("mousedown", e => { const [x, y] = pos(e); drag = { x, y, x0: x, y0: y, box: e.shiftKey }; });
+    window.addEventListener("mouseup", e => {
+      if (!drag) return; const [x, y] = pos(e);
+      if (drag.box) this.region(this.pix(drag.x0, drag.y0), this.pix(x, y));
+      else if (Math.hypot(x - drag.x0, y - drag.y0) < 3) this.cut(...this.pix(x, y));
+      drag = null;
+    });
+    c.addEventListener("mousemove", e => {
+      const [x, y] = pos(e); const [col, row] = this.pix(x, y);
+      if (col >= 0 && col < this.w && row >= 0 && row < this.h) this.ro.textContent = `column ${col}  row ${row}  value ${fmt(this.img[row * this.w + col])} ${this.o.unit || ""}`;
+      if (!drag) return;
+      if (drag.box) { const [a, b] = this.pix(drag.x0, drag.y0); this.box = [Math.min(a, col), Math.min(b, row), Math.max(a, col) + 1, Math.max(b, row) + 1]; this.draw(); return; }
+      this.ox += x - drag.x; this.oy += y - drag.y; drag.x = x; drag.y = y; this.draw();
+    });
+  }
+  cut(col, row) {
+    if (col < 0 || col >= this.w || row < 0 || row >= this.h) return;
+    this.rowcut.set([{ x0: 0, dx: 1, y: this.img.subarray(row * this.w, (row + 1) * this.w), name: `row ${row}` }]);
+    const cc = new Float64Array(this.h); for (let r = 0; r < this.h; r++) cc[r] = this.img[r * this.w + col];
+    this.colcut.set([{ x0: 0, dx: 1, y: cc, name: `column ${col}` }]);
+  }
+  region(a, b) {
+    const c0 = Math.max(0, Math.min(a[0], b[0])), c1 = Math.min(this.w - 1, Math.max(a[0], b[0])), r0 = Math.max(0, Math.min(a[1], b[1])), r1 = Math.min(this.h - 1, Math.max(a[1], b[1]));
+    const v = []; for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) { const x = this.img[r * this.w + c]; if (isFinite(x)) v.push(x); }
+    if (!v.length) return; v.sort((p, q) => p - q);
+    const n = v.length, mean = v.reduce((s, x) => s + x, 0) / n, sd = Math.sqrt(v.reduce((s, x) => s + (x - mean) ** 2, 0) / Math.max(1, n - 1));
+    this.box = [c0, r0, c1 + 1, r1 + 1]; this.draw();
+    this.stats.textContent = `region columns ${c0}-${c1}, rows ${r0}-${r1}: ${n} pixels, mean ${fmt(mean)}, median ${fmt(v[n >> 1])}, std ${fmt(sd)}, min ${fmt(v[0])}, max ${fmt(v[n - 1])} ${this.o.unit || ""}`;
+  }
+}
+
+// ---------------------------------------------------------------- page: tabs, comments, logs
+function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; }
+function table(rows) { const t = el("table", "num"); for (const [k, v, flag] of rows) { const tr = el("tr"); tr.appendChild(el("th", "", k)); tr.appendChild(el("td", "v" + (flag ? " flag" : ""), v)); t.appendChild(tr); } return t; }
+function commentBox(parent, key, label) {
+  const box = el("div", "comment"); box.appendChild(el("h3", "", label || "Comments"));
+  const ta = el("textarea"); ta.placeholder = "Notes on this page (saved in this browser; 'Save comments' writes a file)"; box.appendChild(ta);
+  const pt = el("div", "printtext"); box.appendChild(pt); const st = el("div", "saved"); box.appendChild(st);
+  const store = () => { try { const all = JSON.parse(localStorage.getItem(KEY) || "{}"); all[key] = ta.value; localStorage.setItem(KEY, JSON.stringify(all)); st.textContent = "saved in this browser " + new Date().toLocaleTimeString(); } catch (e) { st.textContent = "browser storage not available: use Save comments"; } pt.textContent = ta.value; };
+  try { ta.value = (JSON.parse(localStorage.getItem(KEY) || "{}"))[key] || ""; } catch (e) {}
+  pt.textContent = ta.value; ta.addEventListener("input", store); ta.dataset.key = key; parent.appendChild(box);
+}
+function logBox(parent, lines) { parent.appendChild(el("h3", "", "Log")); const l = el("div", "log"); l.textContent = (lines || []).join("\n"); parent.appendChild(l); }
+
+const nav = document.getElementById("nav"), main = document.getElementById("main"), tabs = [];
+function addTab(id, label, build) {
+  const b = el("button", "", label), t = el("section", "tab"); t.id = "tab_" + id; nav.appendChild(b); main.appendChild(t);
+  let built = false;
+  const show = async () => { tabs.forEach(x => { x.b.classList.remove("on"); x.t.classList.remove("on"); }); b.classList.add("on"); t.classList.add("on"); if (!built) { built = true; t.appendChild(el("p", "loading", "loading ...")); await build(t); t.querySelector(".loading")?.remove(); } location.hash = id; };
+  b.onclick = show; tabs.push({ id, b, t, show, build: async () => { if (!built) { built = true; await build(t); } } });
+}
+
+// ---------------------------------------------------------------- tab contents
+async function traceTab(t, tr) {
+  t.appendChild(el("h2", "", `Trace: ${tr.file}`));
+  t.appendChild(table(tr.numbers));
+  const vals = await arr(tr.values), rd = await arr(tr.rd), ru = await arr(tr.ru);
+  const c1 = el("div", "card"); t.appendChild(c1);
+  const p = new LinePlot(c1, { title: "raw video signal (all samples; zoom in to see single skip cycles)", xlabel: "time [us]", ylabel: "ADC value [ADU]", height: 340 });
+  const s = { x0: 0, dx: tr.dt_us, y: vals, color: css("--fg"), width: 1 };
+  p.set([s], [{ ref: s, m: rd, color: "rgba(192,57,43,.16)" }, { ref: s, m: ru, color: "rgba(42,157,111,.16)" }]);
+  const grid = el("div", "grid"); t.appendChild(grid);
+  if (tr.skips) {
+    const a = el("div", "card"); grid.appendChild(a);
+    const q = new LinePlot(a, { title: "per-skip window means (inline L1 sums), all pixels in order", xlabel: "skip record", ylabel: "ADU", height: 260 });
+    q.set([{ x0: 0, dx: 1, y: await arr(tr.skips.pedestal), name: "pedestal", color: "#c0392b", style: "points" }, { x0: 0, dx: 1, y: await arr(tr.skips.signal), name: "signal", color: "#2a9d6f", style: "points" }]);
+    const b = el("div", "card"); grid.appendChild(b);
+    const r = new LinePlot(b, { title: "CDS = pedestal - signal per skip", xlabel: "skip record", ylabel: "ADU", height: 260 });
+    r.set([{ x0: 0, dx: 1, y: await arr(tr.skips.cds), name: "CDS", color: "#2a6fdb" }]);
+  }
+  if (tr.folded) {
+    const a = el("div", "card"); grid.appendChild(a);
+    const f = new LinePlot(a, { title: "skip cycle folded (mean, +-1 sigma over skips)", xlabel: "time in cycle [us]", ylabel: "ADU", height: 260 });
+    const m = await arr(tr.folded.mean), sd = await arr(tr.folded.std), up = m.map((v, i) => v + sd[i]), dn = m.map((v, i) => v - sd[i]);
+    f.set([{ x0: 0, dx: tr.dt_us, y: m, name: "mean" }, { x0: 0, dx: tr.dt_us, y: up, color: "#9ab", dash: [3, 3] }, { x0: 0, dx: tr.dt_us, y: dn, color: "#9ab", dash: [3, 3] }]);
+  }
+  if (tr.spectrum) {
+    const a = el("div", "card"); grid.appendChild(a);
+    const f = new LinePlot(a, { title: "noise spectrum (cycle shape removed)", xlabel: "frequency [Hz]", ylabel: "ADU / sqrt(Hz)", logx: true, logy: true, height: 260 });
+    f.set([{ x: await arr(tr.spectrum.f), y: await arr(tr.spectrum.a), color: "#b04fc8" }]);
+  }
+}
+async function psdTab(t, ps) {
+  t.appendChild(el("h2", "", "PSD (noise traces)"));
+  t.appendChild(table(ps.numbers));
+  const grid = el("div", "grid"); t.appendChild(grid);
+  const mk = (title, o) => { const a = el("div", "card"); grid.appendChild(a); return new LinePlot(a, Object.assign({ title, height: 290 }, o)); };
+  const tr = mk("ADC trace", { xlabel: "time [us]", ylabel: "sample value [ADU]" });
+  const pg = mk("periodogram", { xlabel: "frequency [Hz]", ylabel: "ADU / sqrt(Hz)", logx: true, logy: true });
+  const wl = mk("Welch (linear)", { xlabel: "frequency [Hz]", ylabel: "ADU / sqrt(Hz)" });
+  const wg = mk("Welch (log)", { xlabel: "frequency [Hz]", ylabel: "ADU / sqrt(Hz)", logx: true, logy: true });
+  const S = { t: [], p: [], wl: [], wg: [] };
+  for (const [k, f] of ps.files.entries()) {
+    const col = COLORS[k % COLORS.length], v = await arr(f.values), fp = await arr(f.pf), ap = await arr(f.pa), fw = await arr(f.wf), aw = await arr(f.wa);
+    S.t.push({ x0: 0, dx: f.dt_us, y: v, color: col, name: f.label });
+    S.p.push({ x: fp, y: ap, color: col, name: f.label });
+    S.wl.push({ x: fw, y: aw, color: col, name: f.label });
+    S.wg.push({ x: fw, y: aw, color: col, name: `sigma_ADU ${fmt(f.sigma_adu)}  sigma_CDS ${fmt(f.sigma_cds)}` });
+  }
+  tr.set(S.t); pg.set(S.p); wl.set(S.wl); wg.set(S.wg);
+}
+async function imageSummaryTab(t, ims) {
+  t.appendChild(el("h2", "", "Image summaries (pedestal, fits; no clustering)"));
+  for (const im of ims) {
+    const card = el("div", "card"); t.appendChild(card);
+    card.appendChild(el("h3", "", `${im.role}: ${im.file}`));
+    card.appendChild(table(im.numbers));
+    const grid = el("div", "grid"); card.appendChild(grid);
+    const mk = (title, o) => { const a = el("div", "card"); grid.appendChild(a); return new LinePlot(a, Object.assign({ title, height: 250 }, o)); };
+    if (im.hist) {
+      const h = mk("pixel charge and dark-current fit (window solid, model continued dashed)", { xlabel: "pixel charge [ADU]", ylabel: "counts", logy: true });
+      const ser = [{ x: await arr(im.hist.x), y: await arr(im.hist.y), style: "step", color: css("--fg"), name: "pixels" }];
+      if (im.hist.mx) ser.push({ x: await arr(im.hist.mx), y: await arr(im.hist.my), color: "#c0392b", width: 2, name: "fit" });
+      h.set(ser);
+    }
+    const r1 = mk("pedestal (baseline) per row", { xlabel: "row", ylabel: "ADU" }); r1.set([{ x0: 0, dx: 1, y: await arr(im.mu_row), style: "points" }]);
+    const r2 = mk("pedestal sigma per row", { xlabel: "row", ylabel: "ADU" }); r2.set([{ x0: 0, dx: 1, y: await arr(im.sig_row), style: "points" }]);
+    if (im.lam_row) { const r3 = mk("dark charge per row (from the 0e- fraction)", { xlabel: "row", ylabel: "e- / pix" }); r3.set([{ x0: 0, dx: 1, y: await arr(im.lam_row), style: "points" }]); }
+    const r4 = mk("median per column", { xlabel: "column", ylabel: im.unit }); r4.set([{ x0: 0, dx: 1, y: await arr(im.col_med) }]);
+    const r5 = mk("median per row (active region)", { xlabel: "row", ylabel: im.unit }); r5.set([{ x0: 0, dx: 1, y: await arr(im.row_med) }]);
+  }
+}
+async function imageTab(t, im) {
+  t.appendChild(el("h2", "", `${im.role}: ${im.file}`));
+  t.appendChild(el("div", "readout", `${im.h} rows x ${im.w} columns${im.decimated ? ` (shown binned ${im.decimated}x${im.decimated})` : ""}; values: pedestal-subtracted, ${im.unit}`));
+  const v = await arr(im.pixels); new ImageView(t, v, im.w, im.h, { unit: im.unit });
+}
+
+(async function () {
+  document.title = D.title; document.getElementById("title").textContent = D.title;
+  document.getElementById("ident").textContent = D.ident;
+  for (const tb of D.tabs) {
+    addTab(tb.id, tb.label, async t => {
+      if (tb.kind === "overview") { t.appendChild(el("h2", "", "Overview")); t.appendChild(table(tb.numbers)); t.appendChild(el("h3", "", "Packet contents")); t.appendChild(table(tb.files)); }
+      else if (tb.kind === "trace") await traceTab(t, tb.data);
+      else if (tb.kind === "psd") await psdTab(t, tb.data);
+      else if (tb.kind === "summary") await imageSummaryTab(t, tb.data);
+      else if (tb.kind === "image") await imageTab(t, tb.data);
+      commentBox(t, tb.id, "Comments on this page");
+      logBox(t, tb.log);
+    });
+  }
+  const sp = el("span", "sp"); nav.appendChild(sp);
+  const save = el("button", "noprint", "Save comments"), load = el("button", "noprint", "Load comments"), pdf = el("button", "noprint", "Export PDF");
+  const file = el("input"); file.type = "file"; file.accept = ".json"; file.style.display = "none";
+  nav.append(save, load, pdf, file);
+  save.onclick = () => {
+    const out = { report: D.report_id, saved: new Date().toISOString(), comments: {} };
+    document.querySelectorAll(".comment textarea").forEach(ta => out.comments[ta.dataset.key] = ta.value);
+    try { Object.assign(out.comments, Object.fromEntries(Object.entries(JSON.parse(localStorage.getItem(KEY) || "{}")).filter(([k]) => !(k in out.comments)))); } catch (e) {}
+    const a = el("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(out, null, 1)], { type: "application/json" })); a.download = D.report_id + "_comments.json"; a.click();
+  };
+  load.onclick = () => file.click();
+  file.onchange = async () => {
+    const j = JSON.parse(await file.files[0].text()); localStorage.setItem(KEY, JSON.stringify(j.comments || {}));
+    document.querySelectorAll(".comment textarea").forEach(ta => { ta.value = (j.comments || {})[ta.dataset.key] || ""; ta.nextElementSibling.textContent = ta.value; });
+  };
+  pdf.onclick = async () => { for (const x of tabs) await x.build(); tabs.forEach(x => x.t.classList.add("on")); setTimeout(() => { window.print(); tabs.forEach(x => x.t.classList.remove("on")); (tabs.find(x => x.b.classList.contains("on")) || tabs[0]).t.classList.add("on"); }, 400); };
+  const want = location.hash.slice(1); (tabs.find(x => x.id === want) || tabs[0]).show();
+})();
+</script>
+</body>
+</html>
