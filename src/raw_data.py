@@ -98,6 +98,10 @@ def l1_skip_means(path, ncol, nskip, skip_first, ns):
     row_len = ncol * pix
     out = {n: [] for n in ns}
     problems, r = [], 0
+    m_used = nskip - skip_first
+    blocks = [b for b in (1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096) if 2 * b <= m_used]
+    D = dict(transient=np.zeros(nskip), n_pix=0, spec=np.zeros(m_used // 2 + 1), sd1=[], drift=[], row_med=[],
+             col_sum=np.zeros(ncol), col_n=np.zeros(ncol), allan={b: [] for b in blocks})
     o = int(first[0])
     while True:
         # a row starts after its LINE markers: one per vertical shift (NPBIN of them in a binned image, the first
@@ -125,13 +129,110 @@ def l1_skip_means(path, ncol, nskip, skip_first, ns):
         if not good.all():
             problems.append(f"row {r}: {int((~good).sum())} of {ncol} pixels fail the layout checks (set to nan)")
         v = ped / np.maximum(counts[:, 0::2], 1) - sig / np.maximum(counts[:, 1::2], 1)     # (ncol, nskip) ADU
+        _diagnose(D, v[good], v[good][:, skip_first:], np.flatnonzero(good), blocks)
         cs = np.cumsum(v[:, skip_first:], axis=1)
         for m in ns:
             row = cs[:, m - 1] / m
             row[~good] = np.nan
             out[m].append(row)
         r += 1
-    return {m: np.array(v) for m, v in out.items()}, r, problems
+    return {m: np.array(v) for m, v in out.items()}, r, problems, D
+
+
+def _diagnose(D, v_all, v, cols, blocks):
+    """Accumulate the level-1 diagnostics of one row (good pixels): v_all every skip, v the skips used."""
+    if not len(v):
+        return
+    D["transient"] += (v_all - v.mean(axis=1, keepdims=True)).sum(axis=0)      # mean of skip k minus the pixel mean
+    D["n_pix"] += len(v)
+    x = v - v.mean(axis=1, keepdims=True)
+    D["spec"] += (np.abs(np.fft.rfft(x, axis=1)) ** 2).sum(axis=0)
+    D["sd1"] += np.std(np.diff(v, axis=1), axis=1).tolist()                      # / sqrt(2) later: no drift in it
+    h = v.shape[1] // 2
+    D["drift"] += (v[:, h:].mean(axis=1) - v[:, :h].mean(axis=1)).tolist()
+    pm = v.mean(axis=1)
+    D["row_med"].append(float(np.median(pm)))
+    D["col_sum"][cols] += pm
+    D["col_n"][cols] += 1
+    for b in blocks:
+        nb = v.shape[1] // b
+        bm = v[:, :nb * b].reshape(len(v), nb, b).mean(axis=2)
+        D["allan"][b].append(float(np.median(np.sqrt(np.mean(np.diff(bm, axis=1) ** 2, axis=1) / 2))))
+
+
+def l1_diagnostics(D, skip_first, nskip):
+    """Numbers from the accumulated diagnostics of one channel: single-skip noise (sigma_1, from differences of
+    consecutive skips), the transient (mean of skip k minus each pixel's mean; skips until it stays below
+    max(0.05 sigma_1, 5 sigma_1 / sqrt(pixels)) -> suggested --l1-skip-first), Allan deviation against N (white noise:
+    sigma_1 / sqrt(N)), drift of a pixel's level between the first and second half of its skips, row-to-row and
+    column-to-column spread of the pixel levels, the noise spectrum of the skip sequence (per skip)."""
+    n = max(D["n_pix"], 1)
+    tr = D["transient"] / n
+    s1 = float(np.median(D["sd1"]) / np.sqrt(2)) if D["sd1"] else float("nan")
+    lim = max(0.05 * s1, 5 * s1 / np.sqrt(n))
+    bad = np.flatnonzero(np.abs(tr) > lim)
+    settle = int(bad[-1] + 1) if len(bad) and bad[-1] < nskip // 2 else (0 if not len(bad) else None)
+    allan = {b: float(np.median(v)) for b, v in D["allan"].items() if v}
+    rows = np.array(D["row_med"])
+    cols = np.where(D["col_n"] > 0, D["col_sum"] / np.maximum(D["col_n"], 1), np.nan)
+    m = nskip - skip_first
+    f = np.fft.rfftfreq(m)                                      # cycles per skip
+    spec = np.sqrt(D["spec"] / n / m)
+    rslope = float(np.polyfit(np.arange(len(rows)), rows, 1)[0]) if len(rows) > 2 else float("nan")
+    return dict(sigma1_adu=s1, transient=tr.tolist(), transient_limit=lim, settle_skips=settle,
+                allan={str(b): v for b, v in allan.items()}, allan_white_ratio_at_max=(
+                    allan[max(allan)] / (s1 / np.sqrt(max(allan))) if allan else float("nan")),
+                drift_median_adu=float(np.median(D["drift"])) if D["drift"] else float("nan"),
+                drift_rms_adu=float(np.std(D["drift"])) if D["drift"] else float("nan"),
+                row_levels=rows.tolist(), row_slope_adu_per_row=rslope, row_rms_adu=float(np.nanstd(rows)),
+                col_levels=cols.tolist(), col_rms_adu=float(np.nanstd(cols)), spec_f=f.tolist(), spec=spec.tolist(),
+                pixels=int(D["n_pix"]))
+
+
+def plot_l1_diagnostics(dg, out, title):
+    """Six panels of the level-1 diagnostics of one channel."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    plt.rcParams["text.usetex"] = False
+    fig, ax = plt.subplots(2, 3, figsize=(16, 8.5))
+    tr = np.array(dg["transient"])
+    k = np.arange(len(tr))
+    a = ax[0, 0]
+    a.plot(k + 1, tr, lw=1)
+    a.axhspan(-dg["transient_limit"], dg["transient_limit"], color="0.85")
+    a.set(xscale="log", xlabel="skip number + 1", ylabel="mean(skip k) - pixel mean [ADU]",
+          title=f"transient: settles after {dg['settle_skips']} skips" if dg["settle_skips"] is not None else "transient: does not settle")
+    a = ax[0, 1]
+    if dg["allan"]:
+        b = np.array(sorted(int(x) for x in dg["allan"]))
+        y = np.array([dg["allan"][str(x)] for x in b])
+        a.loglog(b, y, "o-", label="within a pixel (Allan deviation)")
+        a.loglog(b, dg["sigma1_adu"] / np.sqrt(b), ":", label="white: sigma_1 / sqrt(N)")
+        a.legend(fontsize=8)
+    a.set(xlabel="skips averaged N", ylabel="noise [ADU]", title=f"noise vs N (sigma_1 = {dg['sigma1_adu']:.2f} ADU)")
+    a = ax[0, 2]
+    f, s = np.array(dg["spec_f"]), np.array(dg["spec"])
+    a.loglog(f[1:], s[1:], lw=0.8, color="tab:purple")
+    a.set(xlabel="frequency [1 / skip]", ylabel="ADU per sqrt(bin)", title="spectrum of the skip sequence")
+    a = ax[1, 0]
+    a.plot(dg["row_levels"], ".", ms=3)
+    a.set(xlabel="row", ylabel="median pixel level [ADU]", title=f"level along the rows: slope {dg['row_slope_adu_per_row']:.3g} ADU/row")
+    a = ax[1, 1]
+    a.plot(dg["col_levels"], lw=0.7)
+    a.set(xlabel="column", ylabel="mean pixel level [ADU]", title=f"level along the columns (rms {dg['col_rms_adu']:.3g} ADU)")
+    a = ax[1, 2]
+    a.text(0.02, 0.95, "\n".join([f"pixels: {dg['pixels']}", f"sigma_1 (single skip): {dg['sigma1_adu']:.3f} ADU",
+                                   f"settles after: {dg['settle_skips']} skips (|transient| < {dg['transient_limit']:.3g} ADU)",
+                                   f"drift 2nd - 1st half of a pixel's skips: median {dg['drift_median_adu']:.3g}, rms {dg['drift_rms_adu']:.3g} ADU",
+                                   f"Allan / white at the largest N: {dg['allan_white_ratio_at_max']:.2f} (1 = white noise)",
+                                   f"row levels: rms {dg['row_rms_adu']:.3g} ADU, slope {dg['row_slope_adu_per_row']:.3g} ADU/row"]),
+           va="top", family="monospace", fontsize=9, transform=a.transAxes)
+    a.axis("off")
+    fig.suptitle(title, fontsize=11)
+    fig.tight_layout()
+    fig.savefig(out, dpi=100)
+    plt.close(fig)
 
 
 def fits_header(meta):
@@ -175,10 +276,25 @@ def l1_to_fits(base, chans, ns_text, skip_first, outdir):
     if not ns:
         return [], lines
     means, rows, probs = {}, {}, []
+    ddir = os.path.join(outdir, stem + "_diagnostics")
+    os.makedirs(ddir, exist_ok=True)
+    diag = {}
     for ch, p in sorted(chans.items()):
-        m, nr, pr = l1_skip_means(p, ncol, nskip, skip_first, ns)
+        m, nr, pr, D = l1_skip_means(p, ncol, nskip, skip_first, ns)
         means[ch], rows[ch] = m, nr
         probs += [f"ch{ch} {x}" for x in pr]
+        if D["n_pix"]:
+            dg = l1_diagnostics(D, skip_first, nskip)
+            diag[ch] = dg
+            plot_l1_diagnostics(dg, os.path.join(ddir, f"ch{ch}.png"), f"{stem} channel {ch}")
+            lines.append(f"    ch{ch} diagnostics: sigma_1 {dg['sigma1_adu']:.2f} ADU, transient settles after "
+                         f"{dg['settle_skips']} skips, Allan/white at N={max((int(b) for b in dg['allan']), default=0)}: "
+                         f"{dg['allan_white_ratio_at_max']:.2f}, pixel drift rms {dg['drift_rms_adu']:.3g} ADU, row slope "
+                         f"{dg['row_slope_adu_per_row']:.3g} ADU/row")
+    with open(os.path.join(ddir, "diagnostics.json"), "w") as fh:
+        json.dump({str(c): v for c, v in diag.items()}, fh)
+    if diag:
+        lines.append(f"    diagnostics (plots per channel, numbers): {ddir}/")
     nr = min(rows.values())
     lines += [f"    {x}" for x in probs[:12]] + ([f"    ... {len(probs) - 12} more"] if len(probs) > 12 else [])
     if nr == 0:

@@ -50,7 +50,8 @@ level-0 traces are decoded, checked and plotted (`L0/`); level-1 images become F
 (`--l1-skips 1,10,100,1000`, `L1/`) that run through the pipeline, with noise vs N and the fits side by side.
 With `--packet` (and `--module-list FILE`) a list of a commissioning packet's
 files (traces, PSD traces, images, in any order) gives one interactive HTML report per CCD (`packet/`).
-Details and validation: docs/native_pipeline.md; plans: docs/superWADERs_commissioning_next_steps.md.
+Details and validation: docs/native_pipeline.md; plans: docs/superWADERs_commissioning_next_steps.md; how to use everything: docs/superWADERs_user_guide.md.
+Commissioning flags (native): `--packet`, `--dc-series`, `--defect-map`, `--sr`, `--l1-skips`, `--module-list`.
 
 Results go to `WADERs_analysis_<image or list name>/` in the current folder (`-o` to choose another):
 

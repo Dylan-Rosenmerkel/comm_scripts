@@ -44,6 +44,23 @@ table.num td.v { font-variant-numeric:tabular-nums; }
 .imgwrap canvas { width:100%; height:100%; display:block; cursor:grab; image-rendering:pixelated; }
 .readout { font:12px monospace; color:var(--muted); min-height:16px; }
 .loading { color:var(--muted); font-style:italic; }
+.pbtn { display:flex; gap:4px; justify-content:flex-end; margin:-2px 0 2px; }
+.pbtn button, .controls button { border:1px solid var(--line); background:var(--bg); color:var(--fg); border-radius:4px; padding:1px 7px; font-size:11px; cursor:pointer; }
+.pbtn button:hover, .controls button:hover, nav button:hover { border-color:var(--accent); }
+nav button .dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:#c0392b; margin-left:6px; vertical-align:middle; }
+#help { display:none; position:fixed; right:20px; top:60px; width:min(560px, calc(100vw - 40px)); max-height:80vh; overflow:auto; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 18px; z-index:20; box-shadow:0 8px 30px rgba(0,0,0,.3); font-size:13px; }
+#help h3 { color:var(--fg); margin-top:10px; }
+#help kbd { border:1px solid var(--line); border-radius:3px; padding:0 4px; font-size:11px; background:var(--bg); }
+.hint { background:rgba(42,111,219,.12); border:1px solid var(--accent); border-radius:8px; padding:8px 12px; margin:10px 20px 0; font-size:13px; display:flex; gap:10px; align-items:center; }
+.hint button { margin-left:auto; }
+.cbar { height:12px; width:100%; border:1px solid var(--line); }
+.cbarlab { display:flex; justify-content:space-between; font:11px monospace; color:var(--muted); }
+.legend { display:flex; flex-wrap:wrap; gap:12px; font-size:12px; margin:4px 0; }
+.legend label { cursor:pointer; }
+.sw { display:inline-block; width:10px; height:10px; margin-right:4px; vertical-align:middle; border-radius:2px; }
+table.num tr.click { cursor:pointer; }
+table.num tr.click:hover td { color:var(--accent); }
+.figure img { max-width:100%; border:1px solid var(--line); border-radius:6px; background:#fff; }
 @media print {
   nav, .noprint, .plot .help, .controls, input[type=file] { display:none !important; }
   .tab { display:block !important; page-break-after:always; }
@@ -101,6 +118,11 @@ class LinePlot {
     this.o = Object.assign({ height: 300, logx: false, logy: false, xlabel: "", ylabel: "", title: "", yauto: true }, o);
     const box = document.createElement("div"); box.className = "plot"; parent.appendChild(box);
     if (this.o.title) { const t = document.createElement("div"); t.className = "ptitle"; t.textContent = this.o.title; box.appendChild(t); }
+    const pb = document.createElement("div"); pb.className = "pbtn noprint"; box.appendChild(pb);
+    const btn = (lab, tip, f) => { const b = document.createElement("button"); b.textContent = lab; b.title = tip; b.onclick = f; pb.appendChild(b); };
+    btn("reset", "show everything again (also: double-click)", () => { this.view = Object.assign({}, this.home); this.draw(); });
+    btn(this.o.logy ? "lin y" : "log y", "switch the y axis between linear and logarithmic", e => { this.o.logy = !this.o.logy; e.target.textContent = this.o.logy ? "lin y" : "log y"; this.home = this._extent(); this.view = Object.assign({}, this.home); this.draw(); });
+    btn("PNG", "save this plot as a picture", () => { const a = document.createElement("a"); a.href = this.c.toDataURL("image/png"); a.download = (this.o.title || "plot").replace(/[^a-z0-9]+/gi, "_") + ".png"; a.click(); });
     this.c = document.createElement("canvas"); box.appendChild(this.c);
     this.tip = document.createElement("div"); this.tip.className = "tip"; box.appendChild(this.tip);
     const h = document.createElement("div"); h.className = "help";
@@ -128,6 +150,7 @@ class LinePlot {
   }
   _pad(v) {
     const ly = this.o.logy;
+    if (this.series.some(s => s.style === "points") && !this.o.logx) { const dx = (v.x1 - v.x0) * 0.03 || 1; v = Object.assign({}, v, { x0: v.x0 - dx, x1: v.x1 + dx }); }
     if (ly) return { x0: v.x0, x1: v.x1, y0: v.y0 / 1.5, y1: v.y1 * 1.5 };
     const d = (v.y1 - v.y0) || Math.abs(v.y1) || 1; return { x0: v.x0, x1: v.x1, y0: v.y0 - 0.05 * d, y1: v.y1 + 0.05 * d };
   }
@@ -262,10 +285,20 @@ class ImageView {
       min <input type="number" step="any" class="vmin"> max <input type="number" step="any" class="vmax">
       colormap <select class="cmap"><option>gray</option><option>viridis</option><option>heat</option></select>
       <label><input type="checkbox" class="logs"> asinh</label>
-      <button class="fit">fit</button> <button class="one">1:1</button>
+      <button class="fit" title="whole image in the window">fit</button> <button class="one" title="one image pixel per screen pixel">1:1</button>
+      <button class="zin" title="zoom in">+</button> <button class="zout" title="zoom out">&minus;</button>
+      <button class="png" title="save the current view as a picture">PNG</button>
       <span class="help">wheel: zoom · drag: pan · shift+drag: region statistics · click: row / column cut</span>`;
+    if (this.o.overlay) {
+      const lg = document.createElement("div"); lg.className = "legend"; parent.appendChild(lg);
+      this.show = {};
+      this.o.overlay.types.forEach((ty, k) => { this.show[k + 1] = true; const l = document.createElement("label"); l.innerHTML = `<input type="checkbox" checked> <span class="sw" style="background:${ty.color}"></span>${ty.name} (${ty.n})`; l.querySelector("input").onchange = e => { this.show[k + 1] = e.target.checked; this.draw(); }; lg.appendChild(l); });
+      const l = document.createElement("label"); l.innerHTML = `<input type="checkbox" checked> show markings`; l.querySelector("input").onchange = e => { this.ovon = e.target.checked; this.draw(); }; this.ovon = true; lg.appendChild(l);
+    }
     const wrap = document.createElement("div"); wrap.className = "imgwrap"; parent.appendChild(wrap);
     this.c = document.createElement("canvas"); wrap.appendChild(this.c);
+    this.cb = document.createElement("canvas"); this.cb.className = "cbar"; this.cb.width = 256; this.cb.height = 1; parent.appendChild(this.cb);
+    this.cbl = document.createElement("div"); this.cbl.className = "cbarlab"; parent.appendChild(this.cbl);
     this.ro = document.createElement("div"); this.ro.className = "readout"; parent.appendChild(this.ro);
     this.stats = document.createElement("div"); this.stats.className = "readout"; parent.appendChild(this.stats);
     const cuts = document.createElement("div"); cuts.className = "grid"; parent.appendChild(cuts);
@@ -278,8 +311,11 @@ class ImageView {
     ["mode", "cmap", "vmin", "vmax", "logs"].forEach(k => ctl.querySelector("." + k).addEventListener("change", () => this.render()));
     ctl.querySelector(".fit").onclick = () => { this.fit(); this.draw(); };
     ctl.querySelector(".one").onclick = () => { this.s = 1; this.draw(); };
+    const zoom = f => { const W = this.c.clientWidth / 2, H = this.c.clientHeight / 2; this.ox = W - (W - this.ox) * f; this.oy = H - (H - this.oy) * f; this.s *= f; this.draw(); };
+    ctl.querySelector(".zin").onclick = () => zoom(1.5); ctl.querySelector(".zout").onclick = () => zoom(1 / 1.5);
+    ctl.querySelector(".png").onclick = () => { const a = document.createElement("a"); a.href = this.c.toDataURL("image/png"); a.download = "image_view.png"; a.click(); };
     this._events(); new ResizeObserver(() => { if (!this.s) this.fit(); this.draw(); }).observe(wrap);
-    this.render();
+    this.render(); this.cut(w >> 1, h >> 1);           // start with the middle row and column
   }
   limits() {
     const m = this.ctl.querySelector(".mode").value;
@@ -297,8 +333,13 @@ class ImageView {
       const k = isFinite(v) ? Math.round(t * 255) : 0, o = 4 * ((this.h - 1 - r) * this.w + c);   // row 0 at the bottom (as ds9)
       d[o] = lut[3 * k]; d[o + 1] = lut[3 * k + 1]; d[o + 2] = lut[3 * k + 2]; d[o + 3] = 255;
     }
-    g.putImageData(id, 0, 0); this.draw();
+    g.putImageData(id, 0, 0);
+    const cg = this.cb.getContext("2d"), ci = cg.createImageData(256, 1);
+    for (let k = 0; k < 256; k++) { const tt = asinh ? Math.sinh(k / 255 * A) / 10 : k / 255, kk = Math.round(Math.min(1, tt) * 255); ci.data[4 * k] = lut[3 * kk]; ci.data[4 * k + 1] = lut[3 * kk + 1]; ci.data[4 * k + 2] = lut[3 * kk + 2]; ci.data[4 * k + 3] = 255; }
+    cg.putImageData(ci, 0, 0); this.cbl.innerHTML = `<span>${fmt(lo)}</span><span>${this.o.unit || ""}</span><span>${fmt(hi)}</span>`;
+    this.draw();
   }
+  goto(col, row, zoomTo) { const W = this.c.clientWidth, H = this.c.clientHeight; this.s = Math.max(this.s, zoomTo || 8); this.ox = W / 2 - (col + 0.5) * this.s; this.oy = H / 2 - (this.h - row - 0.5) * this.s; this.mark = [col, row]; this.draw(); this.cut(col, row); }
   fit() { const W = this.c.clientWidth, H = this.c.clientHeight; this.s = Math.min(W / this.w, H / this.h); this.ox = (W - this.w * this.s) / 2; this.oy = (H - this.h * this.s) / 2; }
   draw() {
     const dpr = window.devicePixelRatio || 1, W = this.c.clientWidth, H = this.c.clientHeight; if (!W) return;
@@ -306,6 +347,12 @@ class ImageView {
     this.c.width = W * dpr; this.c.height = H * dpr; const g = this.c.getContext("2d");
     g.setTransform(dpr, 0, 0, dpr, 0, 0); g.imageSmoothingEnabled = false; g.fillStyle = "#000"; g.fillRect(0, 0, W, H);
     g.drawImage(this.off, this.ox, this.oy, this.w * this.s, this.h * this.s);
+    if (this.o.overlay && this.ovon) {       // defect markings: one colour per type
+      const m = this.o.overlay.mask, T = this.o.overlay.types, sz = Math.max(this.s, 1.5);
+      for (let r = 0; r < this.h; r++) for (let c = 0; c < this.w; c++) { const k = m[r * this.w + c]; if (k && this.show[k]) { g.fillStyle = T[k - 1].color; g.globalAlpha = 0.55; g.fillRect(this.ox + c * this.s, this.oy + (this.h - 1 - r) * this.s, sz, sz); } }
+      g.globalAlpha = 1;
+    }
+    if (this.mark) { g.strokeStyle = "#0ff"; g.lineWidth = 2; const [c0, r0] = this.mark, R = Math.max(8, 3 * this.s); g.strokeRect(this.ox + (c0 + 0.5) * this.s - R, this.oy + (this.h - r0 - 0.5) * this.s - R, 2 * R, 2 * R); g.lineWidth = 1; }
     if (this.box) { g.strokeStyle = "#ff0"; const [x0, y0, x1, y1] = this.box; g.strokeRect(this.ox + x0 * this.s, this.oy + (this.h - y1) * this.s, (x1 - x0) * this.s, (y1 - y0) * this.s); }
   }
   pix(px, py) { return [Math.floor((px - this.ox) / this.s), this.h - 1 - Math.floor((py - this.oy) / this.s)]; }   // (col, row)
@@ -358,8 +405,9 @@ function commentBox(parent, key, label) {
 function logBox(parent, lines) { parent.appendChild(el("h3", "", "Log")); const l = el("div", "log"); l.textContent = (lines || []).join("\n"); parent.appendChild(l); }
 
 const nav = document.getElementById("nav"), main = document.getElementById("main"), tabs = [];
-function addTab(id, label, build) {
+function addTab(id, label, build, flagged) {
   const b = el("button", "", label), t = el("section", "tab"); t.id = "tab_" + id; nav.appendChild(b); main.appendChild(t);
+  if (flagged) { const s = el("span", "dot"); s.title = "a number on this tab is outside the usual range"; b.appendChild(s); }
   let built = false;
   const show = async () => { tabs.forEach(x => { x.b.classList.remove("on"); x.t.classList.remove("on"); }); b.classList.add("on"); t.classList.add("on"); if (!built) { built = true; t.appendChild(el("p", "loading", "loading ...")); await build(t); t.querySelector(".loading")?.remove(); } location.hash = id; };
   b.onclick = show; tabs.push({ id, b, t, show, build: async () => { if (!built) { built = true; await build(t); } } });
@@ -441,6 +489,42 @@ async function imageTab(t, im) {
   const v = await arr(im.pixels); new ImageView(t, v, im.w, im.h, { unit: im.unit });
 }
 
+async function defectsTab(t, d) {
+  t.appendChild(el("h2", "", d.title));
+  t.appendChild(table(d.numbers));
+  t.appendChild(el("p", "readout", "Coloured marks: the defects found (tick to show / hide a type). Click a line of the defect list to go to it."));
+  const v = await arr(d.pixels), m = await arr(d.mask);
+  const iv = new ImageView(t, v, d.w, d.h, { unit: d.unit, overlay: { mask: m, types: d.types } });
+  t.appendChild(el("h3", "", `Defect list (${d.defects.length}${d.defects_more ? ", first " + d.defects.length + " of " + (d.defects.length + d.defects_more) : ""})`));
+  const tb = el("table", "num"); tb.innerHTML = "<tr><th>type</th><th>column</th><th>row</th><th>size</th><th>value</th><th>seen in</th></tr>";
+  for (const x of d.defects) { const tr = el("tr", "click"); tr.innerHTML = `<td>${x[0]}</td><td>${x[1]}</td><td>${x[2] < 0 ? "all" : x[2]}</td><td>${x[3]}</td><td>${fmt(x[4])}</td><td>${x[5]}</td>`; tr.onclick = () => { iv.goto(x[1], x[2] < 0 ? d.h >> 1 : x[2]); t.scrollIntoView({ behavior: "smooth" }); }; tb.appendChild(tr); }
+  t.appendChild(tb);
+}
+async function figureTab(t, d) {
+  t.appendChild(el("h2", "", d.title));
+  if (d.numbers) t.appendChild(table(d.numbers));
+  for (const f of d.figures) { const c = el("div", "figure"); c.appendChild(el("h3", "", f.caption)); const im = el("img"); im.src = "data:image/png;base64," + f.png; c.appendChild(im); t.appendChild(c); }
+}
+async function plotsTab(t, d) {
+  t.appendChild(el("h2", "", d.title));
+  if (d.numbers) t.appendChild(table(d.numbers));
+  const grid = el("div", "grid"); t.appendChild(grid);
+  for (const p of d.plots) {
+    const a = el("div", "card"); grid.appendChild(a);
+    const lp = new LinePlot(a, { title: p.title, xlabel: p.xlabel, ylabel: p.ylabel, logx: !!p.logx, logy: !!p.logy, height: 270, yauto: true });
+    const ser = []; for (const s of p.series) ser.push({ x: await arr(s.x), y: await arr(s.y), name: s.name, style: s.style || "line", color: s.color });
+    lp.set(ser);
+  }
+}
+
+const HELP = `<h2 style="margin-top:0">How to use this report</h2>
+<p>One page per CCD. The buttons at the top switch between the tabs; a red dot on a tab means one of its numbers is outside the usual range (shown in red on the tab).</p>
+<h3>Plots</h3><p><kbd>drag</kbd> draw a box to zoom in on a range · <kbd>shift</kbd>+<kbd>drag</kbd> move the view · <kbd>wheel</kbd> zoom the x axis (with <kbd>alt</kbd>: the y axis) · <kbd>double-click</kbd> or <b>reset</b>: everything again · <b>log y</b>: switch the y axis · <b>PNG</b>: save the plot. Move the mouse over a plot to read the values.</p>
+<h3>Images</h3><p><kbd>wheel</kbd> or <b>+</b>/<b>&minus;</b> zoom · <kbd>drag</kbd> move · <kbd>click</kbd> a pixel: its row and column are plotted below · <kbd>shift</kbd>+<kbd>drag</kbd> a box: statistics of that region · <b>scale</b>: colour range (99.5 % ignores the brightest pixels; manual: type min / max) · <b>asinh</b>: brings out faint structure · <b>fit</b> / <b>1:1</b> whole image / one image pixel per screen pixel. Row 0 is at the bottom (as ds9).</p>
+<h3>Comments</h3><p>Type in the box at the bottom of any tab; it is kept in this browser automatically. <b>Save comments</b> writes them to a file (keep it next to the report, send it to others); <b>Load comments</b> reads such a file back.</p>
+<h3>PDF</h3><p><b>Export PDF</b> opens the print dialog with every tab on its own page and the comments included: choose "Save as PDF".</p>
+<h3>Log</h3><p>Each tab ends with the log of how its numbers were made: files, settings from the data header, checks, fit results.</p>`;
+
 (async function () {
   document.title = D.title; document.getElementById("title").textContent = D.title;
   document.getElementById("ident").textContent = D.ident;
@@ -451,12 +535,23 @@ async function imageTab(t, im) {
       else if (tb.kind === "psd") await psdTab(t, tb.data);
       else if (tb.kind === "summary") await imageSummaryTab(t, tb.data);
       else if (tb.kind === "image") await imageTab(t, tb.data);
+      else if (tb.kind === "defects") await defectsTab(t, tb.data);
+      else if (tb.kind === "figure") await figureTab(t, tb.data);
+      else if (tb.kind === "plots") await plotsTab(t, tb.data);
       commentBox(t, tb.id, "Comments on this page");
       logBox(t, tb.log);
-    });
+    }, tb.flagged);
   }
   const sp = el("span", "sp"); nav.appendChild(sp);
   const save = el("button", "noprint", "Save comments"), load = el("button", "noprint", "Load comments"), pdf = el("button", "noprint", "Export PDF");
+  const hb = el("button", "noprint", "? Help"); nav.appendChild(hb);
+  const help = el("div", ""); help.id = "help"; help.innerHTML = HELP + `<p><button id="hclose">close</button></p>`; document.body.appendChild(help);
+  hb.onclick = () => { help.style.display = help.style.display === "block" ? "none" : "block"; };
+  help.querySelector("#hclose").onclick = () => { help.style.display = "none"; };
+  document.addEventListener("keydown", e => { if (e.key === "Escape") help.style.display = "none"; });
+  let seen = false; try { seen = localStorage.getItem("superWADERs:hint") === "1"; } catch (e) {}
+  if (!seen) { const h = el("div", "hint noprint", `<span>New here? Plots and images are interactive: drag to zoom, double-click to reset. Comments are saved as you type. Press <b>? Help</b> for everything.</span><button>got it</button>`); document.querySelector("header").after(h); h.querySelector("button").onclick = () => { h.remove(); try { localStorage.setItem("superWADERs:hint", "1"); } catch (e) {} }; }
+  save.title = "write all comments of this report to a .json file"; load.title = "read comments from such a file"; pdf.title = "print every tab (with comments) - choose Save as PDF";
   const file = el("input"); file.type = "file"; file.accept = ".json"; file.style.display = "none";
   nav.append(save, load, pdf, file);
   save.onclick = () => {

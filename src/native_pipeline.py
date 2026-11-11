@@ -973,6 +973,11 @@ def process_image(path, out_dir, curve=None, clusterer="threshold", thresholds="
                    pedestal_region="overscan" if use_ovs else "active", held=held, fit_settings=fit["settings"],
                    fits=dict({k: {p: v[p] for p in FIT_PARAMS + ["chi2", "ndf"]} for k, v in fits.items()},
                              final={p: fit[p] for p in FIT_PARAMS + ["chi2", "ndf"]}))
+        if r["resolved"]:                        # dark charge per row from the fraction of 0e- pixels (Poisson)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                f0 = np.array([np.mean(e_img[k][active[k]] < 0.5) if active[k].any() else np.nan
+                               for k in range(e_img.shape[0])])
+                rec["lam_rows"] = (-np.log(f0)).tolist()
         info = info_branches(n, mu_row, sig_row, fit, ccd, nfile, h0)
         if plots and write:
             write_plots(os.path.join(out_dir, stem), ext, ps, active, fit, r, mu_row, sig_row, h0, args)

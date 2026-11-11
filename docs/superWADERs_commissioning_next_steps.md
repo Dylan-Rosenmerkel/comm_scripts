@@ -5,7 +5,14 @@ panaSKImg-style plots, all pedestal methods, --tune, L0 traces (decode / check /
 images -> FITS per number of skips -> pipeline -> noise vs N (docs/native_pipeline.md). Everything below builds on
 `src/native_pipeline.py` (fits per CCD), `src/raw_data.py` (L0 / L1) and `src/raw_levels/` (ccd_opt_ml readers).
 
-## Status (2026-11-11)
+## Status (2026-11-11, end of day): all six items have a first version
+
+See docs/superWADERs_user_guide.md (how to use, what was checked, the data needed). Done today: report usability
+(help panel, hints, plot buttons, viewer zoom / colour bar / PNG, flagged tabs, searchable index), L1 diagnostics,
+--dc-series, --defect-map (group scripts + defect log + interactive map), --sr (streak finder), binned decode_l1 in
+ccd_opt_ml (branch binned-l1, 7 tests pass; synced). Waiting for data (guide section 5) to validate thresholds.
+
+## Status (2026-11-11, morning)
 
 - **1. Binned L1: done.** `raw_data.l1_skip_means` finds each row after its run of LINE markers; works for binned and
   unbinned files. 20x20 file of 2026-10-06: 80 of 80 rows; at N = 1 its prescan / active / overscan levels (316 / 183

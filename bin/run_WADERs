@@ -476,6 +476,23 @@ def build_parser(full=False):
     ap.add_argument("--packet", action="store_true",
                     help="--engine native: the input list is a commissioning packet (traces, PSD traces, images in any "
                          "order): one interactive HTML report per CCD (packet/), no clustering (details: -h -v)")
+    ap.add_argument("--dc-series", action="store_true",
+                    help="--engine native: dark current over the series of images: dc_series/ (dc_report.pdf, "
+                         "dc_series.csv, interactive pages)")
+    ap.add_argument("--dc-limit", metavar="E_PER_PIX_PER_DAY", type=float, default=None,
+                    help="with --dc-series: flag CCDs whose dark current is above this (e-/pix/day)")
+    ap.add_argument("--defect-map", action="store_true",
+                    help="--engine native: median composites and column defects (the group's Image_4 / Image_2), "
+                         "defect log and interactive defect map: defects/")
+    ap.add_argument("--defect-sigma", metavar="N", type=float, default=5.0,
+                    help="with --defect-map: hot / cold pixels at N x the spread of the local residual (default 5)")
+    ap.add_argument("--sr", action="store_true",
+                    help="--engine native: serial-register images: streaks (readout artifacts along a read), dark "
+                         "charge per read: sr/")
+    ap.add_argument("--sr-threshold", metavar="N", type=float, default=4.0,
+                    help="with --sr: streak pixels above N x noise (default 4)")
+    ap.add_argument("--sr-min-length", metavar="PIX", type=int, default=3,
+                    help="with --sr: shortest streak (default 3 pixels)")
     ap.add_argument("--module-list", metavar="FILE",
                     help="module names (DM#, PA#, ...) per ACM id (or per CCD) for the packet reports: lines "
                          "'ACM, module[, EXT<n> or CCD name]'")
@@ -1277,6 +1294,22 @@ def native_raw_inputs(run, images):
     return [p for p in images if not RAW_INPUT.search(p)] + made, made, lines
 
 
+def module_resolver(run):
+    """Module name of a CCD: --module-list file (per ACM or per CCD), else --module ACM=NAME, else the data folder
+    name (..._DMa_DMb_DMc_...), else ACM<id>. Returns f(acm, ext, ccd)."""
+    import packet_report as PR
+    mods = PR.read_module_list(run.args.module_list)
+
+    def f(acm, ext=None, ccd=None):
+        m = PR.module_for(mods, acm, ext, ccd)
+        if m.startswith("ACM"):
+            name, why = module_name(str(acm), run.images[0] if run.images else "", run.modules)
+            if why != "no module found":
+                m = name
+        return m
+    return f
+
+
 def run_packet(run):
     """--packet: the inputs are the files of a commissioning packet (traces, PSD traces, images, level-1 images; any
     order). One interactive HTML report per CCD in packet/ (src/packet_report.py: Overview, Trace, PSD, Image
@@ -1284,7 +1317,7 @@ def run_packet(run):
     import packet_report as PR
     print(f"  {run.stamp()} commissioning packet: {len(run.images)} file(s)")
     lines = PR.build(run.images, run.out, run.args.module_list, shlex.split(run.args.autoconfig_args),
-                     log=lambda m: print(f"  {run.stamp()}{m}", flush=True))
+                     log=lambda m: print(f"  {run.stamp()}{m}", flush=True), mods_of=module_resolver(run))
     text = "\n".join([f"{PROG} --packet: {run.run_name}  ({len(run.images)} file(s), {time.time() - run.t0:.0f} s)", ""] + lines)
     with open(os.path.join(run.out, "summary.txt"), "w") as fh:
         fh.write(text + "\n")
@@ -1455,6 +1488,24 @@ def run_native(run):
         import raw_data as RD
         raw_lines += RD.l1_noise_summary(rows, os.path.join(run.out, "L1"), l1_fits)
         raw_lines += RD.compare_skips(run.out, l1_fits, os.path.join(run.out, "L1")) + [""]
+    if args.dc_series or args.defect_map or args.sr:          # commissioning analyses on the run's images
+        import packet_report as PR
+        mods_of = module_resolver(run)
+        say = lambda m: print(f"  {run.stamp()}{m}", flush=True)
+        if args.dc_series:
+            import dc_series as DCS
+            print(f"  {run.stamp()} dark-current series")
+            raw_lines += DCS.report([(img, final[img]) for img in images if img in final], PR.meta_or_header, mods_of,
+                                    run.out, args.dc_limit) + [""]
+        if args.defect_map:
+            import defects as DF
+            print(f"  {run.stamp()} defect maps")
+            raw_lines += DF.run(images, run.out, mods_of, shlex.split(args.autoconfig_args), log=say, nsig=args.defect_sigma) + [""]
+        if args.sr:
+            import sr_images as SR
+            print(f"  {run.stamp()} serial-register images")
+            raw_lines += SR.run(images, None, run.out, mods_of, PR.meta_or_header, args.sr_threshold, args.sr_min_length,
+                                shlex.split(args.autoconfig_args), log=say) + [""]
     thr_lines = ["cluster thresholds (--engine native, --thresholds " + args.thresholds + "):"]
     for r in sorted(configs.values(), key=lambda r: r["stem"]):
         for e, c in sorted(r["summary"]["ccds"].items()):

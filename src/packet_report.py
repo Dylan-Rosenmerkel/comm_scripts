@@ -309,11 +309,14 @@ def classify(paths):
     return out
 
 
-def build(paths, out_dir, module_list=None, autoconfig_args=(), log=print):
-    """Reports of every CCD in the packet files paths -> out_dir/packet/. Returns summary lines."""
+def build(paths, out_dir, module_list=None, autoconfig_args=(), log=print, mods_of=None):
+    """Reports of every CCD in the packet files paths -> out_dir/packet/. mods_of(acm, ext, ccd) -> module name
+    (default: from the module_list file). Returns summary lines."""
     pdir = os.path.join(out_dir, "packet")
     os.makedirs(pdir, exist_ok=True)
     mods = read_module_list(module_list)
+    if mods_of is None:
+        mods_of = lambda acm, ext, ccd: module_for(mods, acm, ext, ccd)
     cls = classify(paths)
     lines = [f"commissioning packet: {len(paths)} file(s): {len(cls['trace'])} trace, {len(cls['psd'])} psd, "
              f"{len(cls['image'])} image, {len(cls['l1'])} level-1 channel file(s)"
@@ -358,11 +361,9 @@ def build(paths, out_dir, module_list=None, autoconfig_args=(), log=print):
             s["images"].append(res)
             s["files"].append(["image", os.path.basename(p)])
     index = []
-    with open(os.path.join(HERE, "packet_report_template.html")) as fh:
-        template = fh.read()
     for (acm, ext), s in sorted(ccds.items()):
         ccd = s["ccd"] or f"ch{ext - 1}"
-        module = module_for(mods, acm, ext, ccd)
+        module = mods_of(acm, ext, ccd)
         rid = f"{module}_ACM{acm}_EXT{ext}_{ccd}"
         tabs = []
         ov = [["module", module], ["ACM", str(acm)], ["extension", f"EXT{ext} (channel {ext - 1})"], ["CCD", ccd],
@@ -370,7 +371,7 @@ def build(paths, out_dir, module_list=None, autoconfig_args=(), log=print):
         for summ, _, _ in s["images"]:
             ov += [[f"{summ['role']}", "; ".join(f"{k} {v}" for k, v, *_ in summ["numbers"][2:5])]]
         tabs.append(dict(id="overview", label="Overview", kind="overview", numbers=ov, files=s["files"],
-                         log=[f"report {rid}", f"module from {'the module list' if module_for(mods, acm, ext, ccd) != f'ACM{acm}' else 'the ACM id (no module list entry)'}"]))
+                         log=[f"report {rid}", f"module {module} (module list, --module, folder name; ACM<id> if none)"]))
         for k, (tr, lg) in enumerate(s["traces"]):
             tabs.append(dict(id=f"trace{k}", label="Trace" + (f" {k + 1}" if len(s["traces"]) > 1 else ""), kind="trace",
                              data=tr, log=lg))
@@ -385,39 +386,72 @@ def build(paths, out_dir, module_list=None, autoconfig_args=(), log=print):
             for k, (summ, view, lg) in enumerate(s["images"]):
                 if view is not None:
                     tabs.append(dict(id=f"image{k}", label=summ["role"].replace(" image", ""), kind="image", data=view, log=lg))
-        page = dict(report_id=rid, title=f"{module} · ACM {acm} · EXT{ext} · {ccd}",
-                    ident=f"commissioning packet report (run_superWADERs --packet), {len(s['files'])} file(s)", tabs=tabs)
-        body = json.dumps(page, separators=(",", ":")).replace("</", "<\\/")
-        body = re.sub(r"(?<=[:,\[])(-?Infinity|NaN)(?=[,\]}])", "null", body)     # JSON has no NaN
         path = os.path.join(pdir, rid + ".html")
-        with open(path, "w") as fh:
-            fh.write(template.replace("__TITLE__", html.escape(page["title"])).replace("__DATA__", body))
+        size = write_page(path, rid, f"{module} · ACM {acm} · EXT{ext} · {ccd}",
+                          f"commissioning packet report (run_superWADERs --packet), {len(s['files'])} file(s)", tabs)
         first = next((a for a, _, _ in s["images"] if a["numbers"][0][0] == "image"), None)
-        index.append((module, acm, ext, ccd, os.path.basename(path), [t["label"] for t in tabs[1:]],
-                      first["numbers"][2:5] if first else [], os.path.getsize(path)))
+        index.append((module, acm, ext, ccd, os.path.basename(path), [tb["label"] for tb in tabs[1:]],
+                      first["numbers"][2:5] if first else [], size, [tb["label"] for tb in tabs if tb.get("flagged")]))
         lines.append(f"  {rid}: {', '.join(t['label'] for t in tabs)}  ({os.path.getsize(path) / 1e6:.1f} MB)")
     write_index(pdir, index)
     lines.append(f"  index: {os.path.join(pdir, 'index.html')}")
     return lines
 
 
-def write_index(pdir, rows):
+def flagged(rows):
+    """True if a numbers table has a flagged line ([name, value, True])."""
+    return any(len(r) > 2 and r[2] for r in rows or [])
+
+
+def write_page(path, rid, title, ident, tabs):
+    """One self-contained report page (packet_report_template.html) with the given tabs; a tab gets the red dot when
+    one of its numbers is flagged. Returns the file size."""
+    for tb in tabs:
+        d = tb.get("data")
+        nums = list(tb.get("numbers") or [])
+        if isinstance(d, dict):
+            nums += d.get("numbers") or []
+        elif isinstance(d, list):
+            nums += [r for x in d if isinstance(x, dict) for r in x.get("numbers") or []]
+        tb["flagged"] = flagged(nums)
+    page = dict(report_id=rid, title=title, ident=ident, tabs=tabs)
+    body = json.dumps(page, separators=(",", ":")).replace("</", "<\\/")
+    body = re.sub(r"(?<=[:,\[])(-?Infinity|NaN)(?=[,\]}])", "null", body)     # JSON has no NaN
+    with open(os.path.join(HERE, "packet_report_template.html")) as fh:
+        template = fh.read()
+    with open(path, "w") as fh:
+        fh.write(template.replace("__TITLE__", html.escape(title)).replace("__DATA__", body))
+    return os.path.getsize(path)
+
+
+def write_index(pdir, rows, title="Commissioning packet: CCD reports"):
     """packet/index.html: one row per CCD report."""
     tr = []
-    for module, acm, ext, ccd, fname, tabs, nums, size in rows:
+    for module, acm, ext, ccd, fname, tabs, nums, size, flags in rows:
         n = " · ".join(html.escape(f"{k}: {v}") for k, v, *_ in nums)
-        tr.append(f"<tr><td>{html.escape(module)}</td><td>{acm}</td><td>EXT{ext}</td><td>{html.escape(str(ccd))}</td>"
-                  f"<td><a href='{html.escape(fname)}'>report</a></td><td>{html.escape(', '.join(tabs))}</td><td>{n}</td>"
-                  f"<td>{size / 1e6:.1f} MB</td></tr>")
+        fl = (f"<span class='fl'>{html.escape(', '.join(flags))}</span>" if flags else "ok")
+        tr.append(f"<tr><td>{html.escape(module)}</td><td>{acm}</td><td>{f'EXT{ext}' if isinstance(ext, int) else html.escape(str(ext))}</td><td>{html.escape(str(ccd))}</td>"
+                  f"<td><a href='{html.escape(fname)}'>open</a></td><td>{fl}</td><td>{html.escape(', '.join(tabs))}</td>"
+                  f"<td>{n}</td><td>{size / 1e6:.1f} MB</td></tr>")
     page = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Packet reports</title><style>
-:root{{--bg:#fff;--fg:#1d1d1f;--line:#d8d8dc}}
-@media (prefers-color-scheme: dark){{:root:not([data-theme="light"]){{--bg:#16171a;--fg:#e8e8ea;--line:#34353a}}}}
-:root[data-theme="dark"]{{--bg:#16171a;--fg:#e8e8ea;--line:#34353a}}
+<title>{html.escape(title.split(':')[0])}</title><style>
+:root{{--bg:#fff;--fg:#1d1d1f;--line:#d8d8dc;--muted:#6b6b70}}
+@media (prefers-color-scheme: dark){{:root:not([data-theme="light"]){{--bg:#16171a;--fg:#e8e8ea;--line:#34353a;--muted:#a0a0a8}}}}
+:root[data-theme="dark"]{{--bg:#16171a;--fg:#e8e8ea;--line:#34353a;--muted:#a0a0a8}}
 body{{background:var(--bg);color:var(--fg);font:14px -apple-system,Segoe UI,Helvetica,Arial,sans-serif;margin:16px}}
-table{{border-collapse:collapse}}td,th{{border-bottom:1px solid var(--line);padding:4px 12px 4px 0;text-align:left}}a{{color:#2a6fdb}}
-</style></head><body><h1 style="font-size:19px">Commissioning packet: CCD reports</h1>
-<table><tr><th>module</th><th>ACM</th><th>ext</th><th>CCD</th><th></th><th>tabs</th><th>first image</th><th>size</th></tr>
-{''.join(tr)}</table></body></html>"""
+table{{border-collapse:collapse;width:100%}}td,th{{border-bottom:1px solid var(--line);padding:5px 12px 5px 0;text-align:left;vertical-align:top}}
+th{{cursor:pointer;user-select:none}}th:hover{{color:#2a6fdb}}a{{color:#2a6fdb}}.fl{{color:#c0392b;font-weight:600}}
+input{{font-size:14px;padding:5px 8px;width:min(420px,100%);margin:6px 0 12px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px}}
+.muted{{color:var(--muted);font-size:13px}}
+</style></head><body><h1 style="font-size:19px">{html.escape(title)}</h1>
+<p class="muted">{len(rows)} report(s). Type to filter (module, ACM, CCD, ...); click a column title to sort. "flags": tabs with a number outside the usual range.</p>
+<input id="q" placeholder="filter, e.g. DM24 or 101 or CCD_A">
+<table id="t"><thead><tr><th>module</th><th>ACM</th><th>ext</th><th>CCD</th><th>report</th><th>flags</th><th>tabs</th><th>first image</th><th>size</th></tr></thead>
+<tbody>{''.join(tr)}</tbody></table>
+<script>
+const q=document.getElementById("q"),tb=document.querySelector("#t tbody");
+q.oninput=()=>{{const s=q.value.toLowerCase();for(const r of tb.rows)r.style.display=r.textContent.toLowerCase().includes(s)?"":"none";}};
+document.querySelectorAll("#t th").forEach((th,k)=>{{let up=true;th.onclick=()=>{{const rs=[...tb.rows];rs.sort((a,b)=>{{const x=a.cells[k].textContent,y=b.cells[k].textContent,nx=parseFloat(x),ny=parseFloat(y);return (isNaN(nx)||isNaN(ny)?x.localeCompare(y):nx-ny)*(up?1:-1);}});up=!up;rs.forEach(r=>tb.appendChild(r));}};}});
+</script></body></html>"""
     with open(os.path.join(pdir, "index.html"), "w") as fh:
         fh.write(page)

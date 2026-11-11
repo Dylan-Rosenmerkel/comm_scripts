@@ -1,4 +1,4 @@
-# copied from ccd_opt_ml/src/decode_l1.py (commit 3d7855e) by utils/sync_from_ccd_opt_ml.py: edit it there, not here
+# copied from ccd_opt_ml/src/decode_l1.py (commit 06ad4cd) by utils/sync_from_ccd_opt_ml.py: edit it there, not here
 """
 decode_l1.py -- decode a level-1 skipper image (``*.RJ45ADCDATA<ch>`` written with acq_level 1): the pedestal and
 signal window sums of EVERY skip of every pixel.  numpy only.
@@ -23,7 +23,8 @@ cut after 80 pixels: every layout check passes)::
 
 Pixel value of skip k: (pedestal_k - signal_k) / n, in ADU (charge positive), as in skip_noise_L1.py.  Every complete
 pixel is checked (skip headers, EPIX, per-skip sums against the trailer's sum); a file cut short is decoded up to its
-last complete pixel.  Only 1x1 (unbinned) images: the 20x20-binned level-1 images of 2026-10-06 have another layout.
+last complete pixel.  Binned images (e.g. 20x20 of 2026-10-06): the same pixel records (ncol = binned columns), but
+each row is preceded by one LINE per vertical shift (NPBIN of them); rows are found after each run of LINE markers.
 
     from decode_l1 import read_l1
     strip = read_l1("l1new_2x1000x500_1x1_L1_101_....RJ45ADCDATA0", ncol=1000, nskip=500)
@@ -66,8 +67,9 @@ class L1Image:
 
 
 def geometry_from_name(path: str | Path) -> tuple[int, int, int] | None:
-    """(rows, cols, skips) from a level-1 file name such as ``img_2x1000x500_1x1_L1_101_...``."""
-    m = re.search(r"_(\d+)x(\d+)x(\d+)_1x1_L1_", Path(path).name)
+    """(rows, cols, skips) from a level-1 file name such as ``img_2x1000x500_1x1_L1_101_...`` (any binning; cols =
+    binned columns, as NCOL)."""
+    m = re.search(r"_(\d+)x(\d+)x(\d+)_\d+x\d+_L1_", Path(path).name)
     return tuple(int(v) for v in m.groups()) if m else None
 
 
@@ -86,16 +88,21 @@ def read_l1(path: str | Path, ncol: int | None = None, nskip: int | None = None)
     problems: list[str] = []
     values, rows, cols = [], [], []
     n_samples, complete_rows, r = 0, 0, 0
-    row_len = 1 + ncol * pix                     # rows lie at fixed distances: LINE + ncol pixels
+    # A row starts after its LINE markers: one per vertical shift, so NPBIN of them in a vertically binned image
+    # (the first NPBIN - 1 without pixels), then ncol pixel records of the layout above (binned or not).
+    o = int(first[0])
     while True:
-        o = int(first[0]) + r * row_len
-        k = min(ncol, (len(w) - o - 1) // pix) if o < len(w) else 0
+        if o >= len(w) or w[o] != LINE:
+            if o < len(w) - 1:
+                problems.append(f"row {r}: no LINE marker (word {o}); stopped")
+            break
+        while o < len(w) and w[o] == LINE:
+            o += 1
+        k = min(ncol, (len(w) - o) // pix)
         if k <= 0:
             break
-        if w[o] != LINE:
-            problems.append(f"row {r}: no LINE marker (word {o}); stopped")
-            break
-        p = w[o + 1:o + 1 + k * pix].reshape(k, pix)
+        p = w[o:o + k * pix].reshape(k, pix)
+        o += k * pix
         hdr = p[:, 0:4 * nskip:2]
         counts = hdr & 0xFFFFF                   # samples in each window: pedestal (even), signal (odd columns)
         n = int(np.median(counts))
