@@ -1496,7 +1496,7 @@ def run_native(run):
             import dc_series as DCS
             print(f"  {run.stamp()} dark-current series")
             raw_lines += DCS.report([(img, final[img]) for img in images if img in final], PR.meta_or_header, mods_of,
-                                    run.out, args.dc_limit) + [""]
+                                    run.out, args.dc_limit, shlex.split(args.autoconfig_args)) + [""]
         if args.defect_map:
             import defects as DF
             print(f"  {run.stamp()} defect maps")

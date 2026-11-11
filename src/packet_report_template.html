@@ -467,7 +467,7 @@ async function psdTab(t, ps) {
   tr.set(S.t); pg.set(S.p); wl.set(S.wl); wg.set(S.wg);
 }
 async function imageSummaryTab(t, ims) {
-  t.appendChild(el("h2", "", ims.length > 1 ? "Image summaries (pedestal, fits; no clustering)" : `${ims[0].role}: numbers and profiles`));
+  t.appendChild(el("h2", "", ims.length > 1 ? `Dark-current fits and profiles of ${ims.length} images` : `${ims[0].role}: numbers and profiles`));
   for (const im of ims) {
     const card = el("div", "card"); t.appendChild(card);
     card.appendChild(el("h3", "", `${im.role}: ${im.file}`));

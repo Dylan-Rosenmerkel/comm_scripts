@@ -201,9 +201,18 @@ def write_pdf(series, sums, mods_of, path, limit=None):
             plt.close(fig)
 
 
-def report(records, meta_of, mods_of, out_dir, limit=None):
+def report(records, meta_of, mods_of, out_dir, limit=None, autoconfig_args=()):
     """--dc-series: csv, PDF and interactive pages. Returns summary lines."""
     import packet_report as PR
+    fits_of = {}                     # (image, ext) -> the dark-current fit card (histogram + model, numbers, profiles)
+    for path, _ in records:
+        try:
+            per_ext, _ = PR.image_data(path, autoconfig_args)
+        except Exception as e:                       # the page is still made without this image's fit plots
+            print(f"  dc-series: no fit plots for {os.path.basename(path)} ({type(e).__name__}: {e})")
+            continue
+        for n, (summ, _, _) in per_ext.items():
+            fits_of[(os.path.basename(path), n)] = summ
     d = os.path.join(out_dir, "dc_series")
     os.makedirs(d, exist_ok=True)
     series = collect(records, meta_of)
@@ -274,6 +283,10 @@ def report(records, meta_of, mods_of, out_dir, limit=None):
                              "dark current over the series (run_superWADERs --dc-series)",
                              [dict(id="dc", label="Rates", kind="plots", data=dict(title="Dark current over the series",
                                                                                    numbers=nums, plots=plots), log=log),
+                              dict(id="fits", label="Fits", kind="summary",
+                                   data=[fits_of[(p["image"], ext)] for p in pts if (p["image"], ext) in fits_of],
+                                   log=[f"{p['image']}: dark-current fit of the image (native engine: pedestal, comb fit, gain "
+                                        f"choice as run_WADERs)" for p in pts]),
                               dict(id="rows", label="Per row", kind="plots", data=dict(title="Dark charge per row", plots=rowplot),
                                    log=[f"{p['image']}: row fit slope {fmt(p.get('row_rate'))} e-/pix/day, intercept "
                                         f"{fmt(p.get('row_intercept'))} e-/pix" for p in pts]),
