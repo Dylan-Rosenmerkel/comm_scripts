@@ -1,0 +1,7 @@
+tag,config,img,near_big,y,x,q,npix,cls,finder,p_ev
+agmx,hotcol_s0.10_l0.0001,4,0,136.0,640.0,2.0,1,low-E,agmx,
+agmx,hotcol_s0.10_l0.0001,9,0,72.0,1027.0,2.0,1,low-E,agmx,
+agmx,hotcol_s0.10_l0.0001,13,0,212.0,640.0,1.999,1,low-E,agmx,
+single,hotcol_s0.10_l0.0001,2,0,401.5,640.0,2.0,2,few-e,bayes,0.9888111741204084
+single,hotcol_s0.10_l0.0001,13,0,307.0,640.0,2.0,2,few-e,bayes,0.9639146046737661
+pooled,hotcol_s0.10_l0.0001,9,0,72.0,1027.0,2.0,1,few-e,bayes,0.9862679648650754

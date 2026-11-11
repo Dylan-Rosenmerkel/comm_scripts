@@ -1,0 +1,1 @@
+art_s0.10_l1e-05,tail_s0.15_l1e-05,tail_s0.15_l0.0001,tail_s0.15_l0.001,tail_s0.10_l0.0001,base_s0.15_l0.0001,base_s0.15_l0.001,base_s0.15_l1e-05,hotcol_s0.15_l1e-05,hotcol_s0.15_l0.0001,hotcol_s0.15_l0.001,hotcol_s0.10_l0.0001,l2_s0.06_l1e-05,l2_s0.10_l1e-05,l2_s0.15_l0.0001,busy_s0.15_l0.0001,persist_s0.10_l1e-05,base_s0.06_l1e-05,base_s0.10_l1e-05

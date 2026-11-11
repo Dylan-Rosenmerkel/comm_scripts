@@ -1,0 +1,4 @@
+tag,config,img,near_big,y,x,q,npix,cls,finder,p_ev
+pooled,base_s0.10_l1e-05,11,0,453.0,594.0,2.0,1,few-e,bayes,5.545355973941567e-05
+pooled,blank_s0.10_l1e-05,45,0,182.0,1135.0,2.127,1,few-e,bayes,1.0817277821220972e-08
+pooled,blank_s0.10_l1e-05,56,0,455.0,101.0,2.07,1,few-e,bayes,7.237244616730065e-08

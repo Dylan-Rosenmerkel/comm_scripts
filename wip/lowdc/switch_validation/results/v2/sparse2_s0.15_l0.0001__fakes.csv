@@ -1,0 +1,5 @@
+tag,config,img,near_big,y,x,q,npix,cls,finder,p_ev
+agmx,sparse2_s0.15_l0.0001,18,0,89.92,85.11,1.0,9,low-E,agmx,
+agmx,sparse2_s0.15_l0.0001,31,0,111.27,649.11,1.0,10,low-E,agmx,
+single,sparse2_s0.15_l0.0001,26,0,407.5,151.0,2.0,2,few-e,bayes,0.9682509011221788
+pooled,sparse2_s0.15_l0.0001,26,0,407.5,151.0,2.0,2,few-e,bayes,0.8263776628982487

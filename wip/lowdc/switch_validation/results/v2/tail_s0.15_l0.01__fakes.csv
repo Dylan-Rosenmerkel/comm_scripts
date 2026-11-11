@@ -1,0 +1,4 @@
+tag,config,img,near_big,y,x,q,npix,cls,finder,p_ev
+agmx,tail_s0.15_l0.01,8,0,94.67,1172.17,5.933,6,low-E,agmx,
+single,tail_s0.15_l0.01,8,0,94.67,1172.17,5.933,6,low-E,agmx,
+pooled,tail_s0.15_l0.01,8,0,94.67,1172.17,5.933,6,low-E,agmx,
