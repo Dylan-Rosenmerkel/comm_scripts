@@ -511,7 +511,14 @@ async function figureTab(t, d) {
 }
 async function plotsTab(t, d) {
   t.appendChild(el("h2", "", d.title));
+  if (d.text) for (const p of d.text) t.appendChild(el("p", "", p));
   if (d.numbers) t.appendChild(table(d.numbers));
+  if (d.table) {
+    const wrap = el("div", ""); wrap.style.overflowX = "auto"; const tb = el("table", "num");
+    tb.innerHTML = "<tr>" + d.table.head.map(h => `<th>${h}</th>`).join("") + "</tr>" + d.table.rows.map(r => "<tr>" + r.map(c => `<td class="v">${c}</td>`).join("") + "</tr>").join("");
+    wrap.appendChild(tb); t.appendChild(wrap);
+  }
+  if (!d.plots || !d.plots.length) return;
   const grid = el("div", "grid"); t.appendChild(grid);
   for (const p of d.plots) {
     const a = el("div", "card"); grid.appendChild(a);
