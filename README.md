@@ -20,6 +20,8 @@ comm_scripts/
                                     skip_noise_L1.py, compare_runs.py
   clustering_tests/  research code   alternative clustering methods (A_GMX, GMX, MHC, MFD+G, ...) and the
                                     scripts that tested them; A_GMX is used by run_WADERs --clusterer / run_AGMX
+  wip/     work in progress         lowdc/ (Bayesian few-electron finder and the A_GMX switch), native_pipeline/
+                                    (any-image front end, --clusterer auto); see the two sections near the end
   tests/   unit tests               python -m unittest discover -s tests -v
   docs/    guide, notes, reports    README.md (index: what to read for what), usage/ (the user guide, LaTeX + PDF),
                                     PIPELINE_GUIDE.md (the physics and code of each step), aGMX/ (A_GMX clustering),
@@ -310,6 +312,122 @@ energy scale. Method, equations, figures and all results: `docs/aGMX/aGMX_cluste
 `docs/aGMX/aGMX_clustering_overleaf.zip`) and `docs/clustering_methods_report.pdf`; code map: `clustering_tests/README.md`.
 From Python: `adaptive.adaptive_cluster(Q_electrons, valid_mask, engine="gmx")` (a list of dicts: `E` [keV], `y`, `x`,
 `sxy`, `cls`, `blend`, `ped`, `peakfrac`, `chi2`, `sig`, `edge`).
+
+## Low dark current: Bayesian few-electron finder and the A_GMX switch (work in progress)
+
+For images with very little dark charge (about 1e-5 to 1e-3 e-/pix) and few events, where A_GMX misses many 2-3 e-
+events. Code in `wip/lowdc/` (not in `src/`); off by default, so nothing changes unless you turn it on.
+
+- **The finder** (`wip/lowdc/bayes/`, method in its `README.md`): a probabilistic catalogue instead of thresholds:
+  - soft per-pixel likelihoods, with a noise model fitted from the negative side of the zero peak;
+  - a background pooled over the images of a run, with hot pixels and columns;
+  - a diffusion event model (sigma vs depth from DAMIC), exact evidences per sparse neighbourhood;
+  - an analytic false-alarm rate (operating point 0.08 fakes per Mpix).
+
+  Output per event: P(event), the electron number N and the diffusion sigma.
+- **The switch** (`wip/lowdc/bayes/agmx_switch.py`, hook in `clustering_tests/adaptive.py`): A_GMX runs first; in sparse
+  100 x 100 blocks (soft-candidate fraction f_c <= 1.5e-2, counted outside big deposits) its clusters of <= 20 e- that
+  are more than 15 px from any bigger deposit are replaced by the Bayesian catalogue (`cls` 'few-e', regime 'bayes').
+  Crowded and 'unmodelled' images stay A_GMX.
+
+How to use:
+
+```bash
+AGMX_FEWE=auto run_WADERs images.txt --clusterer agmx      # or run_superWADERs; single-image mode (conservative)
+```
+```python
+# recommended: run-pooled mode (dark charge, event rates, cut and noise model from all images of the run)
+import sys; sys.path.insert(0, "wip/lowdc/bayes"); sys.path.insert(0, "clustering_tests")
+import agmx_switch, adaptive
+run = agmx_switch.prepare_run([(Q, valid) for Q, valid in run_images], full=True)   # calibrated images [e-], valid masks
+cl = adaptive.adaptive_cluster(Q_k, valid_k, engine="gmx", fewe="auto", fewe_lam=run["lam_maps"][k], fewe_RN=run["R_N"],
+                               fewe_threshold=run["threshold"], fewe_nm=run["nm"])
+```
+
+**Validated** (`wip/lowdc/bayes/RESULTS.md`, `wip/lowdc/switch_validation/VALIDATION.md`):
+- **Simulated images** (1-10 e- events, 3e-6 to 1e-2 e-/pix, noise 0.05-0.25 e-, noise tails, hot pixels and
+  columns, artefacts, Fe-55 and muons):
+  - **2 e- efficiency** at 0.08 fakes per Mpix: 0.97-1.00 at noise <= 0.15 e- and 1e-5 e-/pix, against A_GMX's
+    0.2-0.6. On L2-like 100 x 500 images: 0.96-0.99, with 0-0.1 fakes per Mpix (A_GMX: 0.7-0.9).
+  - **Electron count:** exact in 98-99 % of events. The predicted fake rate matches the measured one.
+- **Switch, run-pooled mode:** gives exactly the finder's results. Big deposits (Fe-55, muons) pass through
+  unchanged (60/60).
+- **Off by default:** `fewe='off'` is bit-identical to A_GMX without the hook. DM09 Image_5 (12 CCDs) with
+  `AGMX_FEWE=auto` gives bit-identical cluster files (A_GMX is chosen everywhere there).
+- **Real L2 noise data** (ACM 103, finder alone): no significant few-electron event, and a pooled dark charge of
+  4-8e-6 e-/pix per image. This uses an assumed gain of 1.3 ADU/e-.
+
+**Not validated / known limits:**
+- No real data with known few-electron events. The simulation shares the model's assumptions (Poisson dark charge,
+  Gaussian diffusion, symmetric noise), so part of the gain over A_GMX is home advantage.
+- Not run:
+  - the switch's halo test (events 5-40 px from big deposits);
+  - the block-boundary test;
+  - the switch on the real L2 data;
+  - a g(n)-corrected DM09 run.
+
+  The scripts for these are ready in `wip/lowdc/switch_validation/`.
+- **Information limit:** at about 1e-3 e-/pix, pairs of dark electrons look like 2 e- events (2 e- efficiency
+  0.03). Noise tails (s = 0.15 e- with a 0.5 % tail) also cut 2 e- efficiency to about 0.14.
+- **Single-pixel artefacts:** single-pixel deposits with integer-like charge are kept as events; only per-skip
+  data can veto them.
+- **One-sided noise** (L2 EXT4) is handled conservatively, not correctly.
+- **Single-image mode** (`AGMX_FEWE=auto` alone, which is what `src/agmx_root.py` does) loses single-pixel 4-10 e-
+  events on small images.
+- **Cluster files:** `src/agmx_root.py` has no codes yet for the 'few-e' class / 'bayes' regime (written as 0 / -1).
+- **Cost:** `prepare_run` runs the full finder even when every block goes to A_GMX (up to minutes per image on noisy
+  images).
+- **Untuned values:** the f_c cut and the halo.
+- The L2 gains (1.3 / 0.82 ADU/e-) are unconfirmed.
+
+## Any image: characterisation front end and `--clusterer auto` (work in progress)
+
+`wip/native_pipeline/` (copies of `src/native_*.py` plus `characterise.py` and `run.py`; not yet in `src/` or
+`run_superWADERs`; details in `wip/native_pipeline/ANYIMAGE.md`). Before clustering, each image and CCD is
+characterised: data form, geometry, binning, dead / quiet channel, first-column artefact, saturation, gain source,
+noise, dark charge, crowding. Every fallback is logged, and the record goes to `characterisation/<image>.json` and
+into each ROOT file. The chain is then chosen per CCD:
+
+| per CCD | chain |
+|---|---|
+| electron counting, core fill < 0.10 | A_GMX, with the few-electron switch (run-pooled when the run has >= 2 images and DC <= 1.5e-2 e-/pix) |
+| electron counting, core fill >= 0.10 | A_GMX crowded mode |
+| noise >= 1 e- or a structured background | A_GMX 'unmodelled' (hysteresis) |
+| flooded (no peaks, > 10 e-/pix) / not counting | threshold clusterer |
+| raw skips / std images | compressed first / refused |
+
+```bash
+PY=/opt/homebrew/Caskroom/miniforge/base/envs/damic/bin/python      # the damic environment
+cd wip/native_pipeline
+$PY native_pipeline.py images.txt -o OUT --clusterer auto [--curve RUN/gain_vs_charge] [-j 2]
+$PY native_pipeline.py l2_images.txt -o OUT --clusterer auto --gain EXT1=1.3,EXT2=1.3,EXT3=1.3,EXT4=0.82   # no comb: give the gain
+$PY characterise.py IMAGES... -o OUT                                   # the front end alone (JSON per image)
+$PY run.py -j 2                                                        # the robustness suite
+```
+
+**Validated:**
+- **Robustness suite:** 16 cases run without error. They cover DM09, DM07 / DM27 / DM28 Fe-55, PD06, AMtest, the L2
+  ACM 103 noise test, binned images, a single-skip image, synthetic raw skips, a std image, and injected events.
+- **DM09 Image_5:** `--clusterer auto` equals `--clusterer agmx` (12/12 files identical, same K-alpha).
+- **Fe-55 Image_8:** K-alpha within 1 eV of the earlier A_GMX + g(n) results, after allowing for the different
+  eV/e- constant.
+- **Injected few-electron events** on real L2 noise: 58 / 64 found, with the electron count exact.
+- **Real failures it fixes** (each logged when it happens):
+  - L2 channels that were silently skipped;
+  - gains silently taken from the reference JSON;
+  - the A_GMX crash on images with < 61 rows;
+  - a flooded CCD that ran out of memory.
+
+**Not validated / open:**
+- **Crowded-mode cut (0.10):** dense Fe-55 Image_8 CCDs go to crowded mode (core fill 0.13-0.155); K-alpha moves
+  < 1 eV. PD06 sits at the cut and can flip between CCDs.
+- **Skip-resolved data:** tested only on a synthetic file.
+- **Sibling gains** (taking the gain from other images of the same CCD): tested on constructed records only.
+- **Binned images:** clustering is not adapted to the bin size.
+- **Dark charge below ~1e-5 e-/pix** cannot be measured from a few images.
+- **Not yet ported:** the work-arounds for `gmx.py` (< 61 rows) and for strips are not fixed in `clustering_tests/`.
+- **Not in the main pipeline yet:** to be ported into `src/native_pipeline.py` and `run_superWADERs` as a diff
+  against `src/` at d6859c2f.
 
 ## Tests
 
