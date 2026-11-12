@@ -182,9 +182,13 @@ What each tool does:
   limit" (`--dc-limit`) and "still falling". Pages: Rates, Fits (each image's histogram with its dark-current fit),
   Per row, Data (table of every number), Method.
 - **Defect map** (`--defect-map`): images of one ACM with the same size and binning form a group (any type or skip
-  count). Median composite per CCD; bright / dark columns and hot / cold pixel spots (persistent local excess,
-  `--defect-sigma`); the group's `Image_4` / `Image_2` scripts (`src/lsm_defects/`) run when the images have an
-  overscan. `defects.csv` is the defect log.
+  count). Median composite per CCD; bright / dark columns (adjacent columns = one defect) and hot / cold pixel
+  spots (`--defect-sigma`). A hot / cold pixel must be persistent: present in enough images that chance coincidences
+  of events or dark electrons are unlikely (< 0.1 per CCD, from each image's occupancy); few or busy images can give
+  "none identifiable". Checked on simulated images down to 1e-5 e-/pix and on real data, not yet against a known
+  defect list. The group's `Image_4` / `Image_2` scripts (`src/lsm_defects/`) always run (without an overscan:
+  pedestal and noise from the active region, CTI n/a); their plots are in the page's "Image_4 / Image_2 plots" tab.
+  `defects.csv` is the defect log.
 - **Serial-register images** (`--sr`): streaks in the serial register (readout artifacts): runs of >=
   `--sr-min-length` pixels above `--sr-threshold` x noise along one read, confined to it. Streak list, counts per
   1000 reads, lengths, positions along the register, dark charge per read.

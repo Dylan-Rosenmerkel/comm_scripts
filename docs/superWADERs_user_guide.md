@@ -103,7 +103,14 @@ Per module and image size: all images of one ACM with the same rows x columns an
   defects, CTI), with their geometry set from each image's header (they need an overscan; without one they are
   skipped and noted);
 - `defects.csv`, the defect log: type (bright / dark column, hot / cold pixel spot), column, row, size, value,
-  number of images it is seen in;
+  number of images it is seen in; adjacent flagged columns are one entry (their column range);
+- hot / cold pixels must be persistent: present in enough of the images that chance coincidences of events or
+  dark electrons are unlikely (< 0.1 per CCD, from each image's measured occupancy, at charge levels and bands
+  1-16 x the threshold). Few or busy images can therefore give none ("none identifiable", logged on the page with
+  the rule used). Checked on simulated images (planted hot / cold pixels, 1e-5 to 1 e-/pix, 0-30 % event pixels,
+  2-10 images: no false hot pixels; at 1e-5..1e-3 e-/pix with 4 images 50-75 % of +1 e- and all +4 e- hot pixels
+  found) and on real data (DM26 Image 5, L2 ACM 101 and the very-low-DC L2 ACM 103 noise test: no hot or cold pixels);
+- images without an overscan: the group's scripts still run, with pedestal and noise from the active region (CTI n/a);
 - `composite_EXT<n>.fits`;
 - `defect_map.html`: the composite with the defects marked (tick boxes per type), one CCD at a time with the frame
   slider, the defect list of that CCD (click a line to jump to it), and a tab with the scripts' figures and logs. `defects/index.html` lists the modules.
@@ -137,7 +144,8 @@ Every page works offline (no network) in Chrome, Safari or Firefox; open it by d
   structure), colour bar below; row 0 at the bottom as in ds9; **PNG** saves the view. **Frames**: the slider,
   the arrow buttons or the left / right arrow keys switch between the ticked CCDs, keeping zoom, position, scale
   mode and the cut (to compare the same spot); **blink** switches every second. Defect pages: tick boxes per
-  defect type, "show markings", click a defect in the list to jump to it.
+  defect type, "show markings", click a defect in the list to jump to it. Long lists are laid out in columns of 40
+  lines, with a type filter and a sort (largest value / position).
 - **Comments**: one box per tab; saved in the browser as you type. **Save comments** writes all of a report's
   comments to `<report>_comments.json` (keep it next to the report or send it), **Load comments** reads it back.
 - **Export PDF**: every tab on its own page with the comments; choose "Save as PDF" in the print dialog.

@@ -71,6 +71,8 @@ table.num tr.click:hover td { color:var(--accent); }
 .frames .cur { font-weight:600; }
 h2.ccdhead { margin-top:22px; padding-top:10px; border-top:2px solid var(--line); }
 .xscroll { overflow-x:auto; }
+.dlist { display:grid; grid-template-columns:repeat(auto-fill, minmax(340px, 1fr)); gap:6px 22px; align-items:start; }
+.dlist table.num { width:100%; font-size:12px; }
 table.num.cmp th, table.num.cmp td { padding-right:18px; min-width:150px; }
 table.num.cmp tr > th:first-child { min-width:190px; }
 table.num.cmp td.same { color:var(--muted); }
@@ -618,10 +620,24 @@ async function defectsTab(t, items) {        // defect map, the CCDs as frames
     const v = cache[i] || (cache[i] = [await arr(d.pixels), await arr(d.mask)]);
     const ov = { mask: v[1], types: d.types };
     if (!iv) iv = new ImageView(host, v[0], d.w, d.h, { unit: d.unit, overlay: ov }); else iv.setImage(v[0], d.w, d.h, ov, d.unit);
-    list.replaceChildren(el("h3", "", `Defect list (${d.defects.length}${d.defects_more ? ", first " + d.defects.length + " of " + (d.defects.length + d.defects_more) : ""})`));
-    const tb = el("table", "num"); tb.innerHTML = "<tr><th>type</th><th>column</th><th>row</th><th>size</th><th>value</th><th>seen in</th></tr>";
-    for (const x of d.defects) { const tr = el("tr", "click"); tr.innerHTML = `<td>${x[0]}</td><td>${x[1]}</td><td>${x[2] < 0 ? "all" : x[2]}</td><td>${x[3]}</td><td>${fmt(x[4])}</td><td>${x[5]}</td>`; tr.onclick = () => { iv.goto(x[1], x[2] < 0 ? d.h >> 1 : x[2]); host.scrollIntoView({ behavior: "smooth" }); }; tb.appendChild(tr); }
-    list.appendChild(tb);
+    list.replaceChildren(el("h3", "", `List (${d.defects.length}${d.defects_more ? ", the " + d.defects.length + " largest of " + (d.defects.length + d.defects_more) : ""}; click a line to go to it)`));
+    const types = [...new Set(d.defects.map(x => x[0]))], ctl = el("div", "controls");
+    ctl.innerHTML = `show <select><option value="">all types</option>${types.map(ty => `<option>${ty}</option>`).join("")}</select> sort <select><option value="v">largest value first</option><option value="p">by position</option></select>`;
+    const cols = el("div", "dlist"); list.append(ctl, cols);
+    const fill = () => {        // the list in columns of 40 lines: long lists stay short on the page
+      const [fs, ss] = ctl.querySelectorAll("select");
+      let xs = d.defects.filter(x => !fs.value || x[0] === fs.value);
+      if (ss.value === "p") xs = xs.slice().sort((a, b) => a[2] - b[2] || a[1] - b[1]);
+      cols.replaceChildren();
+      const seen = xs.some(x => x[5] !== "composite" && x[5] !== d.unit);
+      for (let i = 0; i < xs.length; i += 40) {
+        const tb = el("table", "num"); tb.innerHTML = `<tr><th>type</th><th>col</th><th>row</th><th>size</th><th>value</th>${seen ? "<th>seen in</th>" : ""}</tr>`;
+        for (const x of xs.slice(i, i + 40)) { const tr = el("tr", "click"); tr.innerHTML = `<td>${x[0]}</td><td>${x[1]}</td><td>${x[2] < 0 ? "all" : x[2]}</td><td>${x[3]}</td><td>${fmt(x[4])}</td>${seen ? `<td>${x[5]}</td>` : ""}`; tr.onclick = () => { iv.goto(x[1], x[2] < 0 ? d.h >> 1 : x[2]); host.scrollIntoView({ behavior: "smooth" }); }; tb.appendChild(tr); }
+        cols.appendChild(tb);
+      }
+      if (!xs.length) cols.appendChild(el("p", "readout", "nothing found"));
+    };
+    ctl.querySelectorAll("select").forEach(s => s.onchange = fill); fill();
   });
   t.append(host, list); await fb.go(0);
 }

@@ -8,15 +8,24 @@ utils/sync_from_lsm_analysis.py) run unchanged:
            and log, as when run by hand;
   Image_2  per image: column defects / traps and CTI estimates ('Serial Register Defect Maps'): PNG and log.
 Their geometry constants (first overscan column, prescan, first vertical-overscan row) are set from each image's
-header (autoconfig's geometry) instead of the full-frame values written in the scripts.
+header (autoconfig's geometry) instead of the full-frame values written in the scripts. Images without an overscan:
+the scripts still run, with their pedestal (row median) and noise taken from the active region instead of the
+overscan (noise then includes the dark charge) and no CTI (n/a without an overscan).
 Added here, per CCD, on the composite median:
   columns      bright / dark columns: Image_4's find_col_traps (median of the column above / below the running
-               median +- 6 MAD), with the column's excess over the running median
-  hot pixels   composite median minus its smooth local level (32 x 32 block medians) above 5 x the robust spread of
-               that residual (at least the overscan noise), and above its own image's local level by as much in at
-               least half of the images (all of them with < 3 images): persistent, not an event; grouped into
-               connected spots; 'seen in' = number of images in which the pixel is above that threshold
-  cold pixels  the same residual below -5 x the spread
+               median +- 6 MAD), with the column's excess over the running median; adjacent flagged columns of one
+               kind are one defect (its column range, the largest excess)
+  hot pixels   composite median minus its local level (running median over 3 rows x 31 columns) above 5 x the robust spread of
+               that residual (at least the noise), and persistent, not an event: above its own image's local level
+               by more than L x that threshold (or between L and 4 L x it) in at least k of the images, for one of
+               the levels L = 1 .. 16 (LEVELS). k comes from the images' occupancies in that window (fraction of
+               pixels in it: dark electrons and events): the smallest k for which chance coincidences give
+               < FALSE_SPOTS / 18 hot pixels on the CCD (Poisson-binomial tail x active pixels); k >= 2. The windows
+               L..4L leave out most event pixels (their charge is broad), so few quiet images are enough for a
+               faint hot pixel; images too busy for every window give no hot pixels (logged). Grouped into connected spots; 'seen in' = number of images in
+               which the pixel is above the threshold
+  cold pixels  the same residual below -5 x the spread, below by as much in >= k images (k as for hot pixels, from
+               the images' occupancies below -threshold)
 Images are grouped per ACM by size and binning (rows x columns, NPBIN x NSBIN): any images of the same size form
 one composite, whatever their type or number of skips (e.g. Image 2, Image 4, Image 5, 1-skip or 500-skip).
 Outputs (out_dir/defects/<module>_ACM<id>_<rows>x<cols>_<binning>/): the scripts' PNG / log files, defects.csv (the defect log: one line per
@@ -49,6 +58,22 @@ from lsm_defects import Image_4 as I4   # noqa: E402
 
 _CTI_Y = {I2: I2.calculate_cti_y, I4: I4.calculate_cti_y}      # restored for images with a vertical overscan
 TYPES = [("bright column", "#ff3b30"), ("dark column", "#3a86ff"), ("hot pixel", "#ffbe0b"), ("cold pixel", "#00c2a8")]
+FALSE_SPOTS = 0.1          # expected hot pixels per CCD from chance coincidences of events (sets k, find_defects)
+LEVELS = tuple(2 ** (i / 2) for i in range(9))      # 1 .. 16 x the threshold, in steps of sqrt(2)
+
+
+def persistence_needed(occ, n_pix, false_spots=FALSE_SPOTS):
+    """Smallest k (>= 2) of the images in which a pixel must be above the threshold so that, for a normal pixel
+    (above it in image i with probability occ[i], independently), n_pix x P(K >= k) <= false_spots; None if even
+    all images are not enough (too busy, or a single image)."""
+    dist = np.array([1.0])
+    for p in occ:
+        dist = np.convolve(dist, [1.0 - p, p])
+    tail = np.cumsum(dist[::-1])[::-1]               # tail[k] = P(K >= k)
+    for k in range(2, len(occ) + 1):
+        if n_pix * tail[k] <= false_spots:
+            return k
+    return None
 
 
 def set_geometry(path, autoconfig_args=()):
@@ -82,25 +107,18 @@ def image_type(path, h0):
     return f"{h0.get('NDCM', '?')}skip_{h0.get('NPBIN', 1)}x{h0.get('NSBIN', 1)}"
 
 
-def background(img, act, block=32):
-    """Smooth local level of img over the active area: median of block x block cells, interpolated back."""
+def background(img, act, size=(3, 31)):
+    """Local level of img: running median over size = (rows, columns) around each pixel (outside the active area:
+    the active area's median). Follows the steep rise of the dark charge along the rows and slow changes along a
+    row; a defect of a few pixels does not move it."""
     from scipy import ndimage
-    h, w = img.shape
-    x = np.where(act, img, np.nan)
-    nb_r, nb_c = max(1, h // block), max(1, w // block)
-    cells = np.full((nb_r, nb_c), np.nan)
-    for i in range(nb_r):
-        for j in range(nb_c):
-            v = x[i * h // nb_r:(i + 1) * h // nb_r, j * w // nb_c:(j + 1) * w // nb_c]
-            if np.isfinite(v).any():
-                cells[i, j] = np.nanmedian(v)
-    cells = np.where(np.isfinite(cells), cells, np.nanmedian(cells))
-    return ndimage.zoom(cells, (h / nb_r, w / nb_c), order=1, mode="nearest")[:h, :w]
+    x = np.where(act, img, np.nanmedian(img[act]))
+    return ndimage.median_filter(x, size=size, mode="nearest")
 
 
 def find_defects(comp, noise, subs, geo, nsig=5.0):
     """Defects of one CCD on its composite median comp [ADU] (noise [ADU]; subs: the pedestal-subtracted images).
-    Returns (mask uint8 with codes 1..4 = TYPES, rows of the log)."""
+    Returns (mask uint8 with codes 1..4 = TYPES, rows of the log, info: threshold, occupancies, k needed)."""
     from scipy import ndimage
     h, w = comp.shape
     a0, a1 = geo["prescan"], min(geo["overscan_start"], w)
@@ -109,29 +127,55 @@ def find_defects(comp, noise, subs, geo, nsig=5.0):
     with redirect_stdout(io.StringIO()):
         high, low, traps, idx = I4.find_col_traps(comp)
     colmed = np.ma.median(np.ma.masked_invalid(comp[:, a0:a1]), axis=0).filled(np.nan)
-    for c in idx:
-        if not (a0 <= c < a1):
+    run = []                     # adjacent flagged columns of one kind: one defect (column range), the largest excess
+    for c in list(idx) + [None]:
+        if c is not None and not (a0 <= c < a1):
             continue
-        v = float(colmed[c - a0])
-        bright = v > float(high[c])
-        mask[:, c] = 1 if bright else 2
-        rows.append(("bright column" if bright else "dark column", int(c), -1, h, v - float((high[c] + low[c]) / 2), "composite"))
+        if c is not None:
+            v = float(colmed[c - a0])
+            bright = v > float(high[c])
+            mask[:, c] = 1 if bright else 2
+            ex = v - float((high[c] + low[c]) / 2)
+            if run and c == run[-1][0] + 1 and bright == run[-1][1]:
+                run.append((c, bright, ex))
+                continue
+        if run:
+            pk = max(run, key=lambda r: abs(r[2]))
+            rows.append(("bright column" if pk[1] else "dark column", int(pk[0]), -1, h * len(run), pk[2],
+                         f"columns {run[0][0]}-{run[-1][0]}" if len(run) > 1 else "composite"))
+        run = [(c, bright, ex)] if c is not None else []
     act = np.zeros((h, w), bool)
     act[:, a0:a1] = True
     if True:
-        # persistent local excess: the composite minus its smooth local level (block medians: follows dark-charge or
+        # persistent local excess: the composite minus its local level (running median: follows dark-charge or
         # light gradients) above 5 x the spread of that residual over the active area, and above the local level of
-        # its image by as much in at least half of the images (all of them with < 3 images): not an event
+        # its image by as much in >= k images, k from the images' occupancies (persistence_needed): not events
         bg = background(comp, act)
         res = comp - bg
         spread = 1.4826 * float(np.nanmedian(np.abs(res[act] - np.nanmedian(res[act]))))
         thr = nsig * max(spread, noise if noise and np.isfinite(noise) else 0.0, 1e-6)
-        n_hot = np.zeros((h, w), np.int32)
-        for s in subs:
-            n_hot += (s - background(s, act)) > thr
-        need = len(subs) if len(subs) < 3 else int(math.ceil(0.5 * len(subs)))
-        for code, sel in ((3, act & (res > thr) & (n_hot >= need) & (mask == 0)),
-                          (4, act & (res < -thr) & (mask == 0))):
+        r_img = [s - background(s, act) for s in subs]
+        npix = int(act.sum())
+
+        def persistent(sign):            # pixels beyond L x thr in >= k_L images for some level L; the rule per level
+            ok, n_at, rule = np.zeros((h, w), bool), np.zeros((h, w), np.int32), []
+            for lev, top in [(lv, np.inf) for lv in LEVELS] + [(lv, 4 * lv) for lv in LEVELS]:
+                hits = [(sign * r > lev * thr) & (sign * r <= top * thr) for r in r_img]
+                occ = [float(np.mean(x[act])) for x in hits]
+                k = persistence_needed(occ, npix, FALSE_SPOTS / (2 * len(LEVELS)))
+                rule.append((lev, k, occ, top))
+                if k:
+                    n = np.sum(hits, axis=0)
+                    new = (n >= k) & ~ok
+                    n_at[new] = n[new]
+                    ok |= new
+            return ok, n_at, rule
+        hot_ok, n_hot, rule_hi = persistent(1)
+        cold_ok, n_cold, rule_lo = persistent(-1)
+        info = dict(thr=thr, rule_hi=rule_hi, rule_lo=rule_lo, occ=rule_hi[0][2], need=any(r[1] for r in rule_hi),
+                    need_lo=any(r[1] for r in rule_lo))
+        for code, sel in ((3, act & (res > thr) & hot_ok & (mask == 0)),
+                          (4, act & (res < -thr) & cold_ok & (mask == 0))):
             lab, n = ndimage.label(sel, structure=np.ones((3, 3), bool))
             for k, sl in enumerate(ndimage.find_objects(lab), start=1):
                 pix = lab[sl] == k
@@ -142,8 +186,44 @@ def find_defects(comp, noise, subs, geo, nsig=5.0):
                 rp, cp = int(rr[pk] + sl[0].start), int(cc[pk] + sl[1].start)
                 mask[sl][pix] = code
                 rows.append((TYPES[code - 1][0], cp, rp, int(pix.sum()), float(vals[pk]),
-                             f"{int(n_hot[rp, cp])} of {len(subs)} images" if code == 3 else "composite"))
-    return mask, rows
+                             f"{int((n_hot if code == 3 else n_cold)[rp, cp])} of {len(subs)} images"))
+    return mask, rows, info
+
+
+class _ActiveRegionPedestal:
+    """For images without an overscan: the scripts' overscan pedestal and noise taken from the active region
+    (columns prescan..), their overscan_start set to the image width, CTI X / Y n/a. Restored on exit."""
+    def __init__(self, ncol, prescan):
+        self.ncol, self.pre = ncol, prescan
+
+    def __enter__(self):
+        self.saved = {m: dict(subtract_pedestal=m.subtract_pedestal, robust_noise_from_overscan=m.robust_noise_from_overscan,
+                              calculate_cti_x=m.calculate_cti_x, calculate_cti_y=m.calculate_cti_y,
+                              overscan_start=m.overscan_start) for m in (I2, I4)}
+        pre = self.pre
+        for m in (I2, I4):
+            orig_noise = self.saved[m]["robust_noise_from_overscan"]
+            m.overscan_start = self.ncol
+            m.robust_noise_from_overscan = lambda sub, _start, clip_sigma=5.0, max_iter=2, f=orig_noise: f(sub, pre, clip_sigma, max_iter)
+            m.calculate_cti_x = m.calculate_cti_y = lambda med: (float("nan"), float("nan"))
+        def ped(data, clip_sigma=5.0, max_iter=2):
+            act = np.asarray(data, float)[:, pre:]
+            row_med = np.nanmedian(act, axis=1)
+            for _ in range(max_iter):                          # as the scripts: clipped row median (here: active region)
+                r = act - row_med[:, None]
+                mad = max(1.4826 * float(np.nanmedian(np.abs(r))), 1e-8)
+                new = np.nanmedian(np.where(np.abs(r) <= clip_sigma * mad, act, np.nan), axis=1)
+                row_med = np.where(np.isfinite(new), new, row_med)
+            return np.asarray(data, float) - row_med[:, None]
+        I4.subtract_pedestal = ped
+        I2.subtract_pedestal = lambda data, clip_sigma=5.0, max_iter=2: (
+            lambda s: (s, round(I2.robust_noise_from_overscan(s, pre), 2)))(ped(data, clip_sigma, max_iter))
+        return self
+
+    def __exit__(self, *exc):
+        for m, d in self.saved.items():
+            for k, v in d.items():
+                setattr(m, k, v)
 
 
 def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
@@ -176,11 +256,11 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
         out = io.StringIO()
         nc = fits.getdata(files[0], 1).shape[1]
         has_ovs = geo["overscan_start"] < nc - 2
-        script_note = None
+        script_note = None if has_ovs else ("no overscan in these images: the group scripts ran with their pedestal (row "
+                                            "median) and noise from the active region (noise includes the dark charge); "
+                                            "CTI X / Y n/a")
+        from contextlib import nullcontext
         try:
-            if not has_ovs:
-                raise RuntimeError("no overscan in these images: the group scripts need one (pedestal and noise from "
-                                   "the overscan); skipped, composite made with the active-region row median")
             t_img = float(h0.get("EXPOSURE", 0) or 0)
             try:
                 from datetime import datetime
@@ -191,7 +271,7 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
                     f"{max(t_img / 60, 1e-3):.4f}", "--binning-x", str(h0.get("NSBIN", 1) or 1), "--binning-y", str(h0.get("NPBIN", 1) or 1)]
             old = sys.argv
             sys.argv = argv
-            with redirect_stdout(out):
+            with redirect_stdout(out), (nullcontext() if has_ovs else _ActiveRegionPedestal(nc, geo["prescan"])):
                 I4.main()
                 for p in files:
                     I2.process_fz_and_plot_all_channels(p, f"{name}_{Path(p).name.split('.')[0]}", output_dir=Path(d))
@@ -225,7 +305,24 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
         for ch in range(4):
             ext = ch + 1
             ccd = h0.get(f"CH{ch}") or f"ch{ch}"
-            mask, rows = find_defects(comps[ch], float(noises[ch]), subs[ch], geo, nsig)
+            mask, rows, finfo = find_defects(comps[ch], float(noises[ch]), subs[ch], geo, nsig)
+            occ_txt = ", ".join(f"{100 * o:.2g} %" for o in finfo["occ"])
+            def rule_txt(rule, s, sgn):  # the loosest level for each number of images, plus the best band
+                first = {}
+                for lev, k, _, top in rule:
+                    if k and not np.isfinite(top) and k not in first:
+                        first[k] = lev
+                out = ", ".join(f">= {k} images {s} {sgn}{lev * finfo['thr']:.2g} ADU" for k, lev in sorted(first.items(), reverse=True))
+                band = next(((lev, top, k) for lev, k, _, top in rule if k and np.isfinite(top)), None)
+                if band:
+                    out += (f"; or >= {band[2]} images between {sgn}{band[0] * finfo['thr']:.2g} and "
+                            f"{sgn}{band[1] * finfo['thr']:.2g} ADU")
+                return out
+            persist = (f"{rule_txt(finfo['rule_hi'], 'above', '')} (of {len(files)}; < {FALSE_SPOTS} chance hot pixels per CCD)" if finfo["need"] else
+                       f"none identifiable: {len(files)} image(s) too {'few' if len(files) < 2 else 'busy'} (pixels above "
+                       f"{finfo['thr']:.3g} ADU per image: {occ_txt}); chance coincidences of events would look the same")
+            persist_lo = (f"{rule_txt(finfo['rule_lo'], 'below', '-')} (of {len(files)})" if finfo["need_lo"]
+                          else "none identifiable (images too few or too busy)")
             fits.PrimaryHDU(comps[ch].astype(np.float32)).writeto(os.path.join(d, f"composite_EXT{ext}.fits"), overwrite=True)
             for r in rows:
                 csv_rows.append([module, acm, ext, ccd, itype, *r])
@@ -242,7 +339,9 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
             tabs[0]["logs"][key] = [
                 f"composite median of {len(files)} image(s) of {itype} (rows x columns _ binning); types: {', '.join(kinds)}; "
                 f"noise {noises[ch]} ADU",
-                f"geometry: prescan {geo['prescan']}, first overscan column {geo['overscan_start']}, vertical overscan from row {geo['y_overscan_start']}"] \
+                f"geometry: prescan {geo['prescan']}, first overscan column {geo['overscan_start']}, vertical overscan from row {geo['y_overscan_start']}",
+                f"hot pixels: {persist}; occupancy per image (pixels above the threshold, mostly events): {occ_txt}; "
+                f"k chosen for < {FALSE_SPOTS} chance hot pixels on the CCD"] \
                 + [f"{t}: {n}" for t, n in counts.items()] + ([f"view binned {dec}x{dec}; the defect list uses full-resolution positions"] if dec > 1 else [])
             tabs[0]["per"][key] = dict(
                           title=f"EXT{ext} {ccd}: composite median of {len(files)} image(s)", unit="ADU", w=int(view.shape[1]),
@@ -250,7 +349,8 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
                           types=[dict(name=t, color=c, n=counts[t]) for t, c in TYPES],
                           defects=[[r[0], int(r[1] // dec), int(r[2] // dec) if r[2] >= 0 else -1, r[3], r[4], r[5]] for r in shown],
                           defects_more=max(0, len(rows) - len(shown)),
-                          numbers=[["images", str(len(files))], ["noise (overscan)", f"{noises[ch]} ADU"]]
+                          numbers=[["images", str(len(files))], [f"noise ({'overscan' if has_ovs else 'active region'})", f"{noises[ch]} ADU"],
+                                   ["hot-pixel rule", persist, not finfo["need"]], ["cold-pixel rule", persist_lo]]
                           + [[t, str(n), t.endswith("column") and n > 0] for t, n in counts.items()])
         figs = []
         for png in sorted(glob.glob(os.path.join(d, "*.png"))):
@@ -260,8 +360,9 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
         for lg in sorted(glob.glob(os.path.join(d, "*.log"))):
             logs += [f"--- {os.path.basename(lg)}"] + open(lg).read().splitlines()
         if figs or logs:
-            tabs.append(dict(id="scripts", label="Group scripts", kind="figure",
-                             data=dict(title="Image_4 (composite) and Image_2 (per image): their figures", figures=figs), log=logs))
+            tabs.append(dict(id="scripts", label="Image_4 / Image_2 plots", kind="figure",
+                             data=dict(title="The group's scripts: Image_4 (composite median of all images) and Image_2 (per image)"
+                                       + (f" ({script_note})" if script_note else ""), figures=figs), log=logs))
         if script_note:
             for lg in list(tabs[0]["logs"].values()) + [tb["log"] for tb in tabs[1:]]:
                 lg.insert(0, script_note)
