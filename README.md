@@ -164,7 +164,8 @@ Without an entry the name comes from `--module ACM=NAME`, then the data folder n
 
 | task | command | output (in the run folder) |
 |---|---|---|
-| fits and clusters (chain per CCD) | `run_superWADERs images.txt [--gain-correction] [--composite]` | `root/` (+ `root_gaincorr*/`), `summary.txt`, `characterisation/` |
+| fits and clusters (chain per CCD) | `run_superWADERs images.txt [--gain-correction] [--composite]` | `index.html`, `images/index.html`, `root/` (+ `root_gaincorr*/`), `summary.txt`, `characterisation/` |
+| add a packet / list to a campaign | any command below with `--campaign DIR` (`--criteria FILE`, `--refresh-all`, `--reprocess`) | the same in `DIR/`, for everything the campaign holds; only new inputs are processed |
 | L0 traces / PSD traces | `run_superWADERs traces.txt [--l0-no-html]` | `L0/<trace>/`: `overview.png`, `viewer.html`, `summary.json` |
 | L1 images at several skip counts | `run_superWADERs l1.txt --l1-skips 1,10,100,1000 [--l1-skip-first K]` | `L1/`: one FITS per N (all through the pipeline), `noise_vs_skips.csv/.png`, `compare/`, `<image>_diagnostics/` |
 | commissioning packet | `run_superWADERs packet.txt --packet --module-list modules.csv` | `packet/index.html` + one page per module |
@@ -172,8 +173,10 @@ Without an entry the name comes from `--module ACM=NAME`, then the data folder n
 | defect maps | `run_superWADERs images.txt --defect-map [--defect-sigma 5] [--no-clusters]` | `defects/<module>_ACM<id>_<size>/`: `defects.csv`, `defect_map.html`, composites, the group's Image_4 plot and log |
 | serial-register images | `run_superWADERs sr.txt --sr [--sr-threshold 4] [--sr-min-length 3] [--no-clusters]` | `sr/`: `sr_streaks.csv`, `sr_summary.csv`, PNGs, one page per module |
 
-The commissioning flags can be combined in one run (e.g. `--dc-series --defect-map --sr`), and every report folder
-has an `index.html` listing its pages. Add `--no-clusters` when you need no cluster files: it is much faster.
+The commissioning flags can be combined in one run (e.g. `--dc-series --defect-map --sr`). Every tool's folder has an
+overview page, `index.html`: a module × CCD grid with pass / warn / fail verdicts from the criteria file, what needs
+attention, distributions, the full table, and links to the module pages. The run's or campaign's `index.html` combines
+all tools per CCD. Add `--no-clusters` when you need no cluster files: it is much faster.
 
 What each tool does:
 
@@ -244,8 +247,9 @@ can be sent to others as it is.
 | `superWADERs/run_superWADERs` | the command (`bin/run_superWADERs` starts it) |
 | `superWADERs/engine/` | `native_pipeline.py` (pedestal, fits, calibration, clustering chain, cluster files), `characterise.py` (front end), and superWADERs' own copies of autoconfig, gain_dc_split, gain_vs_charge, ... |
 | `superWADERs/clustering/` | A_GMX and the Bayesian few-electron finder |
-| `superWADERs/commissioning/` | `raw_data.py` + `raw_levels/` (L0 / L1; copies from ccd_opt_ml, `utils/sync_from_ccd_opt_ml.py`), `packet_report.py` + template, `dc_series.py`, `defects.py` + `lsm_defects/` (`utils/sync_from_lsm_analysis.py`), `sr_images.py` |
-| `superWADERs/README.md`, `docs/superWADERs_user_guide.md`, `docs/superWADERs_commissioning_next_steps.md` | overview, user guide, plan and open items |
+| `superWADERs/commissioning/` (campaigns, overviews) | `campaign.py` (ledger, records, criteria, verdicts, overview pages), `worker.py` (one image -> its record), `ccd_metrics.py`, `overview_template.html`, `criteria_default.json` (placeholder limits) |
+| `superWADERs/commissioning/` (tools) | `raw_data.py` + `raw_levels/` (L0 / L1; copies from ccd_opt_ml, `utils/sync_from_ccd_opt_ml.py`), `packet_report.py` + template, `dc_series.py`, `defects.py` + `lsm_defects/` (`utils/sync_from_lsm_analysis.py`), `sr_images.py` |
+| `superWADERs/README.md`, `docs/superWADERs_user_guide.md`, `docs/superWADERs_commissioning_next_steps.md`, `docs/superWADERs_efficiency_notes.md` | overview (incl. campaigns), user guide, plan and open items, efficiency notes (not applied) |
 
 **Not yet validated on real data** (see the user guide, section 5, for the data needed): a full commissioning packet
 (5-minute 1x1 1-skip and 10x10 500-skip images), serial-register images (tested only on synthetic data), the defect
