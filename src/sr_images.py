@@ -63,6 +63,11 @@ def run(images, summaries, out_dir, mods_of, meta_of, thr_sigma=4.0, min_len=3, 
         log(f"  sr {os.path.basename(p)}")
         s = (summaries or {}).get(p) or NP.process_image(p, os.devnull, outputs=[], write=False, keep_arrays=True,
                                                           all_ext=True, verbose=False, autoconfig_args=autoconfig_args)
+        try:                                     # the dark-current fit of every CCD: histogram + model, numbers, profiles
+            fit_cards = {n: summ for n, (summ, _, _) in PR.image_data(p, autoconfig_args, s)[0].items()}
+        except Exception as e:                   # the page is still made without this image's fit plots
+            log(f"  sr: no fit plots for {os.path.basename(p)} ({type(e).__name__}: {e})")
+            fit_cards = {}
         m = meta_of(p)
         acm = int(m.get("ACMID") or PR.acm_of(p) or 0)
         geo = NP.read_image(p, autoconfig_args)["geo"]
@@ -81,7 +86,7 @@ def run(images, summaries, out_dir, mods_of, meta_of, thr_sigma=4.0, min_len=3, 
             per_ccd.setdefault((acm, n, ccd), []).append(dict(image=os.path.basename(p), img=img, unit=unit, thr=thr, streaks=st,
                                                               lam_rows=c.get("lam_rows"), dc=c["dc_e"], noise=noise, rows=ps.shape[0],
                                                               noise_e=c["noise_e"], gain=g, gain_err=c.get("gain_err"),
-                                                              lam01=c.get("lam01"), resolved=resolved))
+                                                              lam01=c.get("lam01"), resolved=resolved, fit=fit_cards.get(n)))
             for r in st:
                 rows_csv.append([mods_of(acm, n, ccd), acm, n, ccd, os.path.basename(p), *r[:4], f"{r[4]:.4g}", f"{r[5]:.4g}", unit])
             sum_csv.append([mods_of(acm, n, ccd), acm, n, ccd, os.path.basename(p), ps.shape[0], len(st),
@@ -166,6 +171,9 @@ def run(images, summaries, out_dir, mods_of, meta_of, thr_sigma=4.0, min_len=3, 
             title="Diagnostics: streaks, dark charge, noise and gain per image", numbers=nums, table=table, plots=plots),
             log=[f"{it['image']}: noise {it['noise']:.3g} {it['unit']}, threshold {it['thr']:.3g} {it['unit']}, min length {min_len}, "
                  f"{len(it['streaks'])} streaks, DC {it['dc']:.4g} e-/pix, gain {it['gain']:.4f} ADU/e-" for it in items])]
+        tabs.append(dict(id="fits", label="DC fits", kind="summary", data=[it["fit"] for it in items if it["fit"]],
+                         log=[f"{it['image']}: dark-current fit (native engine: pedestal, comb fit, gain choice as run_WADERs)"
+                              for it in items]))
         for k, it in enumerate(items):
             mask = np.zeros(it["img"].shape, np.uint8)
             for r in it["streaks"]:

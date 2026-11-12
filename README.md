@@ -182,7 +182,8 @@ What each tool does:
   limit" (`--dc-limit`) and "still falling". Pages: Rates, Fits (each image's histogram with its dark-current fit),
   Per row, Data (table of every number), Method.
 - **Defect map** (`--defect-map`): images of one ACM with the same size and binning form a group (any type or skip
-  count). Median composite per CCD; bright / dark columns (adjacent columns = one defect) and hot / cold pixel
+  count). Median composite per CCD; bright / dark columns (Image_4's rule on the composite, confirmed in the single
+  images; adjacent columns = one defect; the first active column is usually a readout artefact) and hot / cold pixel
   spots (`--defect-sigma`). A hot / cold pixel must be persistent: present in enough images that chance coincidences
   of events or dark electrons are unlikely (< 0.1 per CCD, from each image's occupancy); few or busy images can give
   "none identifiable". Checked on simulated images down to 1e-5 e-/pix and on real data, not yet against a known
@@ -192,7 +193,8 @@ What each tool does:
 - **Serial-register images** (`--sr`): streaks in the serial register (readout artifacts): runs of >=
   `--sr-min-length` pixels above `--sr-threshold` x noise along one read, confined to it. Page: a Diagnostics tab
   (streaks per image and per 1000 reads, dark charge, read noise and gain per image, dark charge per read, streak
-  lengths and positions, a table of all numbers) and one tab per image with the streaks marked; the streak list
+  lengths and positions, a table of all numbers), DC fits (each image's histogram with its dark-current fit) and one
+  tab per image with the streaks marked; the streak list
   is in `sr_streaks.csv`.
 
 ### The interactive pages

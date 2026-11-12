@@ -209,15 +209,17 @@ def image_role(meta, path):
     return f"{nd}-skip {pb}x{sb} image"
 
 
-def image_data(path, autoconfig_args):
+def image_data(path, autoconfig_args, s=None):
     """{ext number: (summary tab data, viewer tab data, log lines)} of one averaged image: native pedestal and
-    fits per CCD (native_pipeline.process_image, no cluster files), histograms, profiles, the pixels."""
+    fits per CCD (native_pipeline.process_image, no cluster files; or s, its result with keep_arrays and all_ext
+    when already made), histograms, profiles, the pixels."""
     import native_pipeline as NP
     from native_plots import plot_range
     meta = meta_or_header(path)
     role = image_role(meta, path)
-    s = NP.process_image(path, os.devnull, outputs=[], write=False, keep_arrays=True, all_ext=True, verbose=False,
-                         autoconfig_args=autoconfig_args)
+    if s is None:
+        s = NP.process_image(path, os.devnull, outputs=[], write=False, keep_arrays=True, all_ext=True, verbose=False,
+                             autoconfig_args=autoconfig_args)
     img = NP.read_image(path, autoconfig_args)
     raw = dict(img["exts"])
     out = {}

@@ -102,7 +102,10 @@ Per module and image size: all images of one ACM with the same rows x columns an
   with column defects and the event rate per pixel per day), with its geometry set from the images' header; shown
   in the page's "Image_4 plot" tab;
 - `defects.csv`, the defect log: type (bright / dark column, hot / cold pixel spot), column, row, size, value,
-  number of images it is seen in; adjacent flagged columns are one entry (their column range);
+  number of images it is seen in; adjacent flagged columns are one entry (their column range). A column flagged by
+  Image_4 on the composite is kept only if it is also bright / dark in enough of the single images (a track along
+  a column in one image is not a defect; Image_4's own plot and log are not filtered). The first active column is
+  usually flagged in every image: a known readout artefact, not a CCD defect;
 - hot / cold pixels must be persistent: present in enough of the images that chance coincidences of events or
   dark electrons are unlikely (< 0.1 per CCD, from each image's measured occupancy, at charge levels and bands
   1-16 x the threshold). Few or busy images can therefore give none ("none identifiable", logged on the page with
@@ -124,6 +127,7 @@ image and CCD: streaks, per 1000 reads, median length, DC), per CCD a PNG (count
 along the register, dark charge per read) and one interactive page per module `<module>_ACM<id>_sr.html`:
 **Diagnostics** (per image: streaks, streaks per 1000 reads, dark charge from the fit and the 0e-/1e- counts, read
 noise, gain; dark charge per read; streak lengths and start positions; a table of all numbers; the CCDs overlaid)
+**DC fits** (every image's pixel-charge histogram with its dark-current fit, the numbers side by side, the profiles)
 and one tab per image with the streaks marked (frame slider over the CCDs). The streak list is only in
 `sr_streaks.csv`, not on the page.
 

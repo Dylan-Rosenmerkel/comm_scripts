@@ -9,9 +9,12 @@ vertical-overscan row) are set from each image's header (autoconfig's geometry) 
 written in the script. Images without an overscan: it still runs, with its pedestal (row median) and noise taken
 from the active region instead of the overscan (noise then includes the dark charge) and no CTI (n/a).
 Added here, per CCD, on the composite median:
-  columns      bright / dark columns: Image_4's find_col_traps (median of the column above / below the running
-               median +- 6 MAD), with the column's excess over the running median; adjacent flagged columns of one
-               kind are one defect (its column range, the largest excess)
+  columns      bright / dark columns: Image_4's find_col_traps on the composite (median of the column above / below
+               the running median +- 6 MAD), kept only if the column is as bright / dark (Image_4's statistic, at
+               L x 6 MAD, L = LEVELS) in >= k of the single images, k as for hot pixels from the images' column
+               occupancies (< FALSE_SPOTS chance columns per CCD): a track along a column in one image is not a
+               bright column. Image_4's own plot and log list its composite columns unfiltered. Adjacent columns of
+               one kind are one defect (its column range, the largest excess)
   hot pixels   composite median minus its local level (running median over 3 rows x 31 columns) above 5 x the robust spread of
                that residual (at least the noise), and persistent, not an event: above its own image's local level
                by more than L x that threshold (or between L and 4 L x it) in at least k of the images, for one of
@@ -122,10 +125,35 @@ def find_defects(comp, noise, subs, geo, nsig=5.0):
     with redirect_stdout(io.StringIO()):
         high, low, traps, idx = I4.find_col_traps(comp)
     colmed = np.ma.median(np.ma.masked_invalid(comp[:, a0:a1]), axis=0).filled(np.nan)
+
+    def col_z(img):              # Image_4's column statistic of one image: (column median - running median) / running MAD
+        m = np.ma.masked_invalid(np.asarray(img, float))
+        m[:, :a0] = np.ma.masked
+        m[:, a1:] = np.ma.masked
+        cm = np.ma.median(m, axis=0)
+        med, mad = I4.running_median_absolute_deviation(cm, window_size=I4.running_window)
+        z = (cm - med) / np.ma.maximum(mad, 1e-9)
+        return np.ma.filled(z.astype(float), np.nan)
+    zs = [col_z(s) for s in subs]
+    ncol = max(a1 - a0, 1)
+
+    def cols_persistent(sign):   # columns beyond L x Image_4's 6 MAD in >= k images (k from the column occupancies)
+        ok, rule = np.zeros(w, bool), []
+        for lev in LEVELS:
+            hits = [np.nan_to_num(sign * z) > lev * I4.col_threshold for z in zs]
+            occ = [float(np.mean(x[a0:a1])) for x in hits]
+            k = persistence_needed(occ, ncol, FALSE_SPOTS / len(LEVELS))
+            rule.append((lev, k, occ, np.inf))
+            if k:
+                ok |= np.sum(hits, axis=0) >= k
+        return ok, rule
+    col_hi, col_rule_hi = cols_persistent(1)
+    col_lo, col_rule_lo = cols_persistent(-1)
+    cand = [int(c) for c in idx if a0 <= c < a1]
+    n_cand = len(cand)           # Image_4's columns, kept only if bright / dark in enough of the single images
+    kept = [c for c in cand if (col_hi[c] if float(colmed[c - a0]) > float(high[c]) else col_lo[c])]
     run = []                     # adjacent flagged columns of one kind: one defect (column range), the largest excess
-    for c in list(idx) + [None]:
-        if c is not None and not (a0 <= c < a1):
-            continue
+    for c in kept + [None]:
         if c is not None:
             v = float(colmed[c - a0])
             bright = v > float(high[c])
@@ -167,7 +195,7 @@ def find_defects(comp, noise, subs, geo, nsig=5.0):
             return ok, n_at, rule
         hot_ok, n_hot, rule_hi = persistent(1)
         cold_ok, n_cold, rule_lo = persistent(-1)
-        info = dict(thr=thr, rule_hi=rule_hi, rule_lo=rule_lo, occ=rule_hi[0][2], need=any(r[1] for r in rule_hi),
+        info = dict(col_rule=col_rule_hi, col_cand=n_cand, col_kept=len(kept), thr=thr, rule_hi=rule_hi, rule_lo=rule_lo, occ=rule_hi[0][2], need=any(r[1] for r in rule_hi),
                     need_lo=any(r[1] for r in rule_lo))
         for code, sel in ((3, act & (res > thr) & hot_ok & (mask == 0)),
                           (4, act & (res < -thr) & cold_ok & (mask == 0))):
@@ -312,6 +340,14 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
             persist = (f"{rule_txt(finfo['rule_hi'], 'above', '')} (of {len(files)}; < {FALSE_SPOTS} chance hot pixels per CCD)" if finfo["need"] else
                        f"none identifiable: {len(files)} image(s) too {'few' if len(files) < 2 else 'busy'} (pixels above "
                        f"{finfo['thr']:.3g} ADU per image: {occ_txt}); chance coincidences of events would look the same")
+            first_c = {}
+            for lev, k, _, _ in finfo["col_rule"]:
+                if k and k not in first_c:
+                    first_c[k] = lev
+            col_txt = (f"{finfo['col_kept']} of Image_4's {finfo['col_cand']} composite columns confirmed: bright / dark in "
+                       + (", ".join(f">= {k} images beyond {6 * lev:.3g} MAD" for k, lev in sorted(first_c.items(), reverse=True))
+                          if first_c else "none identifiable (images too few or too busy)")
+                       + f" (of {len(files)}; a track along a column in one image is not a defect)")
             persist_lo = (f"{rule_txt(finfo['rule_lo'], 'below', '-')} (of {len(files)})" if finfo["need_lo"]
                           else "none identifiable (images too few or too busy)")
             fits.PrimaryHDU(comps[ch].astype(np.float32)).writeto(os.path.join(d, f"composite_EXT{ext}.fits"), overwrite=True)
@@ -341,7 +377,7 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
                           defects=[[r[0], int(r[1] // dec), int(r[2] // dec) if r[2] >= 0 else -1, r[3], r[4], r[5]] for r in shown],
                           defects_more=max(0, len(rows) - len(shown)),
                           numbers=[["images", str(len(files))], [f"noise ({'overscan' if has_ovs else 'active region'})", f"{noises[ch]} ADU"],
-                                   ["hot-pixel rule", persist, not finfo["need"]], ["cold-pixel rule", persist_lo]]
+                                   ["column rule", col_txt], ["hot-pixel rule", persist, not finfo["need"]], ["cold-pixel rule", persist_lo]]
                           + [[t, str(n), t.endswith("column") and n > 0] for t, n in counts.items()])
         figs = []
         for png in sorted(glob.glob(os.path.join(d, "*.png"))):
