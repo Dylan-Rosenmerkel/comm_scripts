@@ -4,7 +4,16 @@ with superWADERs' own engine. No panaSKImg, and nothing from bin/run_WADERs or c
 is in this folder (engine/, clustering/, commissioning/).
 
     run_superWADERs INPUT [-o PARENT] [-j N] [options]      INPUT: an image, a raw DAQ file, or a .txt list of them
+    run_superWADERs INPUT --campaign DIR [options]          add INPUT to the campaign DIR (data arriving in packets)
     run_superWADERs -h            the flags;      run_superWADERs -h -v      the full guide
+
+Every run is a campaign (commissioning/campaign.py): a new folder (superWADERs_<run name>/), or with --campaign DIR a
+folder that grows packet by packet. An input already in the campaign (same path, size and modification time) is not
+processed again; each run processes the new inputs, keeps their results (records/), rebuilds the pages of the tools
+it was given from everything the campaign holds (the other tools keep theirs; --refresh-all rebuilds all), and the
+campaign overview (index.html) of every tool. Without --campaign a run is on its own (a fresh folder with only its
+inputs and tools), as before. Verdicts (pass / warn / fail) come from the criteria file the
+campaign keeps (criteria.json; --criteria FILE to replace it, which re-judges everything without new fits).
 
 What happens (one function each, called in order by main()):
   check_request         inputs exist, output folder free, option combinations valid (standard library only)
@@ -12,17 +21,22 @@ What happens (one function each, called in order by main()):
                         environment that has them (the damic environment)
   raw_inputs            level-0 traces -> L0/ (decoded, checked, plotted); level-1 images -> L1/ FITS images with N
                         skips, which join the images
-  (--packet)            commissioning packet reports (packet/) and nothing else
+  packet_traces         --packet: level-0 traces / PSD traces of the packet -> records/packet/ (new ones only)
+  to_process            the images not yet in the campaign (or changed, or missing a part a tool asks for)
   front_end             characterise every image and CCD before anything is fitted (engine/characterise.py): data form
                         (skip-resolved raw files are compressed first), geometry, dead / quiet channels, first-column
                         artefact, gain source, noise, dark charge, electron counting -> a clustering plan per CCD;
                         run-pooled dark charge for the Bayesian few-electron finder (images of one run setting)
   gain_correction       --gain-correction: fits of every CCD, g(n) curves per module / gain period / image
-  process               per image one process (-j at a time): pedestal, the two dark-current fits and the gain
-                        choice, calibration, and per CCD the clustering chain (below); cluster files in panaSKImg's
-                        format -> root/ (and root_gaincorr*/)
-  composite             --composite: MakeComposite_Fe55_Clusters_Extensions.cc on the cluster files
-  commissioning         --dc-series, --defect-map, --sr on the run's images
+  process               per image one process (-j at a time, commissioning/worker.py): pedestal, the two
+                        dark-current fits and the gain choice, calibration, per CCD the clustering chain (below),
+                        cluster files in panaSKImg's format -> root/ (and root_gaincorr*/), and the image's record:
+                        CCD metrics (commissioning/ccd_metrics.py), fit cards, packet / SR parts -> records/images*/
+  composite             --composite: MakeComposite_Fe55_Clusters_Extensions.cc on the cluster files of this run
+  render_all            from every record of the campaign: images/ (fits and CCD quality), packet/, dc_series/,
+                        defects/ (only groups with a new image are made again), sr/; one overview page per tool
+                        (<tool>/index.html: module x CCD grid, what needs attention, distributions, table, criteria)
+                        and index.html (every tool per CCD)
   summary               summary.txt, fit_quality.csv, native_summary.json, characterisation/<image>.json
 
 Clustering (--clusterer auto, the default), chosen per CCD after calibration and before clustering
@@ -233,8 +247,12 @@ inputs (one file or a .txt list, one path per line, relative to the .txt; # comm
   *_L1_*.RJ45ADCDATA0..3 (+ .meta)       level-1 images, binned or not: one FITS image per --l1-skips N -> L1/,
                                          then through the pipeline; noise vs N, fits side by side, diagnostics
 
-output (superWADERs_<run name>/; <run name> = image or .txt name):
-  summary.txt                  read first: fits per CCD, the clustering chain of every CCD and why, fallbacks
+output (superWADERs_<run name>/, <run name> = image or .txt name; or the --campaign folder):
+  index.html                   open first: the campaign overview (every tool's verdict per module and CCD)
+  images/index.html            fits and CCD quality: one view per image setting, history over the images
+  packet/, dc_series/, defects/, sr/   each tool's overview (index.html) and its module pages
+  summary.txt                  verdict counts, fits per CCD, the clustering chain of every CCD and why, every run
+  campaign.json, criteria.json, records/   the campaign: inputs and runs, the criteria, the kept results
   fit_quality.csv              gain, noise, dark current per CCD with errors scaled by sqrt(chi2/ndf)
   native_summary.json          everything per image and CCD (fits, gain choice, pedestal, thresholds, decisions)
   characterisation/<image>.json   the front end's record per image and CCD, with the result
@@ -243,7 +261,7 @@ output (superWADERs_<run name>/; <run name> = image or .txt name):
   root/root_files.txt          their full paths (input list for MakeComposite)
   *_FitDarkCurrentProcess_DCfit_EXTn.pdf, *_PedestalSubtractionProcess_Baseline/Sigma_EXTn.pdf   plots
   gain_vs_charge/, root_gaincorr*/   with --gain-correction;   composite*/   with --composite
-  L0/, L1/, packet/, dc_series/, defects/, sr/   raw files and commissioning tools
+  L0/, L1/                     raw files (traces, level-1 images as FITS)
   compressed/                  skip-resolved raw files, compressed
   logs/                        failures and MakeComposite output
 
@@ -286,6 +304,17 @@ commissioning tools:
   --sr           serial-register images: streaks along a read (sr/)
   Add --no-clusters when no cluster files are needed (much faster). The pages work offline (double-click).
 
+campaign (--campaign DIR): give each new packet (or list) with the same --campaign DIR and the tools it is for:
+    run_superWADERs packet_DM01.txt --packet --campaign ~/comm/LSM2026 --module-list modules.csv
+    run_superWADERs series_day3.txt --dc-series --campaign ~/comm/LSM2026
+  Only new or changed inputs are processed; an input given again with another tool gets only that tool's part
+  (e.g. its packet viewer or serial-register streaks). The pages of the tools of this run (dark-current series,
+  defect groups with a new image, serial-register, packet pages, the images overview when images were processed) are
+  rebuilt from the kept records; the other tools keep their pages, and index.html combines all of them.
+  --refresh-all rebuilds every tool; --reprocess processes the given inputs again; --criteria FILE replaces the
+  limits (all pages re-judged). Without --campaign, a run stands alone: a fresh folder with only its inputs and tools. Run-pooled dark charge
+  (few-electron finder), --gain-correction curves and --composite use the images of the current run only.
+
 module names (--module-list FILE): one line per ACM (or per CCD), comma / tab / space separated:
   # ACM, module[, EXT<n> or CCD name]
   101, DM24
@@ -307,6 +336,19 @@ def build_parser(full=False):
     ap.add_argument("-j", "--jobs", metavar="N", type=int, default=min(2, os.cpu_count() or 1),
                     help="images processed at the same time, one process each (default 2)")
     ap.add_argument("--overwrite", action="store_true", help="replace an existing superWADERs_<run name> folder")
+    g = ap.add_argument_group("campaign (data arriving packet by packet)")
+    g.add_argument("--campaign", metavar="DIR", default=None,
+                   help="add this input to the campaign folder DIR (made on first use): only inputs not yet in it (or "
+                        "changed) are processed; the pages of this run's tools and the campaign overview are rebuilt "
+                        "from everything it holds. Without it, the run is on its own (a fresh folder)")
+    g.add_argument("--criteria", metavar="FILE", default=None,
+                   help="pass / warn / fail limits (JSON, see commissioning/criteria_default.json); kept in the campaign "
+                        "(criteria.json) and used for every page; a new file re-judges everything without new fits")
+    g.add_argument("--reprocess", action="store_true",
+                   help="process the inputs again even if the campaign already has them")
+    g.add_argument("--refresh-all", action="store_true",
+                   help="rebuild every tool's pages from the kept results (default: only the tools of this run, and all "
+                        "of them after --criteria / --reprocess)")
     g = ap.add_argument_group("clustering")
     g.add_argument("--clusterer", choices=("auto", "agmx", "threshold"), default="auto",
                    help="auto (default): one chain per CCD from the characterisation (Bayes / A_GMX / crowded A_GMX / "
@@ -396,6 +438,7 @@ class Run:
     t0: float = 0.0
     lines: dict = field(default_factory=lambda: {k: [] for k in ("raw", "front", "gc", "comp", "comm")})
     failed: list = field(default_factory=list)
+    camp: object = None
 
     def stamp(self):
         return f"[{time.time() - self.t0:5.0f}s]"
@@ -407,9 +450,19 @@ class Run:
 def check_request(args):
     """Checks with the standard library only (before the environment is looked for)."""
     run_name, files = read_inputs(args.input)
-    out = os.path.join(os.path.abspath(args.parent), OUT_PREFIX + run_name)
-    if os.path.exists(out) and os.listdir(out) and not args.overwrite:
-        die(f"{out} already exists; use --overwrite to replace it")
+    if args.campaign:
+        out = os.path.abspath(os.path.expanduser(args.campaign))
+        if os.path.isdir(out) and os.listdir(out) and not os.path.exists(os.path.join(out, "campaign.json")):
+            die(f"{out} exists and is not a campaign folder (no campaign.json); give a new or a campaign folder")
+        if args.overwrite:
+            die("--overwrite cannot be used with --campaign (inputs already there are kept and skipped; --reprocess "
+                "processes them again; to start from nothing, give a new folder)")
+    else:
+        out = os.path.join(os.path.abspath(args.parent), OUT_PREFIX + run_name)
+        if os.path.exists(out) and os.listdir(out) and not args.overwrite:
+            die(f"{out} already exists; use --overwrite to replace it, or --campaign {out} to add these inputs to it")
+    if args.criteria and not os.path.isfile(args.criteria):
+        die(f"--criteria {args.criteria} not found")
     if args.jobs < 1:
         die("-j/--jobs must be at least 1")
     stems = {}
@@ -445,7 +498,7 @@ def check_request(args):
 
 
 def prepare_output(run):
-    if os.path.exists(run.out) and os.listdir(run.out):
+    if not run.args.campaign and os.path.exists(run.out) and os.listdir(run.out):
         shutil.rmtree(run.out)                 # --overwrite (checked in check_request)
     run.dirs = {k: os.path.join(run.out, k) for k in ("root", "logs")}
     for d in run.dirs.values():
@@ -455,25 +508,41 @@ def prepare_output(run):
               "(MakeComposite_Fe55_Clusters_Extensions.cc) may misread it")
 
 
-def raw_inputs(run):
-    """Level-0 traces -> L0/; level-1 images -> L1/ FITS images (they join the images). Returns (images, l1 FITS)."""
+def raw_inputs(run, l1_skips=None):
+    """Level-0 traces -> L0/ (only those not yet in the campaign); level-1 images -> L1/ FITS images, which join the
+    images (converted once; later runs reuse the FITS). Returns (images, the FITS made from level-1 data)."""
     raw = [p for p in run.images if RAW_INPUT.search(p)]
     images = [p for p in run.images if not RAW_INPUT.search(p)]
     if not raw:
         return images, []
     import raw_data as RD
-    args, lines = run.args, run.lines["raw"]
+    args, lines, camp = run.args, run.lines["raw"], run.camp
     kinds = {p: RD.kind(p) for p in raw}
     l0 = [p for p, k in kinds.items() if k == "L0"]
+    new0 = [p for p in l0 if args.reprocess or not camp.has(p, "L0")]
     if l0:
-        run.say(f"level-0 traces: {len(l0)}")
-        lines += RD.report_l0(l0, os.path.join(run.out, "L0"), html=not args.l0_no_html) + [""]
+        run.say(f"level-0 traces: {len(new0)} new of {len(l0)}")
+        if new0:
+            lines += RD.report_l0(new0, os.path.join(run.out, "L0"), html=not args.l0_no_html) + [""]
+        for p in new0:
+            camp.add(p, "L0", kind="L0")
     l1 = [p for p, k in kinds.items() if k == "L1"]
     made = []
-    if l1:
-        run.say(f"level-1 images -> FITS ({len({RD.base_of(p) for p in l1})} image(s))")
-        made, ls = RD.convert_l1(l1, args.l1_skips, args.l1_skip_first, os.path.join(run.out, "L1"))
-        lines += ["level-1 images -> FITS images with N skips (L1/; header from the .meta):"] + ls + [""]
+    by_base = {}
+    for p in l1:
+        by_base.setdefault(RD.base_of(p), []).append(p)
+    for base, chans in sorted(by_base.items()):
+        prev = [f for p in chans for f in ((camp.entry(p) or {}).get("made") or [])]
+        if not args.reprocess and prev and all(camp.has(p, "L1") for p in chans) and all(os.path.exists(f) for f in prev):
+            made += sorted(set(prev))
+            continue
+        run.say(f"level-1 image {os.path.basename(base)} -> FITS")
+        mk, ls = RD.convert_l1(chans, l1_skips or args.l1_skips, args.l1_skip_first, os.path.join(run.out, "L1"))
+        lines += [f"level-1 image -> FITS images with N skips (L1/; header from the .meta):"] + ls + [""]
+        for p in chans:
+            camp.add(p, "L1", kind="L1")
+            camp.entry(p)["made"] = mk
+        made += mk
     other = [p for p, k in kinds.items() if k == "raw"]
     if other:
         lines += ["not read (DAQ binaries of averaged images: give their avg_*.fits): "
@@ -481,17 +550,18 @@ def raw_inputs(run):
     return images + made, made
 
 
-def run_packet(run):
+def packet_traces(run, paths):
+    """--packet: the level-0 traces / PSD traces not yet in the campaign -> records/packet/ (packet_report.file_items)."""
     import packet_report as PR
-    run.say(f"commissioning packet: {len(run.images)} file(s)")
-    lines = PR.build(run.images, run.out, run.args.module_list, shlex.split(run.args.autoconfig_args),
-                     log=lambda m: print(f"  {run.stamp()}{m}", flush=True), mods_of=module_resolver(run))
-    text = "\n".join([f"{PROG} --packet: {run.run_name}  ({len(run.images)} file(s), {time.time() - run.t0:.0f} s)",
-                      ""] + lines)
-    with open(os.path.join(run.out, "summary.txt"), "w") as fh:
-        fh.write(text + "\n")
-    print("\n" + text + f"\nresults: {run.out}")
-    return 1 if any("FAILED" in ln for ln in lines) else 0
+    cls = PR.classify(paths)
+    for kind in ("trace", "psd"):
+        for p in sorted(cls[kind]):
+            if not run.args.reprocess and run.camp.has(p, "packet") and run.camp.has_record("packet", os.path.basename(p)):
+                continue
+            run.say(f"{kind} {os.path.basename(p)}")
+            run.camp.save_record("packet", os.path.basename(p), PR.file_items(p, kind))
+            run.camp.add(p, "packet", kind=kind)
+    return cls
 
 
 def front_end(run, NP, images, base_kw):
@@ -542,24 +612,42 @@ def native_record(img, s):
                 skipped=sorted(e for e, c in ccds.items() if "skipped" in c))
 
 
-def process(run, NP, tasks):
-    """NP.process_image on every task, -j images at a time (one process each). Returns {path: summary}."""
+def save_image_record(run, rec):
+    """The record in the campaign: the core (records/images/) and the big parts apart (records/images_packet/,
+    records/images_sr/), so that the overviews read only the cores."""
+    parts = {k: rec.pop(k) for k in ("packet", "sr") if k in rec}
+    rec["parts"] = sorted(parts)
+    run.camp.save_record("images", rec["stem"], rec)
+    for k, v in parts.items():
+        run.camp.save_record(f"images_{k}", rec["stem"], v)
+
+
+def process(run, NP, tasks, records=True):
+    """The worker on every task (path, out, process_image keyword arguments, record options), -j images at a time
+    (one process each). records: make and keep the campaign record (False: fits only, e.g. the g(n) pre-pass).
+    Returns {path: record core (records) or native summary}."""
     from multiprocessing import get_context
+    import worker as W
     done = {}
     if not tasks:
         return done
+    fn = W.image_job if records else NP._job
     with cf.ProcessPoolExecutor(max_workers=max(1, min(run.args.jobs, len(tasks))), mp_context=get_context("spawn")) as ex:
-        futs = {ex.submit(NP._job, t): t[0] for t in tasks}
+        futs = {ex.submit(fn, t if records else t[:3]): t[0] for t in tasks}
         for fut in cf.as_completed(futs):
             img = futs[fut]
-            s, err = fut.result()
+            res = fut.result()
+            rec, err = (res[1], res[2]) if records else res
             if err:
                 run.say(f"{image_stem(img)}: FAILED ({err.splitlines()[0]})")
                 with open(os.path.join(run.dirs["logs"], f"{image_stem(img)}.log"), "w") as fh:
                     fh.write(err)
                 run.failed.append((image_stem(img), "all", err.splitlines()[0]))
                 continue
-            done[img] = s
+            s = rec["summary"] if records else rec
+            if records:
+                save_image_record(run, rec)
+            done[img] = rec
             for e, c in sorted(s["ccds"].items()):
                 if "gain" not in c:
                     run.say(f"{s['stem']} {e}: not run ({c.get('skipped')})")
@@ -900,9 +988,10 @@ def clustering_lines(configs):
     return lines
 
 
-def summary(run, configs, rows, roots):
-    """fit_quality.csv and summary.txt (also printed)."""
-    args = run.args
+def summary(run, configs, rows, roots, tool_lines):
+    """fit_quality.csv and summary.txt (also printed): the verdict counts of every overview first, then the fits of
+    every image of the campaign, the clustering per CCD, the gain choice, and the runs of the campaign."""
+    args, camp = run.args, run.camp
     if rows:
         import csv
         with open(os.path.join(run.out, "fit_quality.csv"), "w", newline="") as fh:
@@ -911,9 +1000,11 @@ def summary(run, configs, rows, roots):
             w.writerows(rows)
     rows = sorted(rows, key=lambda q: (q["image"], q["ext"]))
     wid = max([len(q["image"]) for q in rows] + [5])
-    L = [f"{PROG} summary: {run.run_name}  ({len(run.images)} input(s), {time.time() - run.t0:.0f} s)", "",
-         f"{'image':{wid}} {'ext':4} {'chi2/ndf':>8} {'gain [ADU/e-]':>19} {'noise [e-]':>17} "
-         f"{'DC [e-/pix]':>17} {'DC bias':>8}"]
+    runs = camp.data.get("runs", [])
+    L = [f"{PROG} summary: {os.path.basename(run.out)}  (campaign: {len(camp.data['inputs'])} input file(s), "
+         f"{len(configs)} image(s), {len(runs)} run(s); this run {time.time() - run.t0:.0f} s)", "",
+         f"overview pages (open {os.path.join(run.out, 'index.html')}):"] + tool_lines + ["",
+         f"{'image':{wid}} {'ext':4} {'chi2/ndf':>8} {'gain [ADU/e-]':>19} {'noise [e-]':>17} {'DC [e-/pix]':>17} {'DC bias':>8}"]
     for q in rows:
         bias = f"{q['dc_bias']:+8.3f}" if q["dc_bias"] is not None else "       -"
         L.append(f"{q['image']:{wid}} {q['ext']:4} {q['chi2ndf']:8.2f} "
@@ -921,22 +1012,20 @@ def summary(run, configs, rows, roots):
                  f"{q['noise']:7.4f} +- {q['noise_err_s']:.4f} {q['dc']:7.4f} +- {q['dc_err_s']:.4f} {bias}")
     L += ["", "errors scaled by sqrt(chi2/ndf); * = gain held at the all-peaks fit; DC bias = fit - dark current from "
               "the 0e-/1e- pixel counts"]
-    if run.lines["front"]:
-        L += ["", "characterisation (characterisation/<image>.json):"] + run.lines["front"]
-    if not args.no_clusters:
-        L += ["", f"clustering per CCD (--clusterer {args.clusterer}):"] + clustering_lines(configs)
+    cl = clustering_lines(configs)
+    if cl:
+        L += ["", "clustering per CCD:"] + cl
     L += ["", "gain used per CCD (all-peaks fit vs 0e-/1e- fit; details in native_summary.json):"]
     for r in sorted(configs.values(), key=lambda r: r["stem"]):
         L.append(f"  {r['stem']}")
         L += [f"  {n}" for n in r["notes"]]
-    L.append("")
-    L.append("cluster files: none (--no-clusters)" if args.no_clusters else
-             f"cluster files: {len(roots)} (list: {os.path.join(run.dirs['root'], 'root_files.txt')})")
-    for k in ("raw", "gc", "comp", "comm"):
-        if run.lines[k]:
-            L += [""] + run.lines[k]
+    L += ["", f"cluster files: {len(roots)} (list: {os.path.join(run.dirs['root'], 'root_files.txt')})"]
+    L += ["", "runs of this campaign (newest last):"]
+    for i, r in enumerate(runs):
+        L.append(f"  run {i + 1}  {r['date']}  {r['new']} new, {r['skipped']} already there  ({r['command']})")
+        L += [f"    {ln}" for ln in r.get("lines", [])]
     if run.failed:
-        L += ["", "FAILED: " + "; ".join(f"{s} {e} ({why})" for s, e, why in run.failed)]
+        L += ["", "FAILED in this run: " + "; ".join(f"{s} {e} ({why})" for s, e, why in run.failed)]
     text = "\n".join(L)
     with open(os.path.join(run.out, "summary.txt"), "w") as fh:
         fh.write(text + "\n")
@@ -953,112 +1042,257 @@ def file_list(d):
     return fs
 
 
+def has_clusters(core):
+    return any(isinstance(v, dict) and "n_clusters" in v for c in core["summary"]["ccds"].values() for v in c.values())
+
+
+def to_process(run, images, tools_now):
+    """{image: record options} of the images that need processing (new, changed, --reprocess, or a part a tool asks
+    for is missing), and the list of those already complete."""
+    args, camp = run.args, run.camp
+    want_sr = [args.sr_threshold, args.sr_min_length] if args.sr else None
+    need, done = {}, []
+    for p in images:
+        stem = image_stem(p)
+        core = camp.load_record("images", stem) if camp.current(p) and not args.reprocess else None
+        parts = set((core or {}).get("parts", []))
+        opts = dict(packet="packet" in tools_now or "packet" in parts,
+                    sr=want_sr or (core.get("sr_settings") if core and "sr" in parts else None),
+                    clusters=("images" in tools_now and not args.no_clusters) or (bool(core) and has_clusters(core)))
+        why = None
+        if core is None:
+            why = "new" if not camp.entry(p) else "--reprocess" if args.reprocess else "changed or no record"
+        elif opts["packet"] and "packet" not in parts:
+            why = "packet pages need its viewer"
+        elif want_sr and core.get("sr_settings") != want_sr:
+            why = "serial-register streaks"
+        elif opts["clusters"] and not has_clusters(core):
+            why = "cluster files"
+        if why:
+            need[p] = (opts, why)
+        else:
+            done.append(p)
+    return need, done
+
+
+def render_all(run, crit, mods_of, fresh, scope, refresh=False):
+    """The reports and overviews. fresh: {tool: inputs new to it in this run}; scope: the tools whose pages this run
+    rebuilds (the tools it was given, and the images overview when images were processed); refresh: rebuild every tool
+    (--refresh-all, --criteria, --reprocess). A tool outside the scope keeps its pages; its overview rows, kept in
+    records/overviews/, feed the campaign index. summary.txt, native_summary.json and fit_quality.csv always cover
+    every image of the campaign. Returns (configs, rows, roots, tool lines)."""
+    import campaign as CA
+    import gain_dc_split as G
+    args, camp, out = run.args, run.camp, run.out
+    st = camp.data.setdefault("settings", {})
+    stems = sorted({e["stem"] for e in camp.data["inputs"].values() if e.get("stem")})
+    cores = {s_: camp.load_record("images", s_) for s_ in stems}
+    cores = {k: v for k, v in cores.items() if v}
+    by_tool = {t: set(camp.stems(t)) for t in ("images", "packet", "dc_series", "defects", "sr")}
+    has = dict(images=bool(cores), packet=bool(camp.inputs("packet")), dc_series=bool(by_tool["dc_series"]),
+               defects=bool(by_tool["defects"]), sr=bool(by_tool["sr"]))
+    back = lambda here: [["← campaign overview", "../index.html"]] + [
+        [CA.TOOL_LABELS[t], f"../{t}/index.html"] for t in ("images", "packet", "dc_series", "defects", "sr")
+        if t != here and has[t]]
+    # ---- the run summary: every image of the campaign (cheap: from the records)
+    configs = {c["path"]: native_record(c["path"], c["summary"]) for c in cores.values()}
+    rows = []
+    for r in configs.values():
+        for e, fit in sorted(r["final"].items()):
+            q = G.held_quality(fit, r["refs"].get(e), r["held"].get(e))
+            rows.append(dict(image=r["stem"], ext=e, gain_held=e in r["held"], **q))
+    with open(os.path.join(out, "native_summary.json"), "w") as fh:
+        json.dump([c["summary"] for c in cores.values()], fh, indent=1, default=str)
+    roots = file_list(run.dirs["root"])
+
+    def images():
+        return CA.images_overview(camp, list(cores.values()), crit, mods_of, os.path.join(out, "images", "index.html"),
+                                  back("images"))
+
+    def packet():
+        import packet_report as PR
+        items = []
+        for p in camp.inputs("packet"):
+            if (camp.entry(p) or {}).get("kind") in ("trace", "psd"):
+                items += camp.load_record("packet", os.path.basename(p)) or []
+        for s_ in sorted(by_tool["packet"]):
+            c, part = cores.get(s_), camp.load_record("images_packet", s_)
+            if c and part:
+                items += PR.image_items(c["path"], c["meta"], {int(n): tuple(v) for n, v in part.items()},
+                                        {int(n): v for n, v in (c.get("packet_numbers") or {}).items()}, c.get("char"))
+        run.say(f"packet pages ({len(items)} item(s))")
+        lines, prow = PR.render(items, out, mods_of)
+        run.lines["comm"] += lines + [""]
+        return [PR.overview(camp, prow, crit, os.path.join(out, "packet", "index.html"), back("packet"))]
+
+    def dc_series():
+        import dc_series as DCS
+        recs = [cores[s_] for s_ in sorted(by_tool["dc_series"]) if s_ in cores]
+        meta = {c["path"]: dict(c["meta"], ACMID=c["meta"].get("ACMID") or c.get("acm")) for c in recs}
+        cards = {(os.path.basename(c["path"]), int(n)): v for c in recs for n, v in (c.get("fit_cards") or {}).items()}
+        limit = args.dc_limit if args.dc_limit is not None else st.get("dc_limit")
+        st["dc_limit"] = limit
+        run.say(f"dark-current series ({len(recs)} image(s))")
+        lines, drows = DCS.report([(c["path"], c["summary"]) for c in recs], lambda path: meta[path], mods_of, out, limit,
+                                  fit_cards=cards)
+        run.lines["comm"] += lines + [""]
+        return [DCS.overview(camp, drows, crit, os.path.join(out, "dc_series", "index.html"), back("dc_series"), limit)]
+
+    def defects():                               # only the groups with a new image are made again
+        import defects as DF
+        ins = camp.inputs("defects")
+        stem_of = {p: (camp.entry(p) or {}).get("stem") for p in ins}
+        paths = [cores[stem_of[p]]["path"] if stem_of[p] in cores else p for p in ins if os.path.exists(p) and stem_of[p]]
+        orig_of = {cores[stem_of[p]]["path"]: p for p in ins if stem_of[p] in cores}
+        missing = [p for p in ins if not os.path.exists(p)]
+        nsig = args.defect_sigma if args.defect_sigma != 5.0 or "defect_sigma" not in st else st["defect_sigma"]
+        st["defect_sigma"] = nsig
+        run.say(f"defect maps ({len(paths)} image(s))")
+        redo = None if args.reprocess else {p for p in paths if os.path.abspath(orig_of.get(p, p)) in fresh.get("defects", set())}
+        lines = DF.run(paths, out, mods_of, shlex.split(args.autoconfig_args), log=lambda m: run.say(m.strip()),
+                       nsig=nsig, redo=redo, write_index=False)
+        if missing:
+            lines.append(f"  images no longer on disk (left out of the composites): {', '.join(map(os.path.basename, missing))}")
+        run.lines["comm"] += lines + [""]
+        return DF.overview(camp, crit, os.path.join(out, "defects", "index.html"), back("defects"))
+
+    def sr():
+        import sr_images as SR
+        per_ccd = {}
+        recs = sorted([cores[s_] for s_ in by_tool["sr"] if s_ in cores], key=lambda c: (CA.record_time(c), c["stem"]))
+        thr = ml = None
+        for c in recs:
+            part = camp.load_record("images_sr", c["stem"]) or {}
+            thr, ml = c.get("sr_settings") or (args.sr_threshold, args.sr_min_length)
+            for ext, it in sorted(part.items()):
+                per_ccd.setdefault((c.get("acm") or 0, int(ext[3:]), it["ccd"]), []).append(it)
+        run.say(f"serial-register pages ({len(recs)} image(s))")
+        lines, srows = SR.render(per_ccd, out, mods_of, thr or args.sr_threshold, ml or args.sr_min_length)
+        run.lines["comm"] += lines + [""]
+        return [SR.overview(camp, srows, crit, os.path.join(out, "sr", "index.html"), back("sr"))]
+
+    tool_views, tool_lines = {}, []
+    for t, fn in (("images", images), ("packet", packet), ("dc_series", dc_series), ("defects", defects), ("sr", sr)):
+        if not has[t]:
+            continue
+        kept = None if (refresh or t in scope) else camp.load_record("overviews", t)
+        if kept is None:
+            views = fn()
+            camp.save_record("overviews", t, dict(views=views, made=CA._now()))
+        else:
+            views = kept["views"]
+        tool_views[t] = (f"{t}/index.html", views)
+        n = CA.counts([r for v in views for r in v["ccds"]])
+        tool_lines.append(f"  {CA.TOOL_LABELS[t]:16s} {t + '/index.html':22s} {n['pass']} pass, {n['warn']} warn, "
+                          f"{n['fail']} fail" + (f", {n['na']} n/a" if n["na"] else "")
+                          + (f"  ({len(views)} views)" if len(views) > 1 else "")
+                          + ("" if kept is None else f"  (kept from {kept.get('made', 'an earlier run')})"))
+    CA.campaign_index(camp, tool_views, os.path.join(out, "index.html"), crit)
+    return configs, rows, roots, tool_lines
+
+
 def main(argv=None):
     args = parse_args(argv)
     run_name, files, out, modules = check_request(args)
     ensure_environment(args.env)                      # may re-run this script inside the conda environment and exit
     if args.temperature is not None:                  # read by pair_energy.py at import (g(n) and A_GMX energies)
         os.environ["COMM_TEMPERATURE_K"] = str(args.temperature)
+    import campaign as CA
     import fit_quality as FQ
-    import gain_dc_split as G
     import native_pipeline as NP
     run = Run(args=args, run_name=run_name, images=files, out=out, modules=modules)
     prepare_output(run)
+    run.camp = CA.Campaign(out)
+    crit = CA.load_criteria(out, args.criteria)
     run.t0 = time.time()
-    print(f"{PROG} ({NP.VERSION}): {len(files)} input(s) -> {out}   ({args.jobs} images at a time, "
-          f"clusterer {args.clusterer})")
+    tools_now = (["packet"] if args.packet else ["images"]) + [t for t, on in (("dc_series", args.dc_series),
+                                                                              ("defects", args.defect_map), ("sr", args.sr)) if on]
+    print(f"{PROG} ({NP.VERSION}): {len(files)} input(s) -> {out}   ({args.jobs} images at a time, clusterer "
+          f"{args.clusterer}; {'campaign' if args.campaign else 'new folder'}; tools: {', '.join(tools_now)})")
+    mods_of = module_resolver(run)
+
+    # ---- inputs: traces / L1 / images; which images need processing
     if args.packet:
-        return run_packet(run)
-    images, l1_fits = raw_inputs(run)
-    if not images:                                    # traces only
-        text = "\n".join([f"{PROG} summary: {run_name}  ({len(files)} input(s), {time.time() - run.t0:.0f} s)", ""]
-                         + run.lines["raw"])
-        with open(os.path.join(out, "summary.txt"), "w") as fh:
-            fh.write(text + "\n")
-        print("\n" + text + f"\nresults: {out}")
-        return 1 if any("FAILED" in ln for ln in run.lines["raw"]) else 0
+        cls = packet_traces(run, files)
+        run.images = cls["image"] + cls["l1"]
+        images, l1_fits = raw_inputs(run, l1_skips="all")
+    else:
+        images, l1_fits = raw_inputs(run)
+    need, done = to_process(run, images, tools_now)
+    # the inputs that are new to a tool in this run (or changed): the tools that combine images (defect-map groups)
+    # make only the groups with such an input again
+    fresh = {t: {os.path.abspath(p) for p in images if not run.camp.has(p, t)} for t in tools_now}
+    if images:
+        run.say(f"images: {len(need)} to process, {len(done)} already in the campaign")
+    if need:
+        thr = args.thresholds if args.thresholds in ("auto", "sigma0") else tuple(float(v) for v in args.thresholds.split(","))
+        base = dict(thresholds=thr, anchor=args.gain_anchor, autoconfig_args=shlex.split(args.autoconfig_args),
+                    crowded="auto", crowded_shapes="on", all_ext=True, tune=args.tune, verbose=False)
+        tasks, recs = front_end(run, NP, list(need), base)
+        orig = {r["process_path"]: r["file"] for r in recs if r.get("process")}
+        # ---- --gain-correction (the images of this run): fits first, then g(n)
+        gc_dirs, curves = {}, {}
+        if args.gain_correction and not args.packet:
+            import gain_vs_charge as GVC
+            run.say("fits of every CCD (for the g(n) groups)")
+            pre = process(run, NP, [(p, out, dict(kw, outputs=[], write=False), None) for p, _, kw in tasks], records=False)
+            gconf = {p: native_record(p, s_) for p, s_ in pre.items()}
+            run.dirs["gc"] = os.path.join(out, "gain_vs_charge")
+            os.makedirs(run.dirs["gc"], exist_ok=True)
+            run_exts = sorted({int(e[3:]) for r in gconf.values() for e in r["final"]})
+            modes = ["pooled", "per-image"] if args.gain_correction == "both" else [args.gain_correction]
+            gc_dirs = {m: os.path.join(out, "root_gaincorr" if m == "pooled" else "root_gaincorr_per_image") for m in modes}
+            run.dirs["root_gc"] = gc_dirs.get("pooled", gc_dirs.get("per-image"))
+            curves = gain_curves(run, GVC, FQ, gconf, run_exts, modes)
+            tasks = [t for t in tasks if t[0] in pre]
 
-    # ---- front end: characterisation, gains of comb-less CCDs, plans, run-pooled dark charge
-    thr = args.thresholds if args.thresholds in ("auto", "sigma0") else tuple(float(v) for v in args.thresholds.split(","))
-    base = dict(thresholds=thr, anchor=args.gain_anchor, autoconfig_args=shlex.split(args.autoconfig_args),
-                crowded="auto", crowded_shapes="on", all_ext=True, tune=args.tune, verbose=False)
-    tasks, recs = front_end(run, NP, images, base)
-    src_of = {t[0]: t[0] for t in tasks}               # the processed path (compressed raw files: the compressed one)
+        def outputs(path, opts):
+            if not opts["clusters"] or args.no_clusters:
+                return []
+            stem = image_stem(path)
+            return ([("root", args.clusterer, run.dirs["root"], None)]
+                    + [(f"gaincorr_{m}", args.clusterer, d, curves[(m, stem)]) for m, d in gc_dirs.items()
+                       if (m, stem) in curves])
+        final = process(run, NP, [(p, out, dict(kw, outputs=outputs(p, need[orig.get(p, p)][0]), plots=True),
+                                   need[orig.get(p, p)][0]) for p, _, kw in tasks])
+        NP.write_characterisation(out, recs, [c["summary"] for c in final.values()])
+        bconf = {}
+        for p, c in final.items():
+            o = orig.get(p, p)
+            for t in tools_now:
+                run.camp.add(o, t, kind="image", stem=c["stem"])
+            bconf[p] = native_record(o, c["summary"])
+        if gc_dirs:
+            for mode, d in gc_dirs.items():
+                run.lines["gc"].append(f"  corrected cluster files ({mode}): {len(file_list(d))} (list: "
+                                       f"{os.path.join(d, 'root_files.txt')}; the images of this run, energies with g(n))")
+            if len(gc_dirs) == 2:
+                run.lines["gc"] += compare_gain_corrections(run, bconf, curves, gc_dirs)
+        if args.composite and bconf:
+            run.failed += [(n, "composite", "MakeComposite failed") for n in composite(run, bconf, gc_dirs)]
+        if l1_fits:                                   # images made from level-1 data: noise vs skips, fits side by side
+            import gain_dc_split as G
+            import raw_data as RD
+            lrows = [dict(image=r["stem"], ext=e, gain_held=e in r["held"], **G.held_quality(fit, r["refs"].get(e), r["held"].get(e)))
+                     for r in bconf.values() for e, fit in sorted(r["final"].items())]
+            run.lines["raw"] += RD.l1_noise_summary(lrows, os.path.join(out, "L1"), l1_fits)
+            run.lines["raw"] += RD.compare_skips(out, l1_fits, os.path.join(out, "L1")) + [""]
+    for p in done:                                    # already processed: only the tool memberships of this run
+        e = run.camp.entry(p)
+        for t in tools_now:
+            run.camp.add(p, t, kind="image", stem=e.get("stem") or image_stem(p))
+    run.camp.add_run(sys.argv, tools_now, list(need), done,
+                     [ln for k in ("raw", "front", "gc", "comp") for ln in run.lines[k]])
+    run.camp.save()
 
-    # ---- --gain-correction: fits first (each image's gain for the gain periods), then g(n)
-    gc_dirs, curves = {}, {}
-    if args.gain_correction:
-        import gain_vs_charge as GVC
-        run.say("fits of every CCD (for the g(n) groups)")
-        pre = process(run, NP, [(p, out, dict(kw, outputs=[], write=False)) for p, _, kw in tasks])
-        configs = {p: native_record(p, s) for p, s in pre.items()}
-        run.dirs["gc"] = os.path.join(out, "gain_vs_charge")
-        os.makedirs(run.dirs["gc"], exist_ok=True)
-        run_exts = sorted({int(e[3:]) for r in configs.values() for e in r["final"]})
-        modes = ["pooled", "per-image"] if args.gain_correction == "both" else [args.gain_correction]
-        gc_dirs = {m: os.path.join(out, "root_gaincorr" if m == "pooled" else "root_gaincorr_per_image") for m in modes}
-        run.dirs["root_gc"] = gc_dirs.get("pooled", gc_dirs.get("per-image"))
-        curves = gain_curves(run, GVC, FQ, configs, run_exts, modes)
-        tasks = [t for t in tasks if t[0] in pre]
-
-    # ---- the final pass: fits, calibration, clustering chain per CCD, cluster files
-    def outputs(path):
-        if args.no_clusters:
-            return []
-        stem = image_stem(path)
-        return ([("root", args.clusterer, run.dirs["root"], None)]
-                + [(f"gaincorr_{m}", args.clusterer, d, curves[(m, stem)]) for m, d in gc_dirs.items()
-                   if (m, stem) in curves])
-    run.say("fits only (--no-clusters)" if args.no_clusters else
-            "cluster files: " + ", ".join(["root/"] + [os.path.basename(d) + "/" for d in gc_dirs.values()]))
-    final = process(run, NP, [(p, out, dict(kw, outputs=outputs(p), plots=True)) for p, _, kw in tasks])
-    order = [t[0] for t in tasks if t[0] in final]
-    configs = {p: native_record(src_of[p], final[p]) for p in order}
-    with open(os.path.join(out, "native_summary.json"), "w") as fh:
-        json.dump([final[p] for p in order], fh, indent=1, default=str)
-    NP.write_characterisation(out, recs, [final[p] for p in order])
-
-    roots = [] if args.no_clusters else file_list(run.dirs["root"])
-    if gc_dirs and not args.no_clusters:
-        for mode, d in gc_dirs.items():
-            run.lines["gc"].append(f"  corrected cluster files ({mode}): {len(file_list(d))} (list: "
-                                   f"{os.path.join(d, 'root_files.txt')}; same images, energies with g(n))")
-        if len(gc_dirs) == 2:
-            run.lines["gc"] += compare_gain_corrections(run, configs, curves, gc_dirs)
-
-    comp_failed = composite(run, configs, gc_dirs) if args.composite else []
-    rows = []
-    for r in configs.values():
-        for e, fit in sorted(r["final"].items()):
-            q = G.held_quality(fit, r["refs"].get(e), r["held"].get(e))
-            rows.append(dict(image=r["stem"], ext=e, gain_held=e in r["held"], **q))
-    if l1_fits:                                       # images made from level-1 data: noise vs skips, fits side by side
-        import raw_data as RD
-        run.lines["raw"] += RD.l1_noise_summary(rows, os.path.join(out, "L1"), l1_fits)
-        run.lines["raw"] += RD.compare_skips(out, l1_fits, os.path.join(out, "L1")) + [""]
-    if args.dc_series or args.defect_map or args.sr:
-        import packet_report as PR
-        mods_of = module_resolver(run)
-        say = lambda m: print(f"  {run.stamp()}{m}", flush=True)
-        comm = run.lines["comm"]
-        if args.dc_series:
-            import dc_series as DCS
-            run.say("dark-current series")
-            comm += DCS.report([(p, final[p]) for p in order], PR.meta_or_header, mods_of, out, args.dc_limit,
-                               shlex.split(args.autoconfig_args)) + [""]
-        if args.defect_map:
-            import defects as DF
-            run.say("defect maps")
-            comm += DF.run(order, out, mods_of, shlex.split(args.autoconfig_args), log=say, nsig=args.defect_sigma) + [""]
-        if args.sr:
-            import sr_images as SR
-            run.say("serial-register images")
-            comm += SR.run(order, None, out, mods_of, PR.meta_or_header, args.sr_threshold, args.sr_min_length,
-                           shlex.split(args.autoconfig_args), log=say) + [""]
-    if comp_failed:
-        run.failed += [(n, "composite", "MakeComposite failed") for n in comp_failed]
-    summary(run, configs, rows, roots)
-    print(f"\nresults: {out}")
+    # ---- every report and overview from everything the campaign holds
+    # the tools whose pages change: those of this run that got a new input, or whose images were processed now
+    scope = {t for t in tools_now if fresh.get(t) or need} | ({"images"} if need else set())
+    refresh = bool(args.refresh_all or args.criteria or args.reprocess)
+    configs, rows, roots, tool_lines = render_all(run, crit, mods_of, fresh, scope, refresh)
+    run.camp.save()
+    summary(run, configs, rows, roots, tool_lines + [""] + run.lines["comm"])
+    print(f"\nresults: {out}   (overview: {os.path.join(out, 'index.html')})")
     return 1 if run.failed else 0
 
 

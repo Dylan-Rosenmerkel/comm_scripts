@@ -135,6 +135,31 @@ noise, gain; dark charge per read; streak lengths and start positions; a table o
 and one tab per image with the streaks marked (frame slider over the CCDs). The streak list is only in
 `sr_streaks.csv`, not on the page.
 
+## 2b. Campaigns and overview pages
+
+Commissioning data arrive packet by packet. Give every packet (or list) the same `--campaign DIR`:
+- **Only new inputs are processed** (new path, or the file changed). Their results are kept in `DIR/records/`.
+- **The tools of the run rebuild their pages** from everything the campaign holds; tools not touched keep theirs.
+- **`DIR/index.html` combines every tool per CCD.**
+- **Without `--campaign`, a run stands alone:** a fresh folder with only its inputs and tools.
+
+Details, the verdicts and the criteria file are in [superWADERs/README.md](../superWADERs/README.md), section
+"Commissioning campaigns".
+
+```
+run_superWADERs packet_DM01.txt --packet --campaign ~/comm/LSM2026 --module-list modules.csv
+run_superWADERs packet_DM02.txt --packet --campaign ~/comm/LSM2026 --module-list modules.csv
+run_superWADERs series.txt --dc-series --campaign ~/comm/LSM2026
+```
+
+Every tool (images, packet, dark current, defect maps, SR) has an overview page, `<tool>/index.html`:
+- a module × CCD grid with pass / warn / fail verdicts from the criteria file (`criteria.json`; the default limits
+  are placeholders);
+- what needs attention, distributions against the limits, the full table (CSV), the criteria;
+- per CCD: every number, the reasons, the history over images, and links to its module page.
+
+Module pages link back to their overview.
+
 ## 3. Using the HTML pages
 
 Every page works offline (no network) in Chrome, Safari or Firefox; open it by double-click.
@@ -204,7 +229,8 @@ Every page works offline (no network) in Chrome, Safari or Firefox; open it by d
 | engine | `superWADERs/engine/`: `native_pipeline.py`, `characterise.py`, `native_kernels.py`, `native_rootio.py`, `native_plots.py`, and its own autoconfig / gain modules |
 | clustering | `superWADERs/clustering/` (A_GMX, Bayesian few-electron finder) |
 | L0 / L1 | `superWADERs/commissioning/raw_data.py`; readers copied from ccd_opt_ml in `raw_levels/` (`utils/sync_from_ccd_opt_ml.py [--check]`) |
-| packet report and the page template | `superWADERs/commissioning/packet_report.py`, `packet_report_template.html` |
+| packet report and the module page template | `superWADERs/commissioning/packet_report.py`, `packet_report_template.html` |
+| campaign, verdicts, overview pages | `superWADERs/commissioning/campaign.py`, `overview_template.html`, `criteria_default.json`, `worker.py`, `ccd_metrics.py` |
 | DC series | `superWADERs/commissioning/dc_series.py` |
 | defects | `superWADERs/commissioning/defects.py`; group scripts copied in `lsm_defects/` (`utils/sync_from_lsm_analysis.py [--check]`) |
 | SR images | `superWADERs/commissioning/sr_images.py` |

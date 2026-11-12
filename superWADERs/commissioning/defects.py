@@ -251,8 +251,11 @@ class _ActiveRegionPedestal:
                 setattr(m, k, v)
 
 
-def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
-    """--defect-map on the run's images. Returns summary lines."""
+def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0, redo=None, write_index=True):
+    """--defect-map on the images (all images of the campaign). redo: the new image paths - only the groups that
+    contain one are made again (the others keep their folder and group.json); None = every group. Each group writes
+    defects/<group>/group.json (per CCD: defect counts by type, noise, whether the persistence rules could be met),
+    read by overview(). Returns summary lines."""
     import packet_report as PR
     from astropy.io import fits
     base = os.path.join(out_dir, "defects")
@@ -275,6 +278,9 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
         apply_geometry(geo, _f.getdata(files[0], 1).shape[0])
         module = mods_of(acm, None, None)
         name = f"{module}_ACM{acm}_{itype}" if not module.startswith("ACM") else f"ACM{acm}_{itype}"
+        if redo is not None and not any(p in redo for p in files) and os.path.exists(os.path.join(base, name, "group.json")):
+            lines.append(f"  {name}: {len(files)} image(s), no new image: kept")
+            continue
         d = os.path.join(base, name)
         os.makedirs(d, exist_ok=True)
         log(f"  defects {name}: {len(files)} image(s)")
@@ -302,12 +308,14 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
         except Exception as e:                             # the scripts failed: report, the defect log still follows
             sys.argv = old if "old" in dir() else sys.argv
             script_note = f"Image_4 not run: {type(e).__name__}: {e}"
+        with fits.open(files[0]) as hh:                    # CCD extensions of this ACM (usually 4)
+            nch = sum(1 for h in hh[1:] if h.data is not None and np.ndim(h.data) == 2)
         try:
             with redirect_stdout(out):
-                subs = [[] for _ in range(4)]
+                subs = [[] for _ in range(nch)]
                 for p in files:
                     with fits.open(p) as hd:
-                        for ch in range(4):
+                        for ch in range(nch):
                             raw = np.array(hd[ch + 1].data, float)
                             if has_ovs:
                                 subs[ch].append(I4.subtract_pedestal(raw))
@@ -325,7 +333,8 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
         tabs = [dict(id="map", label="Defect map", kind="defects", per={}, logs={})]     # one viewer, the CCDs as frames
         ccd_list = []
         csv_rows = []
-        for ch in range(4):
+        group_ccds = []
+        for ch in range(nch):
             ext = ch + 1
             ccd = h0.get(f"CH{ch}") or f"ch{ch}"
             mask, rows, finfo = find_defects(comps[ch], float(noises[ch]), subs[ch], geo, nsig)
@@ -364,6 +373,9 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
                 vmask = vmask[:h2, :w2].reshape(h2 // 2, 2, w2 // 2, 2).max(axis=(1, 3))
                 dec *= 2
             counts = {t: sum(1 for r in rows if r[0] == t) for t, _ in TYPES}
+            group_ccds.append(dict(ext=f"EXT{ext}", ccd=ccd, counts=counts, noise_adu=float(noises[ch]),
+                                   hot_rule=bool(finfo["need"]), cold_rule=bool(finfo["need_lo"]),
+                                   columns_confirmed=finfo.get("col_kept"), columns_candidates=finfo.get("col_cand")))
             shown = sorted(rows, key=lambda r: -abs(r[4]))[:1500]
             key = f"ACM{acm}_EXT{ext}"
             ccd_list.append(dict(key=key, label=f"EXT{ext} · {ccd}"))
@@ -404,10 +416,67 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
                         "value_adu", "seen_in"])
             w.writerows(csv_rows)
         size = PR.write_page(os.path.join(d, "defect_map.html"), name, f"{module} · ACM {acm} · {itype} · defect map",
-                             f"defect map (run_superWADERs --defect-map), {len(files)} image(s)", tabs, ccd_list)
-        nums = [[f"EXT{c + 1}", ", ".join(f"{t}: {sum(1 for r in csv_rows if r[2] == c + 1 and r[5] == t)}" for t, _ in TYPES)] for c in range(4)]
+                             f"defect map (run_superWADERs --defect-map), {len(files)} image(s)", tabs, ccd_list,
+                             back="../index.html")
+        nums = [[f"EXT{c + 1}", ", ".join(f"{t}: {sum(1 for r in csv_rows if r[2] == c + 1 and r[5] == t)}" for t, _ in TYPES)] for c in range(nch)]
+        import json
+        from datetime import datetime as _dt
+        with open(os.path.join(d, "group.json"), "w") as fh:
+            json.dump(dict(name=name, module=module, acm=int(acm) if acm else 0, image_type=itype, kinds=kinds,
+                           images=[os.path.basename(p) for p in files], ccds=group_ccds, page=f"{name}/defect_map.html",
+                           note=script_note, made=_dt.now().isoformat(timespec="seconds")), fh, indent=1)
         index.append((module, acm, itype, "4 CCDs", os.path.join(name, "defect_map.html"), [t["label"] for t in tabs], nums, size, []))
         lines.append(f"  {name}: {len(files)} image(s) ({', '.join(kinds)}), {len(csv_rows)} defects (defects.csv, defect_map.html"
                      + (", Image_4 PNG + log)" if not script_note else f"); {script_note}"))
-    PR.write_index(base, index, "Defect maps")
+    if write_index:
+        PR.write_index(base, index, "Defect maps")
     return lines
+
+
+FIELDS = {"bright_columns": ("bright columns", ""), "dark_columns": ("dark columns", ""), "hot_pixels": ("hot-pixel spots", ""),
+          "cold_pixels": ("cold-pixel spots", ""), "images": ("images in the composite", ""), "noise_adu": ("noise", "ADU"),
+          "group": ("group (ACM, size, binning)", ""), "columns_candidates": ("Image_4 composite columns", ""),
+          "columns_confirmed": ("of them confirmed in the single images", "")}
+
+
+def overview(camp, crit, path, back):
+    """defects/index.html from every defects/<group>/group.json: one view per image size (group type), one row per
+    CCD. Returns the views."""
+    import json
+    import campaign as CA
+    sec = CA.section(crit, "defects")
+    views = {}
+    for gj in sorted(glob.glob(os.path.join(os.path.dirname(path), "*", "group.json"))):
+        g = json.load(open(gj))
+        for c in g["ccds"]:
+            n = c["counts"]
+            v = dict(bright_columns=n.get("bright column", 0), dark_columns=n.get("dark column", 0),
+                     hot_pixels=n.get("hot pixel", 0), cold_pixels=n.get("cold pixel", 0), images=len(g["images"]),
+                     noise_adu=c.get("noise_adu"), group=g["name"], columns_candidates=c.get("columns_candidates"),
+                     columns_confirmed=c.get("columns_confirmed"))
+            flags = []
+            if not c.get("hot_rule"):
+                flags.append(("not_identifiable", "warn", f"hot pixels not identifiable: {len(g['images'])} image(s) too "
+                                                          f"{'few' if len(g['images']) < 2 else 'busy'} for the persistence rule",
+                              "hot pixels not identifiable (too few / busy images)"))
+            verdict, reasons, levels = CA.judge(v, sec, flags)
+            views.setdefault(g["image_type"], []).append(dict(
+                module=g["module"], acm=g["acm"], ext=c["ext"], ccd=c["ccd"], verdict=verdict, reasons=reasons, levels=levels,
+                values=v, when=g.get("made", ""), links=[["defect map", g["page"]]]))
+    out = [dict(name=k, ccds=v, note=f"images of {k}") for k, v in sorted(views.items())]
+    CA.write_overview(path, dict(
+        title="Defect maps", sub=CA.sub_line(camp), back=back, criteria=sec,
+        fields={k: dict(label=a, unit=b) for k, (a, b) in FIELDS.items()},
+        sections=[["Defects", ["bright_columns", "dark_columns", "hot_pixels", "cold_pixels"]],
+                  ["Composite", ["images", "noise_adu", "columns_candidates", "columns_confirmed", "group"]]],
+        cell=["bright_columns", "hot_pixels"], views=out,
+        columns=["bright_columns", "dark_columns", "hot_pixels", "cold_pixels", "images", "noise_adu", "group"],
+        definitions=[("composite", "Median of all images of one ACM with the same size and binning (any type / skips)."),
+                     ("columns", "Bright / dark columns: Image_4's rule on the composite, kept when also bright / dark in "
+                                 "enough single images; adjacent columns are one defect."),
+                     ("hot / cold pixels", "Spots above / below the local level by > --defect-sigma x the spread, present "
+                                           "in enough images that chance coincidences are unlikely (< 0.1 per CCD)."),
+                     ("defect map", "The composite with the defects marked, the defect list, Image_4's figure and log "
+                                    "(defects/<group>/defect_map.html); defects.csv per group.")],
+        flag_labels={"not_identifiable": "hot pixels not identifiable"}, csv_name="defects_overview"))
+    return out

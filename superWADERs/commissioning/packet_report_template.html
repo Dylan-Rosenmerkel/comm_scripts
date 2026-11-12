@@ -687,6 +687,11 @@ const HELP = `<h2 style="margin-top:0">How to use this report</h2>
 (async function () {
   document.title = D.title; document.getElementById("title").textContent = D.title;
   document.getElementById("ident").textContent = D.ident;
+  if (D.back) {                                   // link back to the tool's overview (module x CCD grid)
+    const a = document.createElement("a"); a.href = D.back; a.textContent = "← overview of all modules";
+    a.style.cssText = "display:inline-block;margin:2px 0 4px;color:#2f6fde;text-decoration:none;font-size:13px";
+    document.getElementById("title").before(a);
+  }
   const R = { overview: overviewTab, trace: each(traceTab), psd: psdTab, summary: imageSummaryTab, image: imageTab, defects: defectsTab, figure: each(figureTab), plots: plotsTab };
   for (const tb of D.tabs) addTab(tb, (t, items) => R[tb.kind](t, items));
   const sp = el("span", "sp"); nav.appendChild(sp);

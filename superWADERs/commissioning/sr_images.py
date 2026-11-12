@@ -47,23 +47,41 @@ def find_streaks(img, active, thr, min_len=3, max_neighbour=0.2):
     return out
 
 
-def run(images, summaries, out_dir, mods_of, meta_of, thr_sigma=4.0, min_len=3, autoconfig_args=(), log=print):
-    """--sr on the run's images (native summaries with keep_arrays). Returns summary lines."""
-    import csv
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
+def image_part(path, s, geo, meta, thr_sigma=4.0, min_len=3, fit_cards=None):
+    """--sr on one image (native summary s with keep_arrays): per CCD the streaks and the numbers of the SR page; the
+    image itself only encoded for the page (no raw arrays). Stored in the campaign's image record. Returns {ext: item}."""
     import native_pipeline as NP
     import packet_report as PR
-    plt.rcParams["text.usetex"] = False
-    d = os.path.join(out_dir, "sr")
-    os.makedirs(d, exist_ok=True)
-    per_ccd, rows_csv, sum_csv = {}, [], []
+    out = {}
+    for ext, c in s["ccds"].items():
+        if "ps" not in c:
+            continue
+        n = int(ext[3:])
+        ps, g = c["ps"], c["gain"]
+        active, _ = NP.regions(ps.shape, geo)
+        resolved = bool(c.get("resolved")) and c["noise_e"] < 0.35
+        img, unit = (ps / g, "e-") if resolved else (ps, "ADU")
+        noise = c["noise_e"] if resolved else float(np.nanmedian(c["sig_row"]))
+        thr = thr_sigma * noise if not resolved else max(thr_sigma * noise, 1.5)
+        st = find_streaks(img, active, thr, min_len)
+        out[ext] = dict(image=os.path.basename(path), ccd=meta.get(f"CH{n - 1}") or f"ch{n - 1}", shape=list(img.shape),
+                        pixels=PR.enc(img), unit=unit, thr=float(thr), streaks=[list(r) for r in st],
+                        lam_rows=c.get("lam_rows"), dc=c["dc_e"], noise=float(noise), rows=int(ps.shape[0]),
+                        noise_e=c["noise_e"], gain=g, gain_err=c.get("gain_err"), lam01=c.get("lam01"), resolved=resolved,
+                        fit=(fit_cards or {}).get(n), thr_sigma=thr_sigma, min_len=min_len)
+    return out
+
+
+def run(images, summaries, out_dir, mods_of, meta_of, thr_sigma=4.0, min_len=3, autoconfig_args=(), log=print):
+    """--sr on images without a campaign (fits them here if summaries has no arrays). Returns summary lines."""
+    import native_pipeline as NP
+    import packet_report as PR
+    per_ccd = {}
     for p in images:
         log(f"  sr {os.path.basename(p)}")
         s = (summaries or {}).get(p) or NP.process_image(p, os.devnull, outputs=[], write=False, keep_arrays=True,
                                                           all_ext=True, verbose=False, autoconfig_args=autoconfig_args)
-        try:                                     # the dark-current fit of every CCD: histogram + model, numbers, profiles
+        try:
             fit_cards = {n: summ for n, (summ, _, _) in PR.image_data(p, autoconfig_args, s)[0].items()}
         except Exception as e:                   # the page is still made without this image's fit plots
             log(f"  sr: no fit plots for {os.path.basename(p)} ({type(e).__name__}: {e})")
@@ -71,27 +89,32 @@ def run(images, summaries, out_dir, mods_of, meta_of, thr_sigma=4.0, min_len=3, 
         m = meta_of(p)
         acm = int(m.get("ACMID") or PR.acm_of(p) or 0)
         geo = NP.read_image(p, autoconfig_args)["geo"]
-        for ext, c in s["ccds"].items():
-            if "ps" not in c:
-                continue
-            n = int(ext[3:])
-            ps, g = c["ps"], c["gain"]
-            active, _ = NP.regions(ps.shape, geo)
-            resolved = bool(c.get("resolved")) and c["noise_e"] < 0.35
-            img, unit = (ps / g, "e-") if resolved else (ps, "ADU")
-            noise = c["noise_e"] if resolved else float(np.nanmedian(c["sig_row"]))
-            thr = thr_sigma * noise if not resolved else max(thr_sigma * noise, 1.5)
-            st = find_streaks(img, active, thr, min_len)
-            ccd = m.get(f"CH{n - 1}") or f"ch{n - 1}"
-            per_ccd.setdefault((acm, n, ccd), []).append(dict(image=os.path.basename(p), img=img, unit=unit, thr=thr, streaks=st,
-                                                              lam_rows=c.get("lam_rows"), dc=c["dc_e"], noise=noise, rows=ps.shape[0],
-                                                              noise_e=c["noise_e"], gain=g, gain_err=c.get("gain_err"),
-                                                              lam01=c.get("lam01"), resolved=resolved, fit=fit_cards.get(n)))
+        for ext, it in image_part(p, s, geo, m, thr_sigma, min_len, fit_cards).items():
+            per_ccd.setdefault((acm, int(ext[3:]), it["ccd"]), []).append(it)
+    return render(per_ccd, out_dir, mods_of, thr_sigma, min_len)[0]
+
+
+def render(per_ccd, out_dir, mods_of, thr_sigma=4.0, min_len=3):
+    """sr/: sr_streaks.csv, sr_summary.csv, a PNG and a page per module, from the image parts of every CCD
+    (per_ccd: {(acm, ext number, ccd name): [image_part items in time order]}). Returns (summary lines, overview
+    rows: one per CCD with its numbers and its page)."""
+    import csv
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import packet_report as PR
+    plt.rcParams["text.usetex"] = False
+    d = os.path.join(out_dir, "sr")
+    os.makedirs(d, exist_ok=True)
+    rows_csv, sum_csv = [], []
+    for (acm, n, ccd), items in sorted(per_ccd.items()):
+        for it in items:
+            st = it["streaks"]
             for r in st:
-                rows_csv.append([mods_of(acm, n, ccd), acm, n, ccd, os.path.basename(p), *r[:4], f"{r[4]:.4g}", f"{r[5]:.4g}", unit])
-            sum_csv.append([mods_of(acm, n, ccd), acm, n, ccd, os.path.basename(p), ps.shape[0], len(st),
-                            f"{1000 * len(st) / max(ps.shape[0], 1):.3g}", f"{np.median([r[3] for r in st]) if st else 0:.3g}",
-                            f"{c['dc_e']:.4g}", f"{thr:.3g} {unit}"])
+                rows_csv.append([mods_of(acm, n, ccd), acm, n, ccd, it["image"], *r[:4], f"{r[4]:.4g}", f"{r[5]:.4g}", it["unit"]])
+            sum_csv.append([mods_of(acm, n, ccd), acm, n, ccd, it["image"], it["rows"], len(st),
+                            f"{1000 * len(st) / max(it['rows'], 1):.3g}", f"{np.median([r[3] for r in st]) if st else 0:.3g}",
+                            f"{it['dc']:.4g}", f"{it['thr']:.3g} {it['unit']}"])
     with open(os.path.join(d, "sr_streaks.csv"), "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["module", "acm", "ext", "ccd", "image", "read_row", "col_first", "col_last", "length", "sum", "peak", "unit"])
@@ -101,6 +124,7 @@ def run(images, summaries, out_dir, mods_of, meta_of, thr_sigma=4.0, min_len=3, 
         w.writerow(["module", "acm", "ext", "ccd", "image", "reads", "streaks", "streaks_per_1000_reads", "median_length",
                     "dc_fit_e_per_pix", "threshold"])
         w.writerows(sum_csv)
+    ov = []
     lines = [f"serial-register images (--sr; streaks = runs >= {min_len} pixels > {thr_sigma} x noise along a read, confined "
              f"to it; {d}/):"]
     modules = {}                         # module -> [(acm, ext, ccd, tabs, streaks)]: one page per module
@@ -175,24 +199,65 @@ def run(images, summaries, out_dir, mods_of, meta_of, thr_sigma=4.0, min_len=3, 
                          log=[f"{it['image']}: dark-current fit (native engine: pedestal, comb fit, gain choice of gain_dc_split)"
                               for it in items]))
         for k, it in enumerate(items):
-            mask = np.zeros(it["img"].shape, np.uint8)
+            mask = np.zeros(tuple(it["shape"]), np.uint8)
             for r in it["streaks"]:
                 mask[r[0], r[1]:r[2] + 1] = 1
             tabs.append(dict(id=f"img{k}", label=f"image {k + 1}", kind="defects", log=[it["image"]], data=dict(
-                title=f"{it['image']}: streaks marked", unit=it["unit"], w=int(it["img"].shape[1]), h=int(it["img"].shape[0]),
-                pixels=PR.enc(it["img"]), mask=PR.enc(mask, "u1"), types=[dict(name="streak", color="#ff3b30", n=len(it["streaks"]))],
+                title=f"{it['image']}: streaks marked", unit=it["unit"], w=int(it["shape"][1]), h=int(it["shape"][0]),
+                pixels=it["pixels"], mask=PR.enc(mask, "u1"), types=[dict(name="streak", color="#ff3b30", n=len(it["streaks"]))],
                 defects=None, numbers=[["streaks", str(len(it["streaks"]))], ["reads", str(it["rows"])],
                                        ["threshold", f"{it['thr']:.3g} {it['unit']}"]])))
         nst = sum(len(it["streaks"]) for it in items)
         modules.setdefault(mod, []).append((acm, n, ccd, tabs, nst))
         lines.append(f"  {mod} ACM {acm} EXT{n} {ccd}: {nst} streaks in {len(items)} image(s)")
-    index = []
+        reads = sum(it["rows"] for it in items)
+        res = [it for it in items if it["resolved"]]
+        ov.append(dict(module=mod, acm=acm, ext=f"EXT{n}", ccd=ccd, values=dict(
+            images=len(items), streaks=nst, reads=reads, streaks_per_1000_reads=1000 * nst / max(reads, 1),
+            median_length=float(np.median([r[3] for r in allst])) if allst else None,
+            read_noise_e=float(np.median([it["noise_e"] for it in res])) if res else None,
+            dc_median=float(np.median([it["dc"] for it in res])) if res else None,
+            gain_median=float(np.median([it["gain"] for it in items])), last_image=items[-1]["image"]),
+            history=[[it["image"], it["rows"], len(it["streaks"]), 1000 * len(it["streaks"]) / max(it["rows"], 1),
+                      it["noise_e"] if it["resolved"] else None, it["dc"] if it["resolved"] else None] for it in items]))
     for mod, its in sorted(modules.items()):
         rid, name, ccds, tabs = PR.module_page(mod, [it[:4] for it in its])
-        size = PR.write_page(os.path.join(d, rid + "_sr.html"), rid + "_sr", f"{name} · serial register",
-                             "serial-register images (run_superWADERs --sr)", tabs, ccds)
-        index.append((mod, ", ".join(sorted({str(a) for a, *_ in its})), ", ".join(f"EXT{e}" for _, e, *_ in its),
-                      ", ".join(c for _, _, c, *_ in its), rid + "_sr.html", [t["label"] for t in tabs],
-                      [[f"EXT{e} streaks", str(k)] for _, e, _, _, k in its], size, []))
-    PR.write_index(d, index, "Serial-register images")
-    return lines
+        PR.write_page(os.path.join(d, rid + "_sr.html"), rid + "_sr", f"{name} · serial register",
+                      "serial-register images (run_superWADERs --sr)", tabs, ccds, back="index.html")
+        for r in ov:
+            if r["module"] == mod:
+                r["page"] = rid + "_sr.html"
+    return lines, ov
+
+
+FIELDS = {"images": ("images", ""), "streaks": ("streaks", ""), "reads": ("reads", ""),
+          "streaks_per_1000_reads": ("streaks per 1000 reads", ""), "median_length": ("median streak length", "pixels"),
+          "read_noise_e": ("read noise (median)", "e-"), "dc_median": ("dark charge per image (median)", "e-/pix"),
+          "gain_median": ("gain (median)", "ADU/e-"), "last_image": ("last image", "")}
+
+
+def overview(camp, rows, crit, path, back):
+    """sr/index.html: the module x CCD overview of the serial-register images. Returns the view."""
+    import campaign as CA
+    sec = CA.section(crit, "sr")
+    for r in rows:
+        r["verdict"], r["reasons"], r["levels"] = CA.judge(r["values"], sec)
+        r["links"] = [["module page", r["page"]]] if r.get("page") else []
+        r["history"] = dict(head=["image", "reads", "streaks", "per 1000 reads", "noise [e-]", "DC [e-/pix]"],
+                            rows=r.pop("history")) if isinstance(r.get("history"), list) and len(r["history"]) > 1 else None
+    view = dict(name="serial-register images", ccds=rows)
+    CA.write_overview(path, dict(
+        title="Serial-register images", sub=CA.sub_line(camp), back=back, criteria=sec,
+        fields={k: dict(label=a, unit=b) for k, (a, b) in FIELDS.items()},
+        sections=[["Streaks", ["streaks", "streaks_per_1000_reads", "median_length", "reads", "images"]],
+                  ["Fits", ["read_noise_e", "dc_median", "gain_median", "last_image"]]],
+        cell=["streaks_per_1000_reads", "read_noise_e"], views=[view],
+        columns=["images", "reads", "streaks", "streaks_per_1000_reads", "median_length", "read_noise_e", "dc_median",
+                 "gain_median", "last_image"],
+        definitions=[("streak", "A run of >= min-length pixels above threshold x noise along one read (row) of the "
+                                "serial register, with at most 20 % of the pixels above / below it lit: a readout "
+                                "artifact, not a particle track."),
+                     ("module page", "Per module: diagnostics per image, the dark-current fits and every image with its "
+                                     "streaks marked (sr/<module>_..._sr.html).")],
+        csv_name="sr_overview"))
+    return view

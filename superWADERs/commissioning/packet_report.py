@@ -334,68 +334,124 @@ def classify(paths):
     return out
 
 
+def file_items(path, kind):
+    """The packet items of one level-0 trace or PSD trace: [dict(kind, acm, ext, ccd, file, res, log)] (one channel;
+    [] when the channel was not recorded; an item with 'error' when it failed)."""
+    meta = meta_or_header(path)
+    ch = int(RD.RAW_RE.search(path).group(1))
+    acm = meta.get("ACMID") or acm_of(path)
+    try:
+        res = (trace_data if kind == "trace" else psd_data)(path, meta)
+    except Exception as e:                          # report and go on
+        return [dict(kind=kind, file=os.path.basename(path), error=f"{type(e).__name__}: {e}")]
+    if res is None:
+        return []
+    return [dict(kind=kind, acm=int(acm or 0), ext=ch + 1, ccd=meta.get(f"CH{ch}"), file=os.path.basename(path),
+                 res=res[0], log=res[1])]
+
+
+def image_numbers(s, meta):
+    """{ext number: numbers of the packet overview} of one image's native summary s."""
+    nsk = int(meta.get("NDCM", meta.get("NSKIPS", 1)) or 1)
+    out = {}
+    for ext, c in s["ccds"].items():
+        if "gain" not in c:
+            out[int(ext[3:])] = dict(nskips=nsk, status=c.get("skipped") or "not processed")
+            continue
+        resolved = bool(c.get("resolved")) and c["noise_e"] < 0.35
+        out[int(ext[3:])] = dict(nskips=nsk, resolved=resolved, gain=c["gain"], noise_e=c["noise_e"],
+                                 noise_adu=(c.get("sigma0_e") or 0) * c["gain"], dc_e=c["dc_e"] if resolved else None,
+                                 role=image_role(meta, ""))
+    return out
+
+
+def image_items(path, meta, per_ext, numbers, char=None):
+    """The packet items of one averaged image from image_data's {ext number: (summary, viewer, log)} and
+    image_numbers(): one per CCD. char: the front end's record of the image (quiet channels)."""
+    acm = meta.get("ACMID") or acm_of(path)
+    out = []
+    for n, (summ, view, log) in per_ext.items():
+        ch = (((char or {}).get("ccds") or {}).get(f"EXT{n}") or {}).get("channel", {}).get("value")
+        out.append(dict(kind="image", acm=int(acm or 0), ext=n, ccd=meta.get(f"CH{n - 1}"), file=os.path.basename(path),
+                        res=[summ, view, log], num=dict(numbers.get(n, {}), channel=ch)))
+    return out
+
+
 def build(paths, out_dir, module_list=None, autoconfig_args=(), log=print, mods_of=None):
-    """Reports of every CCD in the packet files paths -> out_dir/packet/. mods_of(acm, ext, ccd) -> module name
-    (default: from the module_list file). Returns summary lines."""
-    pdir = os.path.join(out_dir, "packet")
-    os.makedirs(pdir, exist_ok=True)
+    """Reports of every CCD in the packet files paths -> out_dir/packet/ (without a campaign: everything made here;
+    images without the characterisation front end). mods_of(acm, ext, ccd) -> module name (default: from the
+    module_list file). Returns summary lines."""
     mods = read_module_list(module_list)
     if mods_of is None:
         mods_of = lambda acm, ext, ccd: module_for(mods, acm, ext, ccd)
     cls = classify(paths)
-    lines = [f"commissioning packet: {len(paths)} file(s): {len(cls['trace'])} trace, {len(cls['psd'])} psd, "
-             f"{len(cls['image'])} image, {len(cls['l1'])} level-1 channel file(s)"
-             + (f", not used: {len(cls['other'])} ({', '.join(os.path.basename(p) for p in cls['other'][:4])})" if cls["other"] else "")]
+    items, pre = [], []
     if cls["l1"]:
         made, ls = RD.convert_l1(cls["l1"], "all", 0, os.path.join(out_dir, "L1"))
         cls["image"] += made
-        lines += ls
-    ccds = {}                                   # (acm, ext) -> dict(traces, psds, images, names)
-
-    def slot(acm, ext):
-        return ccds.setdefault((acm, ext), dict(traces=[], psds=[], images=[], ccd=None, files=[]))
-
+        pre += ls
     for kind in ("trace", "psd"):
         for p in sorted(cls[kind]):
-            meta = meta_or_header(p)
-            ch = int(RD.RAW_RE.search(p).group(1))
-            acm = meta.get("ACMID") or acm_of(p)
             log(f"  {kind} {os.path.basename(p)}")
-            try:
-                res = (trace_data if kind == "trace" else psd_data)(p, meta)
-            except Exception as e:                  # report and go on
-                lines.append(f"  {os.path.basename(p)}: FAILED ({type(e).__name__}: {e})")
-                continue
-            if res is None:
-                continue                            # this channel was not recorded
-            s = slot(int(acm), ch + 1)
-            s["ccd"] = s["ccd"] or meta.get(f"CH{ch}")
-            s["traces" if kind == "trace" else "psds"].append(res)
-            s["files"].append([kind, os.path.basename(p)])
+            items += file_items(p, kind)
     for p in sorted(cls["image"]):
         log(f"  image {os.path.basename(p)}")
         try:
-            per_ext, meta = image_data(p, autoconfig_args)
+            import native_pipeline as NP
+            s = NP.process_image(p, os.devnull, outputs=[], write=False, keep_arrays=True, all_ext=True, verbose=False,
+                                 autoconfig_args=autoconfig_args)
+            per_ext, meta = image_data(p, autoconfig_args, s)
         except Exception as e:                      # report and go on
-            lines.append(f"  {os.path.basename(p)}: FAILED ({type(e).__name__}: {e})")
+            items.append(dict(kind="image", file=os.path.basename(p), error=f"{type(e).__name__}: {e}"))
             continue
-        acm = meta.get("ACMID") or acm_of(p)
-        for n, res in per_ext.items():
-            s = slot(int(acm), n)
-            s["ccd"] = s["ccd"] or meta.get(f"CH{n - 1}")
-            s["images"].append(res)
-            s["files"].append(["image", os.path.basename(p)])
-    pages = {}                                  # module -> [(acm, ext, ccd, tabs, first image numbers, files)]
+        items += image_items(p, meta, per_ext, image_numbers(s, meta))
+    lines, _ = render(items, out_dir, mods_of, n_files=len(paths), classes=cls)
+    return lines[:1] + pre + lines[1:]
+
+
+def render(items, out_dir, mods_of, n_files=None, classes=None):
+    """packet/: one page per module and the overview rows, from every packet item (file_items, image_items) of the
+    campaign. Returns (summary lines, overview rows: one per CCD)."""
+    pdir = os.path.join(out_dir, "packet")
+    os.makedirs(pdir, exist_ok=True)
+    nk = lambda k: sum(1 for it in items if it.get("kind") == k)
+    lines = [f"commissioning packet: {len({it.get('file') for it in items})} file(s) with data: {nk('trace')} trace, "
+             f"{nk('psd')} psd, {len({it['file'] for it in items if it.get('kind') == 'image'})} image(s)"
+             + (f", not used: {len(classes['other'])} ({', '.join(os.path.basename(p) for p in classes['other'][:4])})"
+                if classes and classes.get("other") else "")]
+    lines += [f"  {it['file']}: FAILED ({it['error']})" for it in items if it.get("error")]
+    ccds = {}                                   # (acm, ext) -> dict(traces, psds, images, names, numbers)
+
+    def slot(acm, ext):
+        return ccds.setdefault((acm, ext), dict(traces=[], psds=[], images=[], ccd=None, files=[], nums=[], flags=[]))
+
+    for it in items:
+        if it.get("error"):
+            continue
+        s = slot(it["acm"], it["ext"])
+        s["ccd"] = s["ccd"] or it.get("ccd")
+        if it["kind"] in ("trace", "psd"):
+            s["traces" if it["kind"] == "trace" else "psds"].append((it["res"], it["log"]))
+            s["files"].append([it["kind"], it["file"]])
+            if it["kind"] == "trace":
+                for row in it["res"]["numbers"]:
+                    if len(row) > 2 and row[2]:
+                        s["flags"].append(("trace_sums" if row[0].startswith("inline") else "trace", row[0], row[1], it["file"]))
+        else:
+            s["images"].append(tuple(it["res"]))
+            s["files"].append(["image", it["file"]])
+            s["nums"].append(dict(it.get("num") or {}, file=it["file"]))
+    pages, ov = {}, []                          # module -> [(acm, ext, ccd, tabs, first image numbers, files)]
     for (acm, ext), s in sorted(ccds.items()):
         ccd = s["ccd"] or f"ch{ext - 1}"
         module = mods_of(acm, ext, ccd)
         rid = f"{module}_ACM{acm}_EXT{ext}_{ccd}"
         tabs = []
-        ov = [["module", module], ["ACM", str(acm)], ["extension", f"EXT{ext} (channel {ext - 1})"], ["CCD", ccd],
-              ["traces", str(len(s["traces"]))], ["PSD traces", str(len(s["psds"]))], ["images", str(len(s["images"]))]]
+        ov_rows = [["module", module], ["ACM", str(acm)], ["extension", f"EXT{ext} (channel {ext - 1})"], ["CCD", ccd],
+                   ["traces", str(len(s["traces"]))], ["PSD traces", str(len(s["psds"]))], ["images", str(len(s["images"]))]]
         for summ, _, _ in s["images"]:
-            ov += [[f"{summ['role']}", "; ".join(f"{k} {v}" for k, v, *_ in summ["numbers"][2:5])]]
-        tabs.append(dict(id="overview", label="Overview", kind="overview", numbers=ov, files=s["files"],
+            ov_rows += [[f"{summ['role']}", "; ".join(f"{k} {v}" for k, v, *_ in summ["numbers"][2:5])]]
+        tabs.append(dict(id="overview", label="Overview", kind="overview", numbers=ov_rows, files=s["files"],
                          log=[f"report {rid}", f"module {module} (module list, --module, folder name; ACM<id> if none)"]))
         for k, (tr, lg) in enumerate(s["traces"]):
             tabs.append(dict(id=f"trace{k}", label="Trace" + (f" {k + 1}" if len(s["traces"]) > 1 else ""), kind="trace",
@@ -413,22 +469,97 @@ def build(paths, out_dir, module_list=None, autoconfig_args=(), log=print, mods_
                 tabs.append(dict(id=f"image_{slug}", label=f"{short}: image", kind="image", data=view, log=lg))
         first = next((a for a, _, _ in s["images"] if a["numbers"][0][0] == "image"), None)
         pages.setdefault(module, []).append((acm, ext, ccd, tabs, first["numbers"][2:4] if first else [], s["files"]))
-    index = []
-    for module, items in sorted(pages.items()):
-        rid, name, ccd_list, tabs = module_page(module, [it[:4] for it in items])
+        ov.append(dict(module=module, acm=acm, ext=f"EXT{ext}", ccd=ccd, values=_packet_values(s), flags=s["flags"],
+                       nums=s["nums"], files=sorted({f for _, f in s["files"]})))
+    for module, its in sorted(pages.items()):
+        rid, name, ccd_list, tabs = module_page(module, [it[:4] for it in its])
         path = os.path.join(pdir, rid + ".html")
-        nfiles = len({f[1] for it in items for f in it[5]})
-        size = write_page(path, rid, f"{name} · {len(items)} CCD(s)",
-                          f"commissioning packet report (run_superWADERs --packet), {nfiles} file(s)", tabs, ccd_list)
-        index.append((module, ", ".join(sorted({str(a) for a, *_ in items})), ", ".join(f"EXT{e}" for _, e, *_ in items),
-                      ", ".join(c for _, _, c, *_ in items), os.path.basename(path), [tb["label"] for tb in tabs[1:]],
-                      [[f"EXT{e} " + str(k), v] for _, e, _, _, nums, _ in items for k, v, *_ in nums], size,
-                      [tb["label"] for tb in tabs if tb.get("flagged")]))
+        nfiles = len({f[1] for it in its for f in it[5]})
+        write_page(path, rid, f"{name} · {len(its)} CCD(s)",
+                   f"commissioning packet report (run_superWADERs --packet), {nfiles} file(s)", tabs, ccd_list, back="index.html")
+        for r in ov:
+            if r["module"] == module:
+                r["page"] = rid + ".html"
         lines.append(f"  {rid}: CCDs {', '.join(c['label'] for c in ccd_list)}; {', '.join(t['label'] for t in tabs)}  "
                      f"({os.path.getsize(path) / 1e6:.1f} MB)")
-    write_index(pdir, index, "Commissioning packet: module reports")
-    lines.append(f"  index: {os.path.join(pdir, 'index.html')}")
-    return lines
+    lines.append(f"  overview: {os.path.join(pdir, 'index.html')}")
+    return lines, ov
+
+
+def _packet_values(s):
+    """Numbers of one CCD of the packet overview: PSD sigmas (latest PSD trace), the image with the most skips
+    (resolved: gain, read noise, dark charge), the 1-skip image (single-skip noise in ADU)."""
+    v = {}
+    if s["psds"]:
+        f = s["psds"][-1][0]
+        v.update(psd_sigma_adu=f["sigma_adu"], psd_sigma_cds_adu=f["sigma_cds"])
+    v["traces"], v["psd_traces"], v["images"] = len(s["traces"]), len(s["psds"]), len(s["images"])
+    ims = [n for n in s["nums"] if "gain" in n]
+    res = [n for n in ims if n.get("resolved")]
+    if res:
+        b = max(res, key=lambda n: n["nskips"])
+        v.update(read_noise_e=b["noise_e"], gain=b["gain"], dc_e_per_pix=b["dc_e"], resolved_image=b["file"],
+                 resolved_skips=b["nskips"])
+    elif ims:                                   # no resolved image: the noise of the one with the most skips (judged
+        b = max(ims, key=lambda n: n["nskips"])  # in overview() when it has enough skips to resolve the peaks)
+        v.update(_unresolved_noise_e=b["noise_e"], _unresolved_skips=b["nskips"], _unresolved_image=b["file"])
+    one = [n for n in ims if n["nskips"] == 1]
+    if one:
+        v.update(noise_single_adu=one[-1]["noise_adu"], single_image=one[-1]["file"])
+    return v
+
+
+FIELDS = {"read_noise_e": ("read noise (image with the most skips)", "e-"), "gain": ("gain", "ADU/e-"),
+          "dc_e_per_pix": ("dark charge", "e-/pix"), "resolved_image": ("image used", ""), "resolved_skips": ("its skips", ""),
+          "noise_single_adu": ("single-skip noise (1-skip image)", "ADU"), "single_image": ("1-skip image", ""),
+          "psd_sigma_adu": ("PSD sigma", "ADU"), "psd_sigma_cds_adu": ("PSD sigma CDS", "ADU"),
+          "traces": ("traces", ""), "psd_traces": ("PSD traces", ""), "images": ("images", "")}
+
+
+def overview(camp, rows, crit, path, back, expect_resolved=True):
+    """packet/index.html: the module x CCD overview of the packets. Returns the view."""
+    import campaign as CA
+    sec = CA.section(crit, "packet")
+    for r in rows:
+        flags = [(k, "warn", f"trace {f}: {lab} {val}", "trace quality" if k == "trace" else "trace sums differ")
+                 for k, lab, val, f in r.pop("flags", [])]
+        nums = r.pop("nums", [])
+        if any(n.get("channel") == "quiet" for n in nums):
+            flags.append(("channel", "fail", "no charge seen in an image (active region = overscan): a dead channel or an "
+                                             "ultra-low dark-charge CCD", "no charge seen (dead channel?)"))
+        ims = [n for n in nums if "gain" in n]
+        if ims and not any(n.get("resolved") for n in ims) and max(n["nskips"] for n in ims) >= \
+                int(crit.get("expect_resolved_min_skips", 100)):
+            flags.append(("unresolved", "warn", "electron peaks not resolved in any image with "
+                                                f">= {crit.get('expect_resolved_min_skips', 100)} skips", "peaks not resolved"))
+        un = {k: r["values"].pop(k) for k in list(r["values"]) if k.startswith("_unresolved")}
+        if un and un["_unresolved_skips"] >= int(crit.get("expect_resolved_min_skips", 100)):
+            r["values"].update(read_noise_e=un["_unresolved_noise_e"], resolved_image=un["_unresolved_image"] + " (not resolved; prior gain)",
+                               resolved_skips=un["_unresolved_skips"])
+        r["verdict"], r["reasons"], r["levels"] = CA.judge(r["values"], sec, flags)
+        r["links"] = [["module page", r.pop("page")]] if r.get("page") else []
+        files = r.pop("files", [])
+        r["history"] = dict(head=["file"], rows=[[f] for f in files]) if files else None
+    view = dict(name="commissioning packets", ccds=rows)
+    CA.write_overview(path, dict(
+        title="Commissioning packets", sub=CA.sub_line(camp), back=back, criteria=sec,
+        fields={k: dict(label=a, unit=b) for k, (a, b) in FIELDS.items()},
+        sections=[["Noise", ["read_noise_e", "noise_single_adu", "psd_sigma_adu", "psd_sigma_cds_adu"]],
+                  ["Fit", ["gain", "dc_e_per_pix", "resolved_image", "resolved_skips", "single_image"]],
+                  ["Files", ["traces", "psd_traces", "images"]]],
+        cell=["read_noise_e", "noise_single_adu"], views=[view],
+        columns=["read_noise_e", "gain", "dc_e_per_pix", "noise_single_adu", "psd_sigma_adu", "psd_sigma_cds_adu",
+                 "traces", "psd_traces", "images"],
+        definitions=[("read noise", "Width of the electron peaks [e-] in the packet's image with the most skips whose peaks "
+                                    "are resolved."),
+                     ("single-skip noise", "Pedestal noise [ADU] of the 1-skip image (mean over rows)."),
+                     ("PSD sigma / sigma CDS", "Noise of the latest PSD trace: rms of the samples, and of the difference "
+                                               "of consecutive windows of the CDS integration length [ADU]."),
+                     ("module page", "Overview, trace, PSD, the numbers and the image of every packet image "
+                                     "(packet/<module>_ACM<id>.html). History in the panel: the files of the CCD.")],
+        flag_labels={"trace": "trace quality problem", "trace_sums": "inline vs raw window sums differ",
+                     "channel": "no charge seen", "unresolved": "peaks not resolved"}, csv_name="packet_overview"))
+    return view
 
 
 def module_page(module, items):
@@ -454,7 +585,7 @@ def flagged(rows):
     return any(len(r) > 2 and r[2] for r in rows or [])
 
 
-def write_page(path, rid, title, ident, tabs, ccds=None):
+def write_page(path, rid, title, ident, tabs, ccds=None, back=None):
     """One self-contained report page (packet_report_template.html) with the given tabs; a tab gets the red dot when
     one of its numbers is flagged. ccds: the CCDs of a module page (module_page), for tabs with per-CCD data.
     Returns the file size."""
@@ -472,7 +603,7 @@ def write_page(path, rid, title, ident, tabs, ccds=None):
             tb["flagged"] = flagged(list(tb.get("numbers") or []) + nums_of(tb.get("data")))
     for c in ccds or []:
         c["flagged"] = [tb["label"] for tb in tabs if c["key"] in tb.get("flagged_ccds", [])]
-    page = dict(report_id=rid, title=title, ident=ident, tabs=tabs, ccds=ccds)
+    page = dict(report_id=rid, title=title, ident=ident, tabs=tabs, ccds=ccds, back=back)
     body = json.dumps(page, separators=(",", ":")).replace("</", "<\\/")
     body = re.sub(r"(?<=[:,\[])(-?Infinity|NaN)(?=[,\]}])", "null", body)     # JSON has no NaN
     with open(os.path.join(HERE, "packet_report_template.html")) as fh:

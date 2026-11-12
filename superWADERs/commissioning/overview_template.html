@@ -1,0 +1,134 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title><style>
+:root{--bg:#fbfbfa;--panel:#fff;--fg:#1c1d1f;--muted:#686a70;--line:#dedfe3;--pass:#2e9d5b;--warn:#d68a00;--fail:#d23f3f;--na:#9a9ca3;
+--passbg:#e5f4ea;--warnbg:#fbf0d9;--failbg:#fbe3e3;--nabg:#ececee;--accent:#2f6fde}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#141518;--panel:#1c1d21;--fg:#e9e9ec;--muted:#a1a3aa;--line:#33353b;
+--passbg:#173a26;--warnbg:#3d300f;--failbg:#431c1c;--nabg:#2a2b30;--accent:#6c9cf0}}
+:root[data-theme="dark"]{--bg:#141518;--panel:#1c1d21;--fg:#e9e9ec;--muted:#a1a3aa;--line:#33353b;--passbg:#173a26;--warnbg:#3d300f;--failbg:#431c1c;--nabg:#2a2b30;--accent:#6c9cf0}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 -apple-system,"Segoe UI",Helvetica,Arial,sans-serif}
+header{padding:18px 16px 8px;max-width:1280px;margin:auto}h1{font-size:20px;margin:0 0 4px}h2{font-size:16px;margin:28px 0 8px}
+main{max-width:1280px;margin:auto;padding:0 16px 40px}.muted{color:var(--muted)}.banner{background:var(--warnbg);border:1px solid var(--warn);border-radius:8px;padding:8px 12px;margin:10px 0}
+.crumbs{font-size:13px;margin-bottom:6px}.crumbs a{color:var(--accent);text-decoration:none;margin-right:12px}
+.kpis{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}.kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px;min-width:120px}
+.kpi b{display:block;font-size:22px}.kpi.pass b{color:var(--pass)}.kpi.warn b{color:var(--warn)}.kpi.fail b{color:var(--fail)}
+.tools{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin:10px 0}.tool{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px;text-decoration:none;color:var(--fg)}
+.tool:hover{border-color:var(--accent)}.tool b{display:block;margin-bottom:4px}
+nav{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--line);z-index:3}nav div{max-width:1280px;margin:auto;padding:6px 16px;display:flex;gap:14px;overflow-x:auto}
+nav a{color:var(--accent);text-decoration:none;white-space:nowrap}
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:16px}@media (max-width:900px){.layout{grid-template-columns:1fr}}
+.grid{width:100%;border-collapse:separate;border-spacing:3px;table-layout:fixed}.grid th{font-weight:600;text-align:left;font-size:12px;color:var(--muted);padding:2px 4px}.grid th:first-child{width:78px}
+.cell{border-radius:6px;padding:4px 6px;cursor:pointer;font-size:12px;line-height:1.25;border:2px solid transparent;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cell:hover,.cell.sel{border-color:var(--accent)}.pass{background:var(--passbg)}.warn{background:var(--warnbg)}.fail{background:var(--failbg)}.na{background:var(--nabg)}
+.cell .v{font-weight:700;text-transform:uppercase;font-size:10px;letter-spacing:.04em}.cell.pass .v{color:var(--pass)}.cell.warn .v{color:var(--warn)}.cell.fail .v{color:var(--fail)}.cell.na .v{color:var(--na)}
+.mod{font-weight:600;white-space:nowrap;padding-right:6px}.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;position:sticky;top:44px;max-height:calc(100vh - 60px);overflow:auto}
+.panel table{width:100%;border-collapse:collapse;font-size:13px}.panel td{padding:3px 0;border-bottom:1px solid var(--line);vertical-align:top}.panel td:last-child{text-align:right}
+.panel h4{margin:12px 0 2px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}.panel a{color:var(--accent)}
+.hist{overflow-x:auto}.hist table td,.hist table th{font-size:11px;padding:2px 6px 2px 0;text-align:left;white-space:nowrap}
+.reason{margin:3px 0;padding:4px 8px;border-radius:6px;font-size:13px}
+.issues{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}.issue{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.issue h3{font-size:14px;margin:0 0 6px}.chip{display:inline-block;padding:1px 7px;border-radius:10px;font-size:12px;margin:2px 3px 2px 0;cursor:pointer}
+.tchip{display:inline-block;width:auto;min-width:14px;padding:0 4px;border-radius:4px;font-size:10px;font-weight:700;margin-right:2px;text-align:center}
+.tchip.pass{color:var(--pass)}.tchip.warn{color:var(--warn)}.tchip.fail{color:var(--fail)}.tchip.na{color:var(--na)}
+.dists{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:12px}.dist{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.dist h3{font-size:13px;margin:0 0 2px}svg text{fill:var(--muted);font-size:10px}
+.xt{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}.xt table,.xtm{border-collapse:collapse;font-size:11px;width:100%}.xt td,.xt th,.xtm td,.xtm th{padding:2px 4px;text-align:right}
+.tbl{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px}.tbl table{border-collapse:collapse;font-size:12px;white-space:nowrap}
+.tbl th{position:sticky;top:0;background:var(--panel);cursor:pointer;text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}.tbl td{padding:4px 8px;border-bottom:1px solid var(--line)}
+input,select,button{font:inherit;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--fg)}button{cursor:pointer}
+.defs dt{font-weight:600;margin-top:8px}.defs dd{margin:2px 0 0 0;color:var(--muted)}
+@media print{nav,#panel,#q,#csv,#fv,#vw{display:none}.layout{grid-template-columns:1fr}.panel{position:static;max-height:none}
+ body{background:#fff;color:#000}.dist,.issue,.tbl{break-inside:avoid}h2{break-after:avoid}}
+</style></head><body>
+<header><div class="crumbs" id="crumbs"></div><h1 id="title"></h1><div class="muted" id="sub"></div><div id="banner"></div><div class="kpis" id="kpis"></div><div class="tools" id="tools"></div></header>
+<nav><div id="navl"></div></nav>
+<main>
+<h2 id="grid">Modules × CCDs</h2><p class="muted" id="gridnote"></p>
+<p><span id="vwbox"></span> Filter: <select id="fv"><option value="">all modules</option><option value="fail">modules with a fail</option><option value="warn">modules with a warn or fail</option></select></p>
+<div class="layout"><div style="overflow-x:auto"><table class="grid" id="g"></table></div><aside class="panel" id="panel"><span class="muted">Click a CCD in the grid.</span></aside></div>
+<h2 id="issues">What needs attention</h2><p class="muted">Findings grouped by what was found; click a CCD to show it.</p><div class="issues" id="iss"></div>
+<div id="distsec"><h2 id="dists">Distributions over all CCDs</h2><p class="muted">One dot per CCD, coloured by its verdict on that metric; amber and red lines are the warn and fail limits (grey dots: no limit set). Hover for the CCD, click to show it.</p><div class="dists" id="dd"></div></div>
+<div id="xtsec"><h2 id="xt"></h2><p class="muted" id="xtnote"></p><div class="xt" id="xtd"></div></div>
+<h2 id="table">All numbers</h2><p><input id="q" placeholder="filter (module, CCD, verdict...)"> <button id="csv">Download CSV</button></p><div class="tbl"><table id="t"></table></div>
+<h2 id="defs">Criteria and definitions</h2><div id="crit"></div><dl class="defs" id="dl"></dl>
+</main>
+<script>
+const D=__DATA__;
+const $=s=>document.querySelector(s), C=D.criteria||{metrics:{}}, M=C.metrics||{}, F=D.fields||{};
+const lab=k=>(F[k]||{}).label||(M[k]||{}).label||k.replace(/_/g," "), unit=k=>(F[k]||{}).unit||(M[k]||{}).unit||"";
+const fmt=(v,d=3)=>v==null||v===""?"–":typeof v==="boolean"?(v?"yes":"no"):typeof v==="number"?(!isFinite(v)?"–":Math.abs(v)<0.01&&v!==0||Math.abs(v)>=1e4?v.toExponential(2):(+v.toFixed(d)).toString()):Array.isArray(v)?v.join(", "):String(v);
+const key=c=>c.module+" "+c.ext, cls=c=>c.verdict||"na";
+let V=0;const views=D.views||[];const rows=()=>(views[V]||{ccds:[]}).ccds;
+document.title=D.title;$("#title").textContent=D.title;$("#sub").textContent=D.sub||"";
+$("#crumbs").innerHTML=(D.back||[]).map(([l,h])=>`<a href="${h}">${l}</a>`).join("");
+if(C.name&&/PLACEHOLDER/i.test(C.name))$("#banner").innerHTML=`<div class="banner"><b>Placeholder limits.</b> ${C.note||""}</div>`;
+$("#gridnote").textContent=D.gridnote||"Each cell: the verdict and its main numbers (passing CCDs) or what is wrong. Click a cell for every number, the reasons and the links.";
+const navs=[["grid","Modules"],["issues","What needs attention"]].concat(Object.keys(M).length?[["dists","Distributions"]]:[]).concat(D.matrices?[["xt",D.matrix_title||"Matrices"]]:[]).concat([["table","Table"],["defs","Criteria and definitions"]]);
+$("#navl").innerHTML=navs.map(([a,b])=>`<a href="#${a}">${b}</a>`).join("");
+if(D.tools)$("#tools").innerHTML=D.tools.map(t=>`<a class="tool" href="${t.href}"><b>${t.label}</b><span style="color:var(--pass)">${t.n.pass||0} pass</span> · <span style="color:var(--warn)">${t.n.warn||0} warn</span> · <span style="color:var(--fail)">${t.n.fail||0} fail</span>${t.n.na?` · <span class="muted">${t.n.na} n/a</span>`:""}<div class="muted" style="font-size:12px;margin-top:3px">${t.note||""}</div></a>`).join("");
+if(views.length>1){$("#vwbox").innerHTML=`View: <select id="vw">${views.map((v,i)=>`<option value="${i}">${v.name} (${v.ccds.length} CCDs)</option>`).join("")}</select>`;$("#vw").onchange=e=>{V=+e.target.value;drawAll();};}
+function kpis(){const r=rows(),n=v=>r.filter(c=>cls(c)===v).length;$("#kpis").innerHTML=[["pass","CCDs pass"],["warn","CCDs warn"],["fail","CCDs fail"],["na","not processed / no data"]]
+ .map(([k,l])=>`<div class="kpi ${k}"><b>${n(k)}</b>${l}</div>`).join("")+((views[V]||{}).note?`<div class="kpi" style="flex:1"><span class="muted">${views[V].note}</span></div>`:"");}
+let by={},mods=[],exts=[];
+function index(){by={};rows().forEach(c=>by[key(c)]=c);mods=[...new Set(rows().map(c=>c.module))].sort();exts=[...new Set(rows().map(c=>c.ext))].sort();}
+function modVerdict(m){const v=exts.map(e=>by[m+" "+e]).filter(Boolean).map(cls);return v.includes("fail")?"fail":v.includes("warn")?"warn":v.every(x=>x==="na")?"na":"pass";}
+const real=c=>(c.reasons||[]).filter(r=>r[0]==="fail"||r[0]==="warn");
+function why(c){const rs=real(c),r=rs[0];if(!r)return"";const k=r[1],v=(c.values||{})[k];return (r[3]||lab(k))+(typeof v==="number"?" "+fmt(v,3):"")+((rs.length>1)?` +${rs.length-1}`:"");}
+function cellBody(c){const k=cls(c);if(c.tools)return Object.entries(c.tools).map(([t,x])=>`<span class="tchip ${x.verdict}" title="${t}: ${x.verdict}">${x.short||t.slice(0,2)}</span>`).join("")+(k!=="pass"&&k!=="na"?" "+why(c):"");
+ if(k==="pass")return (D.cell||[]).map(f=>`${fmt((c.values||{})[f],3)}${unit(f)?" "+unit(f):""}`).join(" · ");return k==="na"?(c.status||"no data"):why(c);}
+function drawGrid(){const f=$("#fv").value;let h="<tr><th>module</th>"+exts.map(e=>{const c=rows().find(x=>x.ext===e);return `<th>${e}${c&&c.ccd?" · "+c.ccd:""}</th>`}).join("")+"</tr>";
+ for(const m of mods){const mv=modVerdict(m);if(f==="fail"&&mv!=="fail")continue;if(f==="warn"&&(mv==="pass"||mv==="na"))continue;
+  h+=`<tr><td class="mod"><span class="dot" style="background:var(--${mv})"></span>${m}</td>`+exts.map(e=>{const c=by[m+" "+e];if(!c)return"<td></td>";const k=cls(c);
+   return `<td><div class="cell ${k}" data-k="${key(c)}" title="${real(c).map(x=>x[2]).join("\n").replace(/"/g,"&quot;")}"><div class="v">${k==="na"?"n/a":k}</div>${cellBody(c)}</div></td>`}).join("")+"</tr>";}
+ $("#g").innerHTML=h;document.querySelectorAll(".cell").forEach(el=>el.onclick=()=>show(el.dataset.k));}
+$("#fv").onchange=drawGrid;
+function show(k){const c=by[k];if(!c)return;document.querySelectorAll(".cell").forEach(e=>e.classList.toggle("sel",e.dataset.k===k));
+ let h=`<h3 style="margin:0 0 4px">${c.module} · ${c.ext}${c.ccd?" · "+c.ccd:""} <span class="chip ${cls(c)}">${cls(c)==="na"?"n/a":c.verdict}</span></h3><div class="muted" style="margin-bottom:8px">${c.acm!=null?"ACM "+c.acm:""}${c.when?" · "+c.when:""}</div>`;
+ if(c.links&&c.links.length)h+=`<div style="margin-bottom:6px">${c.links.map(([l,u])=>`<a href="${u}">${l}</a>`).join(" · ")}</div>`;
+ h+=(c.reasons||[]).map(r=>`<div class="reason ${r[0]==="note"?"na":r[0]}">${r[0]==="fail"?"✖":r[0]==="warn"?"▲":"ℹ"} ${r[2]}</div>`).join("")||(cls(c)==="na"?`<div class="reason na">${c.status||"no data"}</div>`:`<div class="reason pass">✔ every check within the limits</div>`);
+ if(c.tools){h+="<h4>Per tool</h4><table>"+Object.entries(c.tools).map(([t,x])=>`<tr><td><a href="${x.href}">${t}</a></td><td><span class="chip ${x.verdict}">${x.verdict}</span></td></tr>`).join("")+"</table>";}
+ for(const[sec,fs]of (D.sections||[])){const rs=fs.filter(f=>(c.values||{})[f]!=null&&!(Array.isArray(c.values[f])&&!c.values[f].length));if(!rs.length)continue;
+  h+=`<h4>${sec}</h4><table>`+rs.map(f=>{const lv=(c.levels||{})[f];return `<tr><td>${lab(f)}</td><td${lv&&lv!=="pass"?` style="color:var(--${lv});font-weight:600"`:""}>${fmt(c.values[f],4)}${unit(f)?" "+unit(f):""}</td></tr>`}).join("")+"</table>";}
+ if(D.matrices&&D.matrices[c.module])h+=`<h4>${D.matrix_title||"matrix"} · ${c.module}</h4>`+matTable(c.module);
+ if(c.history&&c.history.rows&&c.history.rows.length)h+=`<h4>History (${c.history.rows.length})</h4><div class="hist"><table><tr>${c.history.head.map(x=>`<th>${x}</th>`).join("")}</tr>${c.history.rows.map(r=>`<tr>${r.map((x,i)=>`<td${i===r.length-1&&/fail|warn/.test(x)?` style="color:var(--${x})"`:""}>${fmt(x,4)}</td>`).join("")}</tr>`).join("")}</table></div>`;
+ $("#panel").innerHTML=h;if(innerWidth<900)$("#panel").scrollIntoView({behavior:"smooth"});}
+function issues(){const groups={};rows().forEach(c=>real(c).forEach(r=>{const l=r[3]||lab(r[1]);(groups[l]=groups[l]||[]).push([r[0],c,r[2]]);}));
+ $("#iss").innerHTML=Object.entries(groups).sort((a,b)=>b[1].filter(x=>x[0]==="fail").length-a[1].filter(x=>x[0]==="fail").length||b[1].length-a[1].length)
+ .map(([l,xs])=>`<div class="issue"><h3>${l} <span class="muted">· ${xs.filter(x=>x[0]==="fail").length} fail, ${xs.filter(x=>x[0]==="warn").length} warn</span></h3>`+
+  xs.map(([lv,c,t])=>`<span class="chip ${lv}" title="${t.replace(/"/g,"&quot;")}" data-k="${key(c)}">${c.module} ${c.ext}</span>`).join("")+"</div>").join("")||"<p>Nothing flagged.</p>";
+ document.querySelectorAll("#iss .chip").forEach(e=>e.onclick=()=>{show(e.dataset.k);$("#grid").scrollIntoView({behavior:"smooth"});});}
+function strip(f){const c=M[f],pts=rows().filter(x=>typeof (x.values||{})[f]==="number"&&isFinite(x.values[f]));if(!pts.length)return"";const val=x=>c.abs?Math.abs(x.values[f]):x.values[f];
+ let vs=pts.map(val).concat([c.warn,c.fail].filter(v=>v!=null));const log=Math.min(...vs)>0&&Math.max(...vs)/Math.min(...vs)>200,tr=v=>log?Math.log10(v):v;
+ let lo=Math.min(...vs.map(tr)),hi=Math.max(...vs.map(tr));if(hi===lo){hi+=1;lo-=1}const pad=(hi-lo)*.06;lo-=pad;hi+=pad;const W=340,H=70,X=v=>10+(tr(v)-lo)/(hi-lo)*(W-20);
+ let s=`<svg viewBox="0 0 ${W} ${H}" width="100%">`;for(const[l,col]of[["warn","var(--warn)"],["fail","var(--fail)"]])if(c[l]!=null)s+=`<line x1="${X(c[l])}" x2="${X(c[l])}" y1="6" y2="${H-16}" stroke="${col}" stroke-dasharray="3 2"/>`;
+ pts.forEach((x,i)=>{const y=12+((i*37)%(H-34));s+=`<circle cx="${X(val(x))}" cy="${y}" r="3.2" fill="var(--${(x.levels||{})[f]||"na"})" opacity=".85" data-k="${key(x)}"><title>${key(x)}: ${fmt(x.values[f],4)} ${unit(f)}</title></circle>`});
+ s+=[lo+pad,(lo+hi)/2,hi-pad].map(t=>`<text x="${10+(t-lo)/(hi-lo)*(W-20)}" y="${H-3}" text-anchor="middle">${fmt(log?10**t:t,2)}</text>`).join("")+"</svg>";
+ return `<div class="dist"><h3>${lab(f)}${c.abs?" (|value|)":""} <span class="muted">[${unit(f)||"–"}]${log?" · log scale":""}</span></h3>${s}</div>`;}
+function dists(){const h=Object.keys(M).map(strip).join("");$("#distsec").style.display=h?"":"none";$("#dd").innerHTML=h;
+ document.querySelectorAll("#dd circle").forEach(e=>e.onclick=()=>{show(e.dataset.k);$("#grid").scrollIntoView({behavior:"smooth"});});}
+function matTable(m){const x=(D.matrices||{})[m]||{},lim=(M.crosstalk_max||{}).warn||0,fl=(M.crosstalk_max||{}).fail||Infinity,ex=[...new Set(Object.keys(x).flatMap(k=>k.split("->")))].sort();
+ let h=`<table class="xtm"><tr><th>src\\victim</th>${ex.map(e=>`<th>${e}</th>`).join("")}</tr>`;
+ for(const a of ex){h+=`<tr><th>${a}</th>`+ex.map(b=>{const v=x[a+"->"+b];if(a===b)return"<td>·</td>";if(!v)return"<td class='muted'>–</td>";const sig=Math.abs(v[0])>=5*v[1],lv=sig?(Math.abs(v[0])>fl?"fail":Math.abs(v[0])>lim?"warn":""):"";
+  return `<td class="${lv}" title="${v[0].toExponential(2)} ± ${v[1].toExponential(1)} (${(Math.abs(v[0])/v[1]).toFixed(1)}σ)" style="${lv?"":"color:var(--muted)"}">${(v[0]*1e4).toFixed(1)}</td>`}).join("")+"</tr>";}return h+"</table>";}
+function mats(){if(!D.matrices){$("#xtsec").style.display="none";return;}$("#xt").textContent=D.matrix_title||"Matrices";$("#xtnote").textContent=D.matrix_note||"";
+ const lim=(M.crosstalk_max||{}).warn||0,mine=new Set(mods),sigOf=m=>Object.values(D.matrices[m]).filter(v=>Math.abs(v[0])>=5*v[1]&&Math.abs(v[0])>lim);
+ const all=Object.keys(D.matrices).filter(m=>mine.has(m)),sig=all.filter(m=>sigOf(m).length).sort((a,b)=>Math.max(...sigOf(b).map(v=>Math.abs(v[0])))-Math.max(...sigOf(a).map(v=>Math.abs(v[0]))));
+ const rest=all.filter(m=>!sig.includes(m)),mx=Math.max(0,...rest.flatMap(m=>Object.values(D.matrices[m]).map(v=>Math.abs(v[0]))));
+ $("#xtd").innerHTML=sig.map(m=>`<div class="issue"><h3>${m}</h3>${matTable(m)}</div>`).join("")+`<p class="muted" style="grid-column:1/-1">${sig.length?"":"Nothing significant. "}${rest.length} module(s) without a significant value above the warn limit (largest |value| ${mx.toExponential(1)})${rest.length?": "+rest.join(", "):""}. Click a CCD to see its module's matrix.</p>`;}
+const COLS=()=>["module","acm","ext","ccd","verdict"].concat(D.columns||[]).concat(["reasons"]);let sortK=null,up=true;
+const cv=(c,k)=>k in c&&k!=="values"?c[k]:(c.values||{})[k];
+function table(){const q=$("#q").value.toLowerCase(),cols=COLS();let rs=rows().filter(c=>JSON.stringify(c.values||{}).toLowerCase().includes(q)||[c.module,c.ext,c.ccd,c.verdict].join(" ").toLowerCase().includes(q));
+ if(sortK)rs.sort((a,b)=>{const x=cv(a,sortK),y=cv(b,sortK);return((typeof x==="number"&&typeof y==="number")?x-y:String(x??"").localeCompare(String(y??"")))*(up?1:-1)});
+ $("#t").innerHTML="<tr>"+cols.map(k=>`<th data-k="${k}">${k==="reasons"?"why":lab(k)}${unit(k)?` <span class="muted">[${unit(k)}]</span>`:""}</th>`).join("")+"</tr>"+rs.map(c=>"<tr>"+cols.map(k=>k==="verdict"?`<td><span class="chip ${cls(c)}">${cls(c)==="na"?"n/a":c.verdict}</span></td>`:k==="reasons"?`<td>${(c.reasons||[]).map(r=>r[2]).join("; ")}</td>`:`<td>${fmt(cv(c,k),4)}</td>`).join("")+"</tr>").join("");
+ document.querySelectorAll("#t th").forEach(th=>th.onclick=()=>{up=sortK===th.dataset.k?!up:true;sortK=th.dataset.k;table()});}
+$("#q").oninput=table;
+$("#csv").onclick=()=>{const cols=COLS(),esc=v=>{v=v==null?"":Array.isArray(v)?v.map(r=>Array.isArray(r)?r[2]:r).join("; "):String(v);return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v};
+ const t=[cols.join(",")].concat(rows().map(c=>cols.map(k=>esc(k==="reasons"?c.reasons:cv(c,k))).join(","))).join("\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([t],{type:"text/csv"}));a.download=(D.csv_name||"overview")+".csv";a.click();};
+const lim=(c,l)=>c[l]==null?"–":`${c.direction==="below"?"<":">"} ${fmt(c[l])}`;
+$("#crit").innerHTML=Object.keys(M).length?`<p class="muted">${C.name||""} ${C.version?"("+C.version+")":""}</p><div class='tbl'><table><tr><th>check</th><th>warn</th><th>fail</th><th>unit</th></tr>`+Object.entries(M).map(([k,c])=>`<tr><td>${c.label}${c.abs?" (|value|)":""}</td><td>${lim(c,"warn")}</td><td>${lim(c,"fail")}</td><td>${c.unit||""}</td></tr>`).join("")+
+ Object.entries(C.flag_levels||{}).map(([k,l])=>`<tr><td>${(D.flag_labels||{})[k]||k}</td><td colspan="3">${l}</td></tr>`).join("")+"</table></div>":"";
+$("#dl").innerHTML=(D.definitions||[]).map(([a,b])=>`<dt>${a}</dt><dd>${b}</dd>`).join("");
+function drawAll(){index();kpis();drawGrid();issues();dists();mats();table();$("#panel").innerHTML='<span class="muted">Click a CCD in the grid.</span>';
+ const h=decodeURIComponent(location.hash.slice(1));if(by[h])show(h);}
+drawAll();
+</script></body></html>

@@ -201,11 +201,13 @@ def write_pdf(series, sums, mods_of, path, limit=None):
             plt.close(fig)
 
 
-def report(records, meta_of, mods_of, out_dir, limit=None, autoconfig_args=()):
-    """--dc-series: csv, PDF and interactive pages. Returns summary lines."""
+def report(records, meta_of, mods_of, out_dir, limit=None, autoconfig_args=(), fit_cards=None):
+    """--dc-series: csv, PDF and interactive pages. fit_cards: {(image file name, ext number): fit card} already
+    made (campaign records); without it the cards are made here (one more fit per image). Returns (summary lines,
+    overview rows: one per CCD with its numbers, flags and page)."""
     import packet_report as PR
-    fits_of = {}                     # (image, ext) -> the dark-current fit card (histogram + model, numbers, profiles)
-    for path, _ in records:
+    fits_of = dict(fit_cards or {})  # (image, ext) -> the dark-current fit card (histogram + model, numbers, profiles)
+    for path, _ in ([] if fit_cards is not None else records):
         try:
             per_ext, _ = PR.image_data(path, autoconfig_args)
         except Exception as e:                       # the page is still made without this image's fit plots
@@ -217,7 +219,7 @@ def report(records, meta_of, mods_of, out_dir, limit=None, autoconfig_args=()):
     os.makedirs(d, exist_ok=True)
     series = collect(records, meta_of)
     if not series:
-        return ["dark-current series: no fitted CCD"]
+        return ["dark-current series: no fitted CCD"], []
     sums = {k: summarise(v, limit) for k, v in series.items()}
     write_csv(series, mods_of, os.path.join(d, "dc_series.csv"))
     write_pdf(series, sums, mods_of, os.path.join(d, "dc_report.pdf"), limit)
@@ -295,14 +297,61 @@ def report(records, meta_of, mods_of, out_dir, limit=None, autoconfig_args=()):
                                             nums, flags))
         lines.append(f"  {mod} ACM {acm} EXT{ext} {ccd}: {s['n']} images, median {s['median']:.4g}, last {s['last']:.4g} e-/pix/day"
                      + (f", plateau {s['fit'][0]:.4g} (tau {s['fit'][2]:.3g} h)" if s["fit"] else "") + (f"  [{', '.join(flags)}]" if flags else ""))
-    index = []
+    ov = []
     for mod, items in sorted(modules.items()):
         rid, name, ccds, tabs = PR.module_page(mod, [it[:4] for it in items])
-        size = PR.write_page(os.path.join(d, rid + "_dc.html"), rid + "_dc", f"{name} · dark current",
-                             "dark current over the series (run_superWADERs --dc-series)", tabs, ccds)
-        index.append((mod, ", ".join(sorted({str(a) for a, *_ in items})), ", ".join(f"EXT{e}" for _, e, *_ in items),
-                      ", ".join(c for _, _, c, *_ in items), rid + "_dc.html", [t["label"] for t in tabs],
-                      [[f"EXT{e} median rate", nums[1][1]] for _, e, _, _, nums, _ in items], size,
-                      [f"EXT{e}: {', '.join(fl)}" for _, e, _, _, _, fl in items if fl]))
-    PR.write_index(d, index, "Dark current over the series")
-    return lines
+        PR.write_page(os.path.join(d, rid + "_dc.html"), rid + "_dc", f"{name} · dark current",
+                      "dark current over the series (run_superWADERs --dc-series)", tabs, ccds, back="index.html")
+        for acm, ext, ccd, _, _, _ in items:
+            s, pts = sums[(acm, ext)], series[(acm, ext)]
+            fin = lambda v: float(v) if v is not None and np.isfinite(v) else None
+            ri = [p.get("row_intercept") for p in pts if p.get("row_intercept") is not None and np.isfinite(p.get("row_intercept"))]
+            ov.append(dict(module=mod, acm=acm, ext=f"EXT{ext}", ccd=ccd, page=rid + "_dc.html", falling=s["falling"],
+                           over=s["over"], when=str(pts[-1]["time"])[:19],
+                           values=dict(images=s["n"], rate_median=fin(s["median"]), rate_last=fin(s["last"]),
+                                       plateau=fin(s["fit"][0]) if s["fit"] else None, tau_h=fin(s["fit"][2]) if s["fit"] else None,
+                                       row_intercept_median=float(np.median(ri)) if ri else None,
+                                       span_h=fin(s["t_h"][-1]) if len(s["t_h"]) else None,
+                                       noise_median=float(np.median([p["noise"] for p in pts]))),
+                           history=[[p["image"], str(p["time"])[:19], p["dc"], p["rate"], p.get("row_rate"), p["noise"]] for p in pts]))
+    return lines, ov
+
+
+FIELDS = {"images": ("images", ""), "rate_median": ("dark current (median)", "e-/pix/day"),
+          "rate_last": ("dark current (last image)", "e-/pix/day"), "plateau": ("settling-fit plateau", "e-/pix/day"),
+          "tau_h": ("settling time constant", "h"), "row_intercept_median": ("readout charge (row-fit intercept, median)", "e-/pix"),
+          "span_h": ("time span of the series", "h"), "noise_median": ("read noise (median)", "e-")}
+
+
+def overview(camp, rows, crit, path, back, limit=None):
+    """dc_series/index.html: the module x CCD overview of the dark-current series. Returns the view."""
+    import campaign as CA
+    sec = CA.section(crit, "dc_series")
+    for r in rows:
+        flags = []
+        if r.pop("falling", False):
+            flags.append(("falling", "warn", "dark current still falling at the end of the series (last three rates "
+                                             "decrease)", "still falling"))
+        if r.pop("over", False):
+            flags.append(("over_limit", "fail", f"dark current above --dc-limit {limit} e-/pix/day (median of the last "
+                                                f"three images)", "above --dc-limit"))
+        r["verdict"], r["reasons"], r["levels"] = CA.judge(r["values"], sec, flags)
+        r["links"] = [["module page", r.pop("page")]]
+        h = r.pop("history")
+        r["history"] = dict(head=["image", "start", "DC [e-/pix]", "rate [e-/pix/day]", "row-fit rate", "noise [e-]"],
+                            rows=h) if len(h) > 1 else None
+    view = dict(name="dark-current series", ccds=rows)
+    CA.write_overview(path, dict(
+        title="Dark current over the series", sub=CA.sub_line(camp), back=back, criteria=sec,
+        fields={k: dict(label=a, unit=b) for k, (a, b) in FIELDS.items()},
+        sections=[["Dark current", ["rate_median", "rate_last", "plateau", "tau_h", "row_intercept_median"]],
+                  ["Series", ["images", "span_h", "noise_median"]]],
+        cell=["rate_last", "images"], views=[view],
+        columns=["images", "span_h", "rate_median", "rate_last", "plateau", "tau_h", "row_intercept_median", "noise_median"],
+        definitions=[("rate", "Dark charge of the fit / (exposure + half the readout) of each image, in e-/pix/day."),
+                     ("settling fit", "rate(t) = plateau + A exp(-t / tau) with 5 or more images (shown when physical)."),
+                     ("row-fit intercept", "Charge that does not grow with the time a row waits: made during the readout."),
+                     ("module page", "Rates, every image's fit, the dark charge per row, all numbers and the method "
+                                     "(dc_series/<module>_..._dc.html); dc_report.pdf and dc_series.csv hold the same.")],
+        flag_labels={"falling": "still falling", "over_limit": "above --dc-limit"}, csv_name="dc_series_overview"))
+    return view

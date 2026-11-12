@@ -14,6 +14,75 @@ run_superWADERs -h                                   # the flags;   -h -v: the f
 go to `PARENT/superWADERs_<run name>/`; read `summary.txt` first. Python: the `damic` conda environment (numpy,
 astropy, scipy, numba, scikit-image, matplotlib, ROOT), found automatically (`--env NAME` or `$SUPERWADERS_ENV`).
 
+## Commissioning campaigns: packet by packet (`--campaign DIR`)
+
+Data arrive in packets, so a campaign folder grows run by run. Each run:
+- processes only the inputs the campaign does not have yet (or whose file changed);
+- keeps their results in `records/`;
+- rebuilds the pages of the tools it was given (packet, dark current, defect maps, SR, and the images overview when
+  images were processed) from everything the campaign holds;
+- rebuilds `index.html`, which combines every tool per CCD.
+
+```bash
+run_superWADERs packet_DM01.txt --packet --campaign ~/comm/LSM2026 --module-list modules.csv   # first packet
+run_superWADERs packet_DM02.txt --packet --campaign ~/comm/LSM2026 --module-list modules.csv   # adds DM02 only
+run_superWADERs series_day3.txt --dc-series --campaign ~/comm/LSM2026                         # dark current: new images only
+run_superWADERs images.txt --defect-map --campaign ~/comm/LSM2026      # only defect groups with a new image are redone
+run_superWADERs any.txt --campaign ~/comm/LSM2026 --criteria limits.json   # new limits: every page re-judged, no fits
+```
+
+- **Inputs:** an input is known by its path, size and modification time; a changed file is processed again.
+- **Several tools:** an input given to another tool later gets only that tool's part (its packet viewer, its SR
+  streaks, cluster files).
+- **Untouched tools:** they keep their pages, and `index.html` still combines them. An unchanged rerun takes about
+  1 s.
+- **Flags:**
+  - `--refresh-all` rebuilds every tool's pages;
+  - `--reprocess` processes the given inputs again;
+  - `--criteria` replaces the campaign's limits and re-judges everything.
+- **Per run only:** the run-pooled dark charge of the few-electron finder, `--gain-correction` curves and `--composite`
+  use the images of the current run only.
+
+**Without `--campaign`, a run stands alone**, as before: a fresh folder (`superWADERs_<run name>/`) with only its
+inputs and the tools asked for, the same pages and overviews, no comparison with anything else. Every tool can be run
+this way, alone or together: `--packet`, `--dc-series`, `--defect-map`, `--sr`, or plain images.
+
+**The overview pages** (`index.html`, `<tool>/index.html`, self-contained, offline) share one layout:
+- **Module × CCD grid:** a passing cell shows its main numbers, a failing or warning cell says what is wrong. Click a
+  cell for every number, the reasons, the history of the CCD's images and links to the module pages.
+- **What needs attention:** findings grouped by type.
+- **Distributions:** every judged metric over all CCDs, with the warn / fail limits.
+- **Crosstalk matrices** (images).
+- **Full table:** sortable, filterable, with CSV download.
+- **Criteria and definitions.**
+
+The images overview has one view per image setting (e.g. 500-skip 1×1 and 1-skip 1×1). The module pages of each tool
+link back to its overview.
+
+**Verdicts** come from the criteria file the campaign keeps (`criteria.json`, a copy of
+`commissioning/criteria_default.json` or of `--criteria FILE`):
+- per metric: warn / fail limits, direction, `abs`; a limit of `null` is shown but not judged;
+- per non-numeric check (no charge seen, gain not measured, fit at a limit, trace problems, ...): `fail`, `warn`,
+  `note` (shown with the CCD, no effect on the verdict) or `off`.
+
+**The default limits are placeholders** (the pages say so); the group should set them.
+
+| tool | judged per CCD (default criteria) | page |
+|---|---|---|
+| images | read noise, gain vs module / nominal, dark current, readout charge (row-fit intercept), glow index, hot columns, fit χ²/ndf, baseline step / row-to-row rms, crosstalk (≥ 5σ), saturation; no charge seen, gain not measured, fit at a limit | `images/index.html` |
+| packet | read noise (image with the most skips; unresolved ones too when they have enough skips); shown: single-skip noise, PSD σ and σ_CDS, gain, dark charge; trace quality, trace sums | `packet/index.html` |
+| dark current | median, last, plateau rate, readout charge; still falling, above `--dc-limit` | `dc_series/index.html` |
+| defect maps | bright / dark columns, hot / cold pixel spots; hot pixels not identifiable (note) | `defects/index.html` |
+| serial register | streaks per 1000 reads, read noise; shown: dark charge, streak length | `sr/index.html` |
+
+Image metrics (`commissioning/ccd_metrics.py`, computed once per image):
+- **Baseline:** row-to-row rms, largest step (in ADU and in units of that rms), drift.
+- **Columns:** hot columns against a running median over 31 columns; the glow index (dark charge of the last 10 % of
+  the columns over the median).
+- **Saturation.**
+- **Crosstalk:** between the CCDs of a module, a slope with an intercept where the source CCD has > 200 e-; judged at
+  ≥ 5σ.
+
 ## Clustering: chosen per CCD (`--clusterer auto`, the default)
 
 Before anything is fitted, every image and CCD is characterised (`engine/characterise.py`):
@@ -53,7 +122,8 @@ the Bayesian switch only runs in `auto`).
 
 | task | command | output (in the run folder) |
 |---|---|---|
-| fits and clusters | `run_superWADERs images.txt [--gain-correction] [--composite --module-list modules.csv]` | `root/` (+ `root_gaincorr*/`), `summary.txt`, `fit_quality.csv`, plots, `characterisation/` |
+| fits and clusters | `run_superWADERs images.txt [--gain-correction] [--composite --module-list modules.csv]` | `index.html`, `images/index.html`, `root/` (+ `root_gaincorr*/`), `summary.txt`, `fit_quality.csv`, plots, `characterisation/` |
+| add to a campaign | any of these with `--campaign DIR` | the same, for everything the campaign holds |
 | CCDs without a comb | `... --gain 1.3` or `--gain EXT1=1.3,EXT4=0.82` or `--gain-file gains.json` | flagged in `summary.txt` |
 | L0 traces / PSD traces | `run_superWADERs traces.txt [--l0-no-html]` | `L0/<trace>/` |
 | L1 images (binned or not) | `run_superWADERs l1.txt --l1-skips 1,10,100,1000 [--l1-skip-first K]` | `L1/`: one FITS per N, noise vs N, diagnostics |
@@ -75,8 +145,10 @@ superWADERs/
                         autoconfig_panaSKImg, gain_dc_split, gain_vs_charge, fit_quality, naming, pair_energy
   clustering/           A_GMX (adaptive, gmx, agent_methods, crowded, crowded_shapes, mhc, methods2, cluster_methods)
                         and the Bayesian few-electron finder (agmx_switch, finder, noise, background, pipeline)
-  commissioning/        raw_data (+ raw_levels/), packet_report (+ template), dc_series, defects (+ lsm_defects/),
-                        sr_images, compare_dcfit_vs_skips
+  commissioning/        campaign (ledger, records, criteria, verdicts, overview pages), worker (one image -> its
+                        record), ccd_metrics, overview_template.html, criteria_default.json,
+                        raw_data (+ raw_levels/), packet_report (+ module page template), dc_series, defects
+                        (+ lsm_defects/), sr_images, compare_dcfit_vs_skips
   tests/                python -m unittest discover -s superWADERs/tests -v
 ```
 
@@ -90,6 +162,13 @@ Where the files came from (2026-11-12). They are now superWADERs' own and can ch
 `raw_levels/` (ccd_opt_ml) and `lsm_defects/` (LSM_Module_Testing_Analysis) are kept in sync with their own
 repositories by `utils/sync_from_ccd_opt_ml.py` and `utils/sync_from_lsm_analysis.py` (both update `src/` and
 `superWADERs/`; `--dest superWADERs` updates this folder only).
+
+## Efficiency
+
+Recorded, not applied: [docs/superWADERs_efficiency_notes.md](../docs/superWADERs_efficiency_notes.md).
+- **Ready as a patch:** three exact or near-exact speed-ups to A_GMX's background map (2.8× on electron-counting CCDs,
+  100× on noisy ones), in `docs/patches/superWADERs_efficiency_E1-E3.patch`.
+- **Larger items:** the few-electron threshold simulation, double fits, per-CCD parallelism.
 
 ## What has been checked
 
@@ -105,6 +184,16 @@ repositories by `utils/sync_from_ccd_opt_ml.py` and `utils/sync_from_lsm_analysi
     dense tracks -> crowded mode; 1.5 e- noise -> unmodelled; flooded and unresolved -> threshold.
   - Also run: `--clusterer agmx` / `threshold`, `--gain-correction both`, `--no-clusters` with `--dc-series`
     `--defect-map` `--sr`.
+- **Campaigns (2026-11-12, synthetic):**
+  - 26 modules fed as a packet of 3 modules (`--packet`, 1-skip + 500-skip images), then two packets of 13, then
+    `--dc-series --defect-map` over everything.
+  - Each run processed only the new images; images first given as a packet got their cluster files when given as
+    images.
+  - The images overview gave 95 pass / 1 warn / 8 fail on the 500-skip view: the nine injected faults flagged, no
+    healthy CCD flagged. The 4 ADU baseline step fails at 76× the row-to-row scatter; the 1-skip view (12 CCDs) all
+    passes.
+  - A new image of one module redid only that module's defect group; new criteria re-judged everything with no new
+    fit; an unchanged rerun took about 1 s.
 - **Not yet run with this command on real data** (only through `wip/native_pipeline`). Before relying on it, a
   first run on known data is worth comparing with `run_WADERs --engine native --clusterer agmx`, e.g. DM09 Image_5.
   The open points of the front end are in `wip/native_pipeline/ANYIMAGE.md`:

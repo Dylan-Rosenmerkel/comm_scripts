@@ -92,12 +92,81 @@ class CommandLine(unittest.TestCase):
             for args, msg in [(["--thresholds", "x"], "--thresholds"),
                               (["--autoconfig-args", "--gain 1.3"], "cannot be given"),
                               (["--composite", "--no-clusters"], "--no-clusters"),
-                              (["--packet", "--dc-series"], "--packet")]:
+                              (["--packet", "--dc-series"], "--packet"),
+                              (["--campaign", os.path.join(d, "newcamp"), "--overwrite"], "--overwrite"),
+                              (["--criteria", os.path.join(d, "nope.json")], "--criteria")]:
                 r = self.run_cmd(img, "-o", d, *args)
                 self.assertNotEqual(r.returncode, 0)
                 self.assertIn(msg, r.stderr)
             r = self.run_cmd(os.path.join(d, "missing.fits"))
             self.assertIn("not found", r.stderr)
+
+
+class Campaign(unittest.TestCase):
+    """The campaign store and the verdicts (commissioning/campaign.py)."""
+
+    def setUp(self):
+        for d in MODULE_DIRS:
+            p = os.path.join(SW, d)
+            if p not in sys.path:
+                sys.path.insert(0, p)
+        import campaign
+        self.CA = campaign
+
+    def test_judge(self):
+        sec = dict(metrics=dict(noise=dict(label="noise", unit="e-", warn=0.2, fail=0.3),
+                                gain_dev=dict(label="gain dev", unit="%", warn=3, fail=8, abs=True),
+                                show=dict(label="shown", warn=None, fail=None),
+                                low=dict(label="low", warn=10, fail=5, direction="below")),
+                   flag_levels=dict(dead="fail", info="note", gone="off"))
+        J = self.CA.judge
+        self.assertEqual(J(dict(noise=0.1, gain_dev=-2, show=99, low=20), sec)[0], "pass")
+        v, r, lv = J(dict(noise=0.25, gain_dev=-9, low=7), sec)
+        self.assertEqual(v, "fail")
+        self.assertEqual([x[1] for x in r], ["gain_dev", "noise", "low"])   # fail first
+        self.assertEqual(lv, dict(noise="warn", gain_dev="fail", low="warn"))
+        self.assertEqual(J(dict(noise=0.1), sec, [("info", "warn", "a note", "info")])[0], "pass")   # note: no effect
+        self.assertEqual(J(dict(noise=0.1), sec, [("gone", "fail", "dropped", "gone")])[1], [])       # off: dropped
+        self.assertEqual(J(dict(noise=0.1), sec, [("dead", "warn", "no charge", "dead")])[0], "fail")  # level from file
+        self.assertEqual(J({}, sec, status="no CCD signal")[0], "na")
+
+    def test_ledger_and_records(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = os.path.join(d, "a.fits")
+            open(f, "w").write("x")
+            c = self.CA.Campaign(os.path.join(d, "camp"))
+            self.assertFalse(c.current(f))
+            c.add(f, "images", kind="image", stem="a")
+            c.save_record("images", "a", dict(stem="a", x=[1.5, float("nan")]))
+            c.save()
+            c2 = self.CA.Campaign(os.path.join(d, "camp"))
+            self.assertTrue(c2.has(f, "images"))
+            self.assertFalse(c2.has(f, "sr"))
+            self.assertEqual(c2.load_record("images", "a"), dict(stem="a", x=[1.5, None]))
+            self.assertEqual(c2.stems("images"), ["a"])
+            open(f, "w").write("changed")                    # a changed file is new again
+            os.utime(f, ns=(1, 1))
+            self.assertFalse(c2.current(f))
+
+    def test_criteria_copy(self):
+        with tempfile.TemporaryDirectory() as d:
+            crit = self.CA.load_criteria(d)
+            self.assertIn("images", crit)
+            self.assertTrue(os.path.exists(os.path.join(d, "criteria.json")))
+            for t in ("images", "packet", "dc_series", "defects", "sr"):
+                self.assertIn("metrics", crit[t])
+
+    def test_overview_page(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "o", "index.html")
+            row = dict(module="DM01", acm=101, ext="EXT1", ccd="CCD_A", verdict="warn", values=dict(noise=0.25),
+                       reasons=[["warn", "noise", "noise 0.25 > 0.2", "noise"]], levels=dict(noise="warn"))
+            self.CA.write_overview(path, dict(title="t", criteria=dict(metrics=dict(noise=dict(label="noise", warn=0.2))),
+                                              views=[dict(name="v", ccds=[row])]))
+            with open(path) as fh:
+                page = fh.read()
+            self.assertIn('"module":"DM01"', page)
+            self.assertNotIn("__DATA__", page)
 
 
 if __name__ == "__main__":

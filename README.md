@@ -118,7 +118,11 @@ them on 2026-11-12 and now change on their own). Pedestal, fits and cluster file
 engine's; the clustering is chosen per CCD (`--clusterer auto`, the default): A_GMX with the Bayesian few-electron
 switch on sparse electron-counting CCDs, A_GMX crowded mode on crowded ones, A_GMX 'unmodelled' (hysteresis) on noisy
 or structured ones, the threshold clusterer on flooded / unresolved ones; every choice is listed in `summary.txt`.
-Clustering, layout and what has been checked: [superWADERs/README.md](superWADERs/README.md). It needs the `damic`
+Data arriving packet by packet go into one campaign folder (`--campaign DIR`): only new inputs are processed, and
+every tool (images, packet, dark current, defect maps, serial register) has an overview page (module × CCD grid
+with pass / warn / fail verdicts from a criteria file) combined in `DIR/index.html`; without `--campaign` a run
+stands alone. Clustering, campaigns, layout and what has been checked: [superWADERs/README.md](superWADERs/README.md);
+efficiency notes (not applied): [docs/superWADERs_efficiency_notes.md](docs/superWADERs_efficiency_notes.md). It needs the `damic`
 conda environment (found automatically). `run_WADERs --engine native` still runs `src/`'s copy of the native engine
 (threshold or A_GMX clusters), unchanged.
 
