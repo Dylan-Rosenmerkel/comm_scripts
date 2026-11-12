@@ -23,6 +23,7 @@ combines them per CCD.
 """
 import datetime
 import gzip
+import posixpath
 import html
 import json
 import math
@@ -490,7 +491,15 @@ def campaign_index(camp, tool_views, path, crit):
                                            reasons=[], values={}))
                 c["ccd"] = c["ccd"] or r.get("ccd")
                 t = c["tools"].setdefault(TOOL_LABELS.get(tool, tool), dict(verdict="na", reasons=[], short=TOOL_SHORT.get(tool, tool[:2]),
-                                                                            href=f"{href}#{r['module']} {r['ext']}"))
+                                                                            href=f"{href}#{r['module']}%20{r['ext']}", reports=[]))
+                # the CCD's full reports of this tool (module page, defect map, fit PDF), relative to the campaign folder
+                base = posixpath.dirname(href)
+                for lab_, h_ in r.get("links") or []:
+                    if not re.match(r"^[a-z]+:|^/", h_):
+                        h_ = posixpath.normpath(posixpath.join(base, h_))
+                    name = {"module page": "full report"}.get(lab_, lab_) + (f" ({v['name']})" if len(views) > 1 else "")
+                    if [name, h_] not in t["reports"]:
+                        t["reports"].append([name, h_])
                 rank = {"fail": 3, "warn": 2, "pass": 1, "na": 0}
                 if rank[r["verdict"]] > rank[t["verdict"]]:
                     t["verdict"] = r["verdict"]
@@ -503,7 +512,7 @@ def campaign_index(camp, tool_views, path, crit):
         vs = [t["verdict"] for t in c["tools"].values()]
         c["verdict"] = "fail" if "fail" in vs else "warn" if "warn" in vs else "pass" if "pass" in vs else "na"
         c["reasons"].sort(key=lambda r: {"fail": 0, "warn": 1}.get(r[0], 2))
-        c["links"] = [[k, t["href"]] for k, t in c["tools"].items()]
+        c["links"] = []                              # per tool in the panel: the overview and the full reports
         rows.append(c)
     runs = camp.data.get("runs", [])
     defs = [("verdict", "Worst over the tools that have data for the CCD (fail > warn > pass). The letters in a cell are "

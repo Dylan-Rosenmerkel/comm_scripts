@@ -51,6 +51,9 @@ input,select,button{font:inherit;padding:5px 8px;border:1px solid var(--line);bo
 <div id="xtsec"><h2 id="xt"></h2><p class="muted" id="xtnote"></p><div class="xt" id="xtd"></div></div>
 <h2 id="table">All numbers</h2><p><input id="q" placeholder="filter (module, CCD, verdict...)"> <button id="csv">Download CSV</button></p><div class="tbl"><table id="t"></table></div>
 <h2 id="defs">Criteria and definitions</h2><div id="crit"></div><dl class="defs" id="dl"></dl>
+<p class="muted" style="margin-top:24px">These pages link to each other inside the run / campaign folder (index.html, &lt;tool&gt;/index.html,
+the module pages and PDFs next to them). Open them from that folder and keep it together (copy or zip the whole folder):
+a page copied or opened on its own cannot follow its links.</p>
 </main>
 <script>
 const D=__DATA__;
@@ -61,6 +64,7 @@ const key=c=>c.module+" "+c.ext, cls=c=>c.verdict||"na";
 let V=0;const views=D.views||[];const rows=()=>(views[V]||{ccds:[]}).ccds;
 document.title=D.title;$("#title").textContent=D.title;$("#sub").textContent=D.sub||"";
 $("#crumbs").innerHTML=(D.back||[]).map(([l,h])=>`<a href="${h}">${l}</a>`).join("");
+if(location.protocol!=="file:"&&location.protocol!=="http:"&&location.protocol!=="https:")$("#sub").textContent+=" · opened outside its folder: links to the other pages will not open";
 if(C.name&&/PLACEHOLDER/i.test(C.name))$("#banner").innerHTML=`<div class="banner"><b>Placeholder limits.</b> ${C.note||""}</div>`;
 $("#gridnote").textContent=D.gridnote||"Each cell: the verdict and its main numbers (passing CCDs) or what is wrong. Click a cell for every number, the reasons and the links.";
 const navs=[["grid","Modules"],["issues","What needs attention"]].concat(Object.keys(M).length?[["dists","Distributions"]]:[]).concat(D.matrices?[["xt",D.matrix_title||"Matrices"]]:[]).concat([["table","Table"],["defs","Criteria and definitions"]]);
@@ -86,7 +90,7 @@ function show(k){const c=by[k];if(!c)return;document.querySelectorAll(".cell").f
  let h=`<h3 style="margin:0 0 4px">${c.module} · ${c.ext}${c.ccd?" · "+c.ccd:""} <span class="chip ${cls(c)}">${cls(c)==="na"?"n/a":c.verdict}</span></h3><div class="muted" style="margin-bottom:8px">${c.acm!=null?"ACM "+c.acm:""}${c.when?" · "+c.when:""}</div>`;
  if(c.links&&c.links.length)h+=`<div style="margin-bottom:6px">${c.links.map(([l,u])=>`<a href="${u}">${l}</a>`).join(" · ")}</div>`;
  h+=(c.reasons||[]).map(r=>`<div class="reason ${r[0]==="note"?"na":r[0]}">${r[0]==="fail"?"✖":r[0]==="warn"?"▲":"ℹ"} ${r[2]}</div>`).join("")||(cls(c)==="na"?`<div class="reason na">${c.status||"no data"}</div>`:`<div class="reason pass">✔ every check within the limits</div>`);
- if(c.tools){h+="<h4>Per tool</h4><table>"+Object.entries(c.tools).map(([t,x])=>`<tr><td><a href="${x.href}">${t}</a></td><td><span class="chip ${x.verdict}">${x.verdict}</span></td></tr>`).join("")+"</table>";}
+ if(c.tools){h+="<h4>Per tool: overview · full reports</h4><table>"+Object.entries(c.tools).map(([t,x])=>`<tr><td><a href="${x.href}" title="this tool's overview, opened at this CCD">${t}</a>${(x.reports||[]).length?`<div style="font-size:12px;margin-top:2px">${x.reports.map(([l,u])=>`<a href="${u}">${l}</a>`).join(" · ")}</div>`:""}</td><td><span class="chip ${x.verdict}">${x.verdict}</span></td></tr>`).join("")+"</table>";}
  for(const[sec,fs]of (D.sections||[])){const rs=fs.filter(f=>(c.values||{})[f]!=null&&!(Array.isArray(c.values[f])&&!c.values[f].length));if(!rs.length)continue;
   h+=`<h4>${sec}</h4><table>`+rs.map(f=>{const lv=(c.levels||{})[f];return `<tr><td>${lab(f)}</td><td${lv&&lv!=="pass"?` style="color:var(--${lv});font-weight:600"`:""}>${fmt(c.values[f],4)}${unit(f)?" "+unit(f):""}</td></tr>`}).join("")+"</table>";}
  if(D.matrices&&D.matrices[c.module])h+=`<h4>${D.matrix_title||"matrix"} · ${c.module}</h4>`+matTable(c.module);

@@ -76,3 +76,7 @@ Proposals:
 - **Pages:** write module pages only for modules with new data. The overviews must always be rewritten.
 - **Records:** loaded whole (gzip JSON). A campaign of thousands of images would want an index of the per-CCD
   numbers, so the overviews don't open every record.
+- **Defect-map page size:** each `defects/<group>/defect_map.html` embeds the group script's PNG (~3.5 MB for a small
+  240 × 568 image; the PNG also sits next to it) and the composite. A 26-module synthetic campaign had 294 MB of
+  defect maps out of 357 MB. Linking the PNG instead of embedding it, and storing the composite view as 8-bit or
+  float16, would make these pages several times smaller.

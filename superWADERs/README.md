@@ -47,6 +47,26 @@ run_superWADERs any.txt --campaign ~/comm/LSM2026 --criteria limits.json   # new
 inputs and the tools asked for, the same pages and overviews, no comparison with anything else. Every tool can be run
 this way, alone or together: `--packet`, `--dc-series`, `--defect-map`, `--sr`, or plain images.
 
+**Where everything is.** Every page of a run or campaign is in its folder, and the pages link to each other with
+relative links. Open them from the folder, and copy or zip the whole folder to share it; a page copied or opened on
+its own cannot follow its links.
+
+```
+LSM2026/                        the --campaign folder (or superWADERs_<run name>/)
+  index.html                    campaign overview: every tool per module and CCD; the CCD panel links to each tool's
+                                overview (opened at that CCD) and to the CCD's full reports
+  summary.txt                   verdict counts, fits per CCD, every run of the campaign
+  images/index.html             images overview; full reports: the DC-fit PDFs (*_FitDarkCurrentProcess_DCfit_EXTn.pdf)
+  packet/index.html             packet overview;  full reports: packet/<module>_ACM<id>.html
+  dc_series/index.html          dark-current overview;  full reports: dc_series/<module>_ACM<id>_dc.html, dc_report.pdf
+  defects/index.html            defect overview;  full reports: defects/<module>_ACM<id>_<size>/defect_map.html
+  sr/index.html                 serial-register overview;  full reports: sr/<module>_ACM<id>_sr.html
+  root/, L0/, L1/, logs/        cluster files, raw-data products, logs
+  campaign.json, criteria.json, records/   the campaign's ledger, limits and kept results
+```
+
+Every full report links back to its overview ("← overview of all modules").
+
 **The overview pages** (`index.html`, `<tool>/index.html`, self-contained, offline) share one layout:
 - **Module × CCD grid:** a passing cell shows its main numbers, a failing or warning cell says what is wrong. Click a
   cell for every number, the reasons, the history of the CCD's images and links to the module pages.
