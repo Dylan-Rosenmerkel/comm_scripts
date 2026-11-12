@@ -397,7 +397,7 @@ cl = adaptive.adaptive_cluster(Q_k, valid_k, engine="gmx", fewe="auto", fewe_lam
 - **Untuned values:** the f_c cut and the halo.
 - The L2 gains (1.3 / 0.82 ADU/e-) are unconfirmed.
 
-## Any image: characterisation front end and `--clusterer auto` (now the default of run_superWADERs)
+## Any image: characterisation front end and `--clusterer auto` (working: the default of run_superWADERs)
 
 Developed in `wip/native_pipeline/` (details and its robustness suite: `wip/native_pipeline/ANYIMAGE.md`); since
 2026-11-12 it is part of `superWADERs/` (`engine/characterise.py`, `engine/native_pipeline.py`) and the default
@@ -411,7 +411,8 @@ into each ROOT file. The chain is then chosen per CCD:
 | electron counting, core fill < 0.10 | A_GMX, with the few-electron switch (run-pooled when the run has >= 2 images and DC <= 1.5e-2 e-/pix) |
 | electron counting, core fill >= 0.10 | A_GMX crowded mode |
 | noise >= 1 e- or a structured background | A_GMX 'unmodelled' (hysteresis) |
-| flooded (no peaks, > 10 e-/pix) / not counting | threshold clusterer |
+| flooded (no peaks, > 10 e-/pix) | threshold clusterer above the flooding level, at 10 / 30 x the charge width |
+| not counting, noise < 1 e- | threshold clusterer (sigma0 rule) |
 | raw skips / std images | compressed first / refused |
 
 ```bash

@@ -499,8 +499,9 @@ def plan_ccd(c, group_size, curve=None):
                                  note="g(n) curve applied when given and reliable for this CCD, else linear gain"),
                 clusterer=clus, fewe="auto" if clus == "agmx" else "off", fewe_pooled=pooled,
                 flooded=bool(flooded),
-                why=("flooded: no resolved peaks and %.1f e-/pix mean charge > %g -> threshold clusterer with the sigma0 "
-                     "rule (thresholds scale with the charge width, as panaSKImg)" % (lam, FLOOD_E) if flooded else
+                why=("flooded: no resolved peaks and %.1f e-/pix mean charge > %g -> threshold clusterer above the flooding "
+                     "level, at 10 / 30 x the charge width (native_pipeline.flooded_background)" % (lam, FLOOD_E)
+                     if flooded else
                      "read noise >= %.1f e- (not electron counting)" % NOISE_UNMODELLED_E if clus == "unmodelled" else
                      "electron counting -> A_GMX (crowded mode decided on the core fill after calibration)"
                      if clus == "agmx" else "peaks not resolved, noise < 1 e- -> threshold clusterer (sigma0 rule)"))

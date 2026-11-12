@@ -633,6 +633,28 @@ def thresholds_for(mode, r, sigma0_e, mimic_thr=None):
     return 10 * sigma0_e, 30 * sigma0_e, sigma0_e, 30.0, note + f", sigma0 = {sigma0_e:.4f} e-"
 
 
+def flooded_background(e_img, region, min_pix=20):
+    """Flooding level and charge width of a flooded CCD (no resolved peaks, many e-/pix): per row the median of the
+    region's pixels (the level grows along the readout) and their robust spread 1.4826 x MAD. Returns (level per row
+    [e-], width [e-] = median of the rows' spreads, median level [e-]) or None if no row has min_pix pixels. The width
+    is that of the charge distribution (Poisson + read noise + gain spread), which a pedestal sigma from the overscan
+    (read noise only) does not see: 10 x the read noise would be far below the charge fluctuations of a flooded CCD
+    and join the whole CCD into one cluster."""
+    lev = np.full(e_img.shape[0], np.nan)
+    wid = np.full(e_img.shape[0], np.nan)
+    for k in range(e_img.shape[0]):
+        v = e_img[k][region[k]]
+        v = v[np.isfinite(v)]
+        if v.size >= min_pix:
+            m = np.median(v)
+            lev[k], wid[k] = m, 1.4826 * np.median(np.abs(v - m))
+    ok = np.isfinite(lev) & np.isfinite(wid) & (wid > 0)
+    if not ok.any():
+        return None
+    lev[~np.isfinite(lev)] = np.median(lev[ok])
+    return lev, float(np.median(wid[ok])), float(np.median(lev[ok]))
+
+
 def threshold_clusters(e_img, region, t_pix, t_seed):
     """WADERs ClusterFinder ('waders', method 0) on the calibrated image [e-]: pixels outside `region` set to 0,
     pixels <= t_pix set to 0, 8-connected groups of the rest, kept if one pixel is >= t_seed. Cluster order and
@@ -1061,6 +1083,24 @@ def process_image(path, out_dir, curve=None, clusterer="threshold", thresholds="
         t_cal = time.time()
         # ---- 5. / 6. one cluster file per output (clusterer x g(n) curve), from the same calibrated image
         thr = thresholds_for(thresholds, r, sigma0_e, mim["thr"] if mim else None)
+        # flooded CCD (characterise.plan_ccd: no resolved peaks, > FLOOD_E e-/pix): the threshold clusterer works on the
+        # image minus the flooding level and with the width of the CHARGE distribution, not the read noise
+        e_thr, flood_bg = e_img, None
+        plan_ccd = ((characterisation or {}).get("ccds", {}).get(ext, {}) or {}).get("plan") or {}
+        if plan_ccd.get("flooded") and not mim:
+            fl = flooded_background(e_img, clus_region)
+            if fl is not None:
+                flood_bg, width, level = fl
+                e_thr = e_img - flood_bg[:, None]
+                if not isinstance(thresholds, (tuple, list)):
+                    thr = (10 * width, 30 * width, width, 30.0,
+                           f"flooded: charge width {width:.3f} e- (per-row MAD of the active pixels; read noise "
+                           f"{sigma0_e:.3f} e-) -> 10 / 30 x width above the flooding level ({level:.2f} e-/pix median, "
+                           f"subtracted per row)")
+                else:
+                    thr = thr[:4] + (thr[4] + f", above the flooding level ({level:.2f} e-/pix median, subtracted per "
+                                              f"row)",)
+                rec["flooded"] = dict(level_e=level, width_e=width, read_noise_e=sigma0_e)
         rec["thresholds"] = dict(pixel_e=thr[0], seed_e=thr[1], sigma_seed_e=thr[2], n_seed=thr[3], note=thr[4])
         sigma_seed_eV = thr[2] * PANASKIMG_EV          # panaSKImg's unit: sigma [e-] x e2eV
         models = {}                                    # curve -> (g(n) model or None, description)
@@ -1109,14 +1149,16 @@ def process_image(path, out_dir, curve=None, clusterer="threshold", thresholds="
                                                       # is in rec[key]["chain"] (a g(n) image can decide otherwise)
             if cl_eff == "threshold":
                 if thr_clusters is None:
-                    thr_clusters = threshold_clusters(e_img, clus_region, thr[0], thr[1])
+                    thr_clusters = threshold_clusters(e_thr, clus_region, thr[0], thr[1])
                 rows, cols, off = thr_clusters
-                e_pix = e_img[rows, cols]
+                e_pix = e_thr[rows, cols]
                 E_unc = e_pix * PANASKIMG_EV / 1000.0         # (e- x eV/e-) / 1000, the order of pysimdamicm
                 if model is not None:
                     # ADU of each pixel, then A^-1. Mimic mode: back from the pixel energy as GainNonlinearityProcess
                     # (keV -> e- -> ADU with the rounded gain, last bits as panaSKImg); else the pedestal-subtracted ADU
                     adu = (E_unc * 1000.0) / PANASKIMG_EV * g_cal if panaskimg_json else ps[rows, cols]
+                    if flood_bg is not None:
+                        adu = adu - flood_bg[rows] * g_cal
                     E_fin = GVC.electrons_with_anchor(adu, model, g_cal, anchor) * eV / 1000.0
                 else:
                     E_fin = e_pix * eV / 1000.0
@@ -1392,7 +1434,7 @@ def write_characterisation(out, recs, results):
         for ext, c in (s or {}).get("ccds", {}).items():
             if ext in r.get("ccds", {}):
                 r["ccds"][ext]["result"] = {k: v for k, v in c.items() if k in (
-                    "decision", "gain", "gain_note", "noise_e", "dc_e", "skipped", "masked_columns", "thresholds",
+                    "decision", "gain", "gain_note", "noise_e", "dc_e", "skipped", "masked_columns", "thresholds", "flooded",
                     "fit_at_limit", "fallbacks", "auto", "pedestal") or isinstance(v, dict) and "n_clusters" in v}
         with open(os.path.join(d, f"{r['stem']}.json"), "w") as fh:
             fh.write(CH.dumps(r))

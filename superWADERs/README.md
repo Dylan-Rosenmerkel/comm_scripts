@@ -30,7 +30,8 @@ background spread and core fill (`characterise.decide_ccd`).
 | electron counting, sparse (core fill < 0.10) | **A_GMX** with the **Bayesian few-electron switch**: in sparse, low-dark-charge 100 x 100 blocks, A_GMX's small clusters (<= 20 e-, away from big deposits) are replaced by the Bayesian catalogue. The dark charge is pooled over the run when >= 2 images share the run setting and DC <= 1.5e-2 e-/pix |
 | electron counting, crowded (core fill >= 0.10) | **A_GMX crowded mode** |
 | read noise >= 1 e-, or a structured background | **A_GMX 'unmodelled'** (hysteresis); if > 30 % of the pixels are above 4.5 e-, the threshold clusterer instead |
-| flooded (no resolved peaks, > 10 e-/pix), or peaks not resolved | **threshold clusterer** (`--thresholds`; sigma0 rule on these CCDs) |
+| flooded (no resolved peaks, > 10 e-/pix) | **threshold clusterer** above the flooding level (per-row median, subtracted), at 10 / 30 x the charge width (per-row MAD of the active pixels), not the read noise |
+| peaks not resolved, not flooded | **threshold clusterer** (`--thresholds`; sigma0 rule) |
 | 'no CCD signal' but a sharp zero peak | kept as electron counting ('quiet': cannot be told from a very low dark charge) |
 | no CCD signal | skipped |
 

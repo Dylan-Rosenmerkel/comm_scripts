@@ -32,7 +32,9 @@ Clustering (--clusterer auto, the default), chosen per CCD after calibration and
                                                  charge when the run setting has >= 2 images and DC <= 1.5e-2 e-/pix)
   electron counting, crowded (core fill >= 0.10) A_GMX crowded mode
   read noise >= 1 e-, or a structured background A_GMX 'unmodelled' (hysteresis on the calibrated image)
-  flooded, or peaks not resolved                 threshold clusterer (--thresholds; auto -> sigma0 rule there)
+  flooded (no peaks, > 10 e-/pix)                threshold clusterer above the flooding level (subtracted per row),
+                                                 at 10 / 30 x the charge width (not the read noise)
+  peaks not resolved, not flooded                threshold clusterer (--thresholds; auto -> sigma0 rule there)
 Every choice and every fallback is written to summary.txt, characterisation/<image>.json and each ROOT file.
 """
 # Only the standard library at module level: this part has to run in any python, before the environment is found.
@@ -257,7 +259,9 @@ clustering (--clusterer; default auto):
     electron counting, core fill >= 0.10            A_GMX crowded mode
     read noise >= 1 e- / structured background      A_GMX 'unmodelled' (hysteresis); > 30 % of the pixels above
                                                     4.5 e- -> threshold clusterer instead (flood guard)
-    flooded (no peaks, > 10 e-/pix) / not counting  threshold clusterer
+    flooded (no peaks, > 10 e-/pix)                 threshold clusterer above the flooding level, 10 / 30 x the
+                                                    charge width (per-row median / MAD of the active pixels)
+    not counting, noise < 1 e-                      threshold clusterer (sigma0 rule)
   --thresholds auto|sigma0|PIX,SEED   thresholds of the threshold clusterer: auto = in electrons from the CCD's
                                       dark charge where the peaks are resolved, else panaSKImg's 10 / 30 sigma0
   CCDs without a measurable comb get their gain from --gain, --gain-file, other images of the same CCD and run
