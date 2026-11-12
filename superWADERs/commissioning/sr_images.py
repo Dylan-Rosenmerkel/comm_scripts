@@ -251,7 +251,7 @@ def overview(camp, rows, crit, path, back):
         fields={k: dict(label=a, unit=b) for k, (a, b) in FIELDS.items()},
         sections=[["Streaks", ["streaks", "streaks_per_1000_reads", "median_length", "reads", "images"]],
                   ["Fits", ["read_noise_e", "dc_median", "gain_median", "last_image"]]],
-        cell=["streaks_per_1000_reads", "read_noise_e"], views=[view],
+        cell=["streaks_per_1000_reads", "read_noise_e", "dc_median"], views=[view],
         columns=["images", "reads", "streaks", "streaks_per_1000_reads", "median_length", "read_noise_e", "dc_median",
                  "gain_median", "last_image"],
         definitions=[("streak", "A run of >= min-length pixels above threshold x noise along one read (row) of the "

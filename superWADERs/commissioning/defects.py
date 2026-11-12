@@ -469,7 +469,7 @@ def overview(camp, crit, path, back):
         fields={k: dict(label=a, unit=b) for k, (a, b) in FIELDS.items()},
         sections=[["Defects", ["bright_columns", "dark_columns", "hot_pixels", "cold_pixels"]],
                   ["Composite", ["images", "noise_adu", "columns_candidates", "columns_confirmed", "group"]]],
-        cell=["bright_columns", "hot_pixels"], views=out,
+        cell=["bright_columns", "dark_columns", "hot_pixels", "cold_pixels"], views=out,
         columns=["bright_columns", "dark_columns", "hot_pixels", "cold_pixels", "images", "noise_adu", "group"],
         definitions=[("composite", "Median of all images of one ACM with the same size and binning (any type / skips)."),
                      ("columns", "Bright / dark columns: Image_4's rule on the composite, kept when also bright / dark in "

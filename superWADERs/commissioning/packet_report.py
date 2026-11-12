@@ -547,7 +547,7 @@ def overview(camp, rows, crit, path, back, expect_resolved=True):
         sections=[["Noise", ["read_noise_e", "noise_single_adu", "psd_sigma_adu", "psd_sigma_cds_adu"]],
                   ["Fit", ["gain", "dc_e_per_pix", "resolved_image", "resolved_skips", "single_image"]],
                   ["Files", ["traces", "psd_traces", "images"]]],
-        cell=["read_noise_e", "noise_single_adu"], views=[view],
+        cell=["read_noise_e", "noise_single_adu", "psd_sigma_cds_adu", "gain"], views=[view],
         columns=["read_noise_e", "gain", "dc_e_per_pix", "noise_single_adu", "psd_sigma_adu", "psd_sigma_cds_adu",
                  "traces", "psd_traces", "images"],
         definitions=[("read noise", "Width of the electron peaks [e-] in the packet's image with the most skips whose peaks "

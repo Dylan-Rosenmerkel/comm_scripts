@@ -228,6 +228,13 @@ def counts(rows):
 # =============================================================================
 # the overview page
 # =============================================================================
+SHORT = {"read_noise_e": "noise", "gain": "gain", "dc_rate_e_per_pix_day": "DC", "hot_columns": "hot cols",
+         "noise_single_adu": "1-skip noise", "psd_sigma_cds_adu": "σ CDS", "rate_last": "last rate", "rate_median": "median rate",
+         "plateau": "plateau", "images": "images", "bright_columns": "bright cols", "dark_columns": "dark cols",
+         "hot_pixels": "hot px", "cold_pixels": "cold px", "streaks_per_1000_reads": "streaks/1k reads",
+         "dc_median": "DC", "glow_index": "glow", "crosstalk_max": "xtalk"}
+
+
 def write_overview(path, data):
     """One overview page (overview_template.html) from data: title, sub, back [[label, href]], criteria (a section),
     fields {key: {label, unit}}, sections [[name, [keys]]], cell [keys], views [{name, note, ccds: [row]}],
@@ -235,6 +242,8 @@ def write_overview(path, data):
     index), flag_labels, csv_name. row: module, acm, ext, ccd, verdict, status, reasons, levels, values, links,
     history {head, rows}, when, tools (campaign index)."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    for k, f in (data.get("fields") or {}).items():
+        f.setdefault("short", SHORT.get(k.split(".")[-1], f.get("label", k)))
     body = json.dumps(jsonable(data), separators=(",", ":")).replace("</", "<\\/")
     with open(TEMPLATE) as fh:
         page = fh.read()
@@ -452,7 +461,7 @@ def images_overview(camp, records, crit, mods_of, path, back):
     views, matrices, sec = image_rows(records, crit, mods_of, link_prefix="../")
     data = dict(title="Images: fits and CCD quality", sub=sub_line(camp, f"{len(records)} image(s)"), back=back,
                 criteria=sec, fields={k: dict(label=a, unit=b) for k, (a, b) in IMAGE_FIELDS.items()},
-                sections=IMAGE_SECTIONS, cell=["read_noise_e", "dc_rate_e_per_pix_day"], views=views,
+                sections=IMAGE_SECTIONS, cell=["read_noise_e", "gain", "dc_rate_e_per_pix_day", "hot_columns"], views=views,
                 columns=["gain", "gain_vs_module_pct", "read_noise_e", "noise_adu", "dc_rate_e_per_pix_day",
                          "dc_row_intercept_e_per_pix", "chi2ndf", "glow_index", "hot_columns", "baseline_step_nsigma",
                          "crosstalk_max", "crosstalk_from", "saturated_pixels", "clustering_chain", "clusters", "image", "images"],
@@ -461,8 +470,9 @@ def images_overview(camp, records, crit, mods_of, path, back):
                             "each module. Coloured: >= 5 sigma and above the warn / fail limit; grey: not significant.",
                 flag_labels={"channel": "no charge seen", "gain": "gain not measured on the CCD", "fit": "fit parameter at a limit"},
                 csv_name="images_overview",
-                gridnote="Each cell: verdict, read noise [e-] and dark current [e-/pix/day] of the CCD's latest image of "
-                         "this setting, or what is wrong. Click a cell for every number, the history and the links.")
+                gridnote="Each cell: the verdict and the main numbers of the CCD's latest image of this setting (amber / "
+                         "red when outside a limit) and the first problem. 'Cells show' maps one parameter over all "
+                         "CCDs. Click a cell for every number, the history over the images and the links.")
     write_overview(path, data)
     return views
 
@@ -475,11 +485,40 @@ TOOL_LABELS = {"images": "Images", "packet": "Packets", "dc_series": "Dark curre
 TOOL_SHORT = {"images": "IM", "packet": "PK", "dc_series": "DC", "defects": "DF", "sr": "SR"}
 
 
+INDEX_MAIN = {"images": ["read_noise_e", "gain", "dc_rate_e_per_pix_day"],
+              "packet": ["noise_single_adu", "psd_sigma_cds_adu"], "dc_series": ["rate_last"],
+              "defects": ["bright_columns", "hot_pixels"], "sr": ["streaks_per_1000_reads"]}
+
+
+def tool_fields(tool):
+    """{key: (label, unit)} of a tool's overview values."""
+    if tool == "images":
+        return IMAGE_FIELDS
+    mod = {"packet": "packet_report", "dc_series": "dc_series", "defects": "defects", "sr": "sr_images"}[tool]
+    return __import__(mod).FIELDS
+
+
 def campaign_index(camp, tool_views, path, crit):
     """DIR/index.html: one row per CCD with every tool's verdict (worst over the tool's views), the reasons
     (prefixed with the tool) and links to the tools' overviews. tool_views: {tool: (href, [views])}."""
     per, tools = {}, []
+    fields, sections, metrics, cell = {}, [], {}, []
     for tool, (href, views) in tool_views.items():
+        T = TOOL_LABELS.get(tool, tool)
+        tf, tm = tool_fields(tool), (crit.get(tool) or {}).get("metrics") or {}
+        keys = []
+        for v in views:
+            for r in v["ccds"]:
+                keys += [k for k, x in (r.get("values") or {}).items() if k not in keys]
+        for k in keys:
+            lab, un = tf.get(k, (k.replace("_", " "), ""))
+            fields[f"{tool}.{k}"] = dict(label=f"{T}: {lab}", unit=un, plabel=lab,
+                                         short=f"{TOOL_SHORT.get(tool, tool[:2])} {SHORT.get(k, lab)}")
+            if k in tm and k in INDEX_MAIN.get(tool, []):
+                metrics[f"{tool}.{k}"] = dict(tm[k], label=f"{T}: {tm[k].get('label', k)}")
+        main_view = views[0]["name"] if views else ""
+        sections.append([T + (f" ({main_view})" if len(views) > 1 else ""), [f"{tool}.{k}" for k in keys]])
+        cell += [f"{tool}.{k}" for k in INDEX_MAIN.get(tool, []) if k in keys]
         rows = [r for v in views for r in v["ccds"]]
         n = counts(rows)
         tools.append(dict(label=TOOL_LABELS.get(tool, tool), href=href, n=n,
@@ -490,6 +529,11 @@ def campaign_index(camp, tool_views, path, crit):
                 c = per.setdefault(k, dict(module=r["module"], ext=r["ext"], acm=r.get("acm"), ccd=r.get("ccd"), tools={},
                                            reasons=[], values={}))
                 c["ccd"] = c["ccd"] or r.get("ccd")
+                if v is views[0] or not any(k.startswith(tool + ".") for k in c["values"]):   # values: the main view
+                    for k, x in (r.get("values") or {}).items():
+                        c["values"][f"{tool}.{k}"] = x
+                    for k, x in (r.get("levels") or {}).items():
+                        c.setdefault("levels", {})[f"{tool}.{k}"] = x
                 t = c["tools"].setdefault(TOOL_LABELS.get(tool, tool), dict(verdict="na", reasons=[], short=TOOL_SHORT.get(tool, tool[:2]),
                                                                             href=f"{href}#{r['module']}%20{r['ext']}", reports=[]))
                 # the CCD's full reports of this tool (module page, defect map, fit PDF), relative to the campaign folder
@@ -521,10 +565,14 @@ def campaign_index(camp, tool_views, path, crit):
         (f"run {i + 1}: {r['date']}", f"{r['command']} — {r['new']} new input(s), {r['skipped']} already in the campaign")
         for i, r in enumerate(runs[-30:])]
     data = dict(title=f"Commissioning campaign · {os.path.basename(camp.root)}", sub=sub_line(camp), back=[],
-                criteria=dict(name=crit.get("name"), version=crit.get("version"), note=crit.get("note"), metrics={}),
-                tools=tools, views=[dict(name="all tools", ccds=rows)], fields={}, sections=[], cell=[], columns=[],
+                criteria=dict(name=crit.get("name"), version=crit.get("version"), note=crit.get("note"), metrics=metrics),
+                tools=tools, views=[dict(name="all tools", ccds=rows)], fields=fields, sections=sections, cell=cell,
+                columns=[k for _, ks in sections for k in ks if not isinstance(next((r["values"].get(k) for r in rows
+                                                                                  if r["values"].get(k) is not None), 0), list)],
                 definitions=defs, csv_name="campaign_overview",
-                gridnote="Each cell: the CCD's worst verdict over the tools, one letter per tool coloured by that tool's "
-                         "verdict, and the first problem. Click a cell for every tool's reasons and links.")
+                gridnote="Each cell: the CCD's worst verdict over the tools, the tools' letters in their verdict's colour, "
+                         "the main numbers of every tool (amber / red when outside a limit) and the first problem. "
+                         "'Cells show' maps any parameter of any tool over all CCDs. Click a cell for every value, "
+                         "every tool's reasons and the links to the overviews and full reports.")
     write_overview(path, data)
     return rows

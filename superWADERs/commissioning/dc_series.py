@@ -346,7 +346,7 @@ def overview(camp, rows, crit, path, back, limit=None):
         fields={k: dict(label=a, unit=b) for k, (a, b) in FIELDS.items()},
         sections=[["Dark current", ["rate_median", "rate_last", "plateau", "tau_h", "row_intercept_median"]],
                   ["Series", ["images", "span_h", "noise_median"]]],
-        cell=["rate_last", "images"], views=[view],
+        cell=["rate_last", "rate_median", "plateau", "images"], views=[view],
         columns=["images", "span_h", "rate_median", "rate_last", "plateau", "tau_h", "row_intercept_median", "noise_median"],
         definitions=[("rate", "Dark charge of the fit / (exposure + half the readout) of each image, in e-/pix/day."),
                      ("settling fit", "rate(t) = plateau + A exp(-t / tau) with 5 or more images (shown when physical)."),

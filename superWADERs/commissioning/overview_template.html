@@ -17,7 +17,9 @@ nav{position:sticky;top:0;background:var(--bg);border-bottom:1px solid var(--lin
 nav a{color:var(--accent);text-decoration:none;white-space:nowrap}
 .layout{display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:16px}@media (max-width:900px){.layout{grid-template-columns:1fr}}
 .grid{width:100%;border-collapse:separate;border-spacing:3px;table-layout:fixed}.grid th{font-weight:600;text-align:left;font-size:12px;color:var(--muted);padding:2px 4px}.grid th:first-child{width:78px}
-.cell{border-radius:6px;padding:4px 6px;cursor:pointer;font-size:12px;line-height:1.25;border:2px solid transparent;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cell{border-radius:6px;padding:4px 6px;cursor:pointer;font-size:12px;line-height:1.3;border:2px solid transparent;overflow:hidden}
+.cell .nv,.cell .why{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cell .nl,.cell .u{color:var(--muted)}.cell .u{font-size:10px}
+.cell .why{font-size:11px;margin-top:1px}.cell .big{font-size:15px;font-weight:600;white-space:nowrap}.legend{font-size:12px}
 .cell:hover,.cell.sel{border-color:var(--accent)}.pass{background:var(--passbg)}.warn{background:var(--warnbg)}.fail{background:var(--failbg)}.na{background:var(--nabg)}
 .cell .v{font-weight:700;text-transform:uppercase;font-size:10px;letter-spacing:.04em}.cell.pass .v{color:var(--pass)}.cell.warn .v{color:var(--warn)}.cell.fail .v{color:var(--fail)}.cell.na .v{color:var(--na)}
 .mod{font-weight:600;white-space:nowrap;padding-right:6px}.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px}
@@ -44,7 +46,7 @@ input,select,button{font:inherit;padding:5px 8px;border:1px solid var(--line);bo
 <nav><div id="navl"></div></nav>
 <main>
 <h2 id="grid">Modules × CCDs</h2><p class="muted" id="gridnote"></p>
-<p><span id="vwbox"></span> Filter: <select id="fv"><option value="">all modules</option><option value="fail">modules with a fail</option><option value="warn">modules with a warn or fail</option></select></p>
+<p><span id="vwbox"></span> <span id="showbox"></span> Filter: <select id="fv"><option value="">all modules</option><option value="fail">modules with a fail</option><option value="warn">modules with a warn or fail</option></select></p>
 <div class="layout"><div style="overflow-x:auto"><table class="grid" id="g"></table></div><aside class="panel" id="panel"><span class="muted">Click a CCD in the grid.</span></aside></div>
 <h2 id="issues">What needs attention</h2><p class="muted">Findings grouped by what was found; click a CCD to show it.</p><div class="issues" id="iss"></div>
 <div id="distsec"><h2 id="dists">Distributions over all CCDs</h2><p class="muted">One dot per CCD, coloured by its verdict on that metric; amber and red lines are the warn and fail limits (grey dots: no limit set). Hover for the CCD, click to show it.</p><div class="dists" id="dd"></div></div>
@@ -66,7 +68,7 @@ document.title=D.title;$("#title").textContent=D.title;$("#sub").textContent=D.s
 $("#crumbs").innerHTML=(D.back||[]).map(([l,h])=>`<a href="${h}">${l}</a>`).join("");
 if(location.protocol!=="file:"&&location.protocol!=="http:"&&location.protocol!=="https:")$("#sub").textContent+=" · opened outside its folder: links to the other pages will not open";
 if(C.name&&/PLACEHOLDER/i.test(C.name))$("#banner").innerHTML=`<div class="banner"><b>Placeholder limits.</b> ${C.note||""}</div>`;
-$("#gridnote").textContent=D.gridnote||"Each cell: the verdict and its main numbers (passing CCDs) or what is wrong. Click a cell for every number, the reasons and the links.";
+$("#gridnote").textContent=D.gridnote||"Each cell: the verdict, the CCD's main numbers (in amber / red when outside a limit) and the first problem. 'Cells show' turns the grid into a map of one parameter. Click a cell for every number, the reasons and the links.";
 const navs=[["grid","Modules"],["issues","What needs attention"]].concat(Object.keys(M).length?[["dists","Distributions"]]:[]).concat(D.matrices?[["xt",D.matrix_title||"Matrices"]]:[]).concat([["table","Table"],["defs","Criteria and definitions"]]);
 $("#navl").innerHTML=navs.map(([a,b])=>`<a href="#${a}">${b}</a>`).join("");
 if(D.tools)$("#tools").innerHTML=D.tools.map(t=>`<a class="tool" href="${t.href}"><b>${t.label}</b><span style="color:var(--pass)">${t.n.pass||0} pass</span> · <span style="color:var(--warn)">${t.n.warn||0} warn</span> · <span style="color:var(--fail)">${t.n.fail||0} fail</span>${t.n.na?` · <span class="muted">${t.n.na} n/a</span>`:""}<div class="muted" style="font-size:12px;margin-top:3px">${t.note||""}</div></a>`).join("");
@@ -78,12 +80,32 @@ function index(){by={};rows().forEach(c=>by[key(c)]=c);mods=[...new Set(rows().m
 function modVerdict(m){const v=exts.map(e=>by[m+" "+e]).filter(Boolean).map(cls);return v.includes("fail")?"fail":v.includes("warn")?"warn":v.every(x=>x==="na")?"na":"pass";}
 const real=c=>(c.reasons||[]).filter(r=>r[0]==="fail"||r[0]==="warn");
 function why(c){const rs=real(c),r=rs[0];if(!r)return"";const k=r[1],v=(c.values||{})[k];return (r[3]||lab(k))+(typeof v==="number"?" "+fmt(v,3):"")+((rs.length>1)?` +${rs.length-1}`:"");}
-function cellBody(c){const k=cls(c);if(c.tools)return Object.entries(c.tools).map(([t,x])=>`<span class="tchip ${x.verdict}" title="${t}: ${x.verdict}">${x.short||t.slice(0,2)}</span>`).join("")+(k!=="pass"&&k!=="na"?" "+why(c):"");
- if(k==="pass")return (D.cell||[]).map(f=>`${fmt((c.values||{})[f],3)}${unit(f)?" "+unit(f):""}`).join(" · ");return k==="na"?(c.status||"no data"):why(c);}
-function drawGrid(){const f=$("#fv").value;let h="<tr><th>module</th>"+exts.map(e=>{const c=rows().find(x=>x.ext===e);return `<th>${e}${c&&c.ccd?" · "+c.ccd:""}</th>`}).join("")+"</tr>";
+let SHOWF="";
+const short=f=>(F[f]||{}).short||lab(f);
+function numFields(){const have=new Set();rows().forEach(c=>Object.entries(c.values||{}).forEach(([k,v])=>{if(typeof v==="number"&&isFinite(v))have.add(k)}));
+ const order=(D.cell||[]).concat(Object.keys(M),(D.sections||[]).flatMap(x=>x[1]),[...have]);return [...new Set(order)].filter(k=>have.has(k));}
+function showBox(){const fs=numFields();if(!fs.includes(SHOWF))SHOWF="";
+ $("#showbox").innerHTML=fs.length?`Cells show: <select id="sf"><option value="">verdict and main numbers</option>${fs.map(f=>`<option value="${f}"${f===SHOWF?" selected":""}>${lab(f)}${unit(f)?" ["+unit(f)+"]":""}</option>`).join("")}</select> <span id="legend" class="legend muted"></span>`:"";
+ if($("#sf"))$("#sf").onchange=e=>{SHOWF=e.target.value;drawGrid();};}
+function chips(c){return Object.entries(c.tools).map(([t,x])=>`<span class="tchip ${x.verdict}" title="${t}: ${x.verdict}">${x.short||t.slice(0,2)}</span>`).join("");}
+function cellBody(c){const k=cls(c),V=c.values||{};
+ if(SHOWF){const v=V[SHOWF];return typeof v==="number"&&isFinite(v)?`<div class="big">${fmt(v,3)}<span class="u">${unit(SHOWF)?" "+unit(SHOWF):""}</span></div>`:`<div class="big muted">–</div>`;}
+ let h=`<div class="v">${k==="na"?"n/a":k}${c.tools?" "+chips(c):""}</div>`;
+ const main=(D.cell||[]).filter(f=>V[f]!=null&&!(Array.isArray(V[f])));
+ h+=main.map(f=>{const lv=(c.levels||{})[f];return `<div class="nv"><span class="nl">${short(f)}</span> <b${lv&&lv!=="pass"?` style="color:var(--${lv})"`:""}>${fmt(V[f],3)}</b>${unit(f)?` <span class="u">${unit(f)}</span>`:""}</div>`}).join("");
+ if(k==="na"&&!main.length)h+=`<div class="muted">${c.status||"no data"}</div>`;
+ if(k==="warn"||k==="fail"){const w=why(c);if(w)h+=`<div class="why" style="color:var(--${k})">${w}</div>`;}
+ return h;}
+function scaleColor(f){const v=rows().map(c=>(c.values||{})[f]).filter(x=>typeof x==="number"&&isFinite(x)).sort((a,b)=>a-b);
+ if(!v.length)return()=>"";const lo=v[0],hi=v[v.length-1],q=x=>v.filter(y=>y<=x).length/v.length;
+ $("#legend").innerHTML=`min ${fmt(lo,3)} · median ${fmt(v[Math.floor(v.length/2)],3)} · max ${fmt(hi,3)} ${unit(f)}${M[f]?" · coloured by its limits":" · darker = larger"}`;
+ return x=>typeof x==="number"&&isFinite(x)?`background:color-mix(in srgb,var(--accent) ${Math.round(8+50*q(x))}%,var(--panel))`:"";}
+function drawGrid(){const f=$("#fv").value;const sc=SHOWF&&!M[SHOWF]?scaleColor(SHOWF):null;if(SHOWF&&M[SHOWF])scaleColor(SHOWF);if(!SHOWF&&$("#legend"))$("#legend").innerHTML="";
+ let h="<tr><th>module</th>"+exts.map(e=>{const c=rows().find(x=>x.ext===e);return `<th>${e}${c&&c.ccd?" · "+c.ccd:""}</th>`}).join("")+"</tr>";
  for(const m of mods){const mv=modVerdict(m);if(f==="fail"&&mv!=="fail")continue;if(f==="warn"&&(mv==="pass"||mv==="na"))continue;
-  h+=`<tr><td class="mod"><span class="dot" style="background:var(--${mv})"></span>${m}</td>`+exts.map(e=>{const c=by[m+" "+e];if(!c)return"<td></td>";const k=cls(c);
-   return `<td><div class="cell ${k}" data-k="${key(c)}" title="${real(c).map(x=>x[2]).join("\n").replace(/"/g,"&quot;")}"><div class="v">${k==="na"?"n/a":k}</div>${cellBody(c)}</div></td>`}).join("")+"</tr>";}
+  h+=`<tr><td class="mod"><span class="dot" style="background:var(--${mv})"></span>${m}</td>`+exts.map(e=>{const c=by[m+" "+e];if(!c)return"<td></td>";
+   let k=cls(c),st="";if(SHOWF){const lv=(c.levels||{})[SHOWF];k=M[SHOWF]?(lv||"na"):"na";if(sc){st=sc((c.values||{})[SHOWF]);}}
+   return `<td><div class="cell ${k}" style="${st}" data-k="${key(c)}" title="${real(c).map(x=>x[2]).join("\n").replace(/"/g,"&quot;")}">${cellBody(c)}</div></td>`}).join("")+"</tr>";}
  $("#g").innerHTML=h;document.querySelectorAll(".cell").forEach(el=>el.onclick=()=>show(el.dataset.k));}
 $("#fv").onchange=drawGrid;
 function show(k){const c=by[k];if(!c)return;document.querySelectorAll(".cell").forEach(e=>e.classList.toggle("sel",e.dataset.k===k));
@@ -92,7 +114,7 @@ function show(k){const c=by[k];if(!c)return;document.querySelectorAll(".cell").f
  h+=(c.reasons||[]).map(r=>`<div class="reason ${r[0]==="note"?"na":r[0]}">${r[0]==="fail"?"✖":r[0]==="warn"?"▲":"ℹ"} ${r[2]}</div>`).join("")||(cls(c)==="na"?`<div class="reason na">${c.status||"no data"}</div>`:`<div class="reason pass">✔ every check within the limits</div>`);
  if(c.tools){h+="<h4>Per tool: overview · full reports</h4><table>"+Object.entries(c.tools).map(([t,x])=>`<tr><td><a href="${x.href}" title="this tool's overview, opened at this CCD">${t}</a>${(x.reports||[]).length?`<div style="font-size:12px;margin-top:2px">${x.reports.map(([l,u])=>`<a href="${u}">${l}</a>`).join(" · ")}</div>`:""}</td><td><span class="chip ${x.verdict}">${x.verdict}</span></td></tr>`).join("")+"</table>";}
  for(const[sec,fs]of (D.sections||[])){const rs=fs.filter(f=>(c.values||{})[f]!=null&&!(Array.isArray(c.values[f])&&!c.values[f].length));if(!rs.length)continue;
-  h+=`<h4>${sec}</h4><table>`+rs.map(f=>{const lv=(c.levels||{})[f];return `<tr><td>${lab(f)}</td><td${lv&&lv!=="pass"?` style="color:var(--${lv});font-weight:600"`:""}>${fmt(c.values[f],4)}${unit(f)?" "+unit(f):""}</td></tr>`}).join("")+"</table>";}
+  h+=`<h4>${sec}</h4><table>`+rs.map(f=>{const lv=(c.levels||{})[f];return `<tr><td>${(F[f]||{}).plabel||lab(f)}</td><td${lv&&lv!=="pass"?` style="color:var(--${lv});font-weight:600"`:""}>${fmt(c.values[f],4)}${unit(f)?" "+unit(f):""}</td></tr>`}).join("")+"</table>";}
  if(D.matrices&&D.matrices[c.module])h+=`<h4>${D.matrix_title||"matrix"} · ${c.module}</h4>`+matTable(c.module);
  if(c.history&&c.history.rows&&c.history.rows.length)h+=`<h4>History (${c.history.rows.length})</h4><div class="hist"><table><tr>${c.history.head.map(x=>`<th>${x}</th>`).join("")}</tr>${c.history.rows.map(r=>`<tr>${r.map((x,i)=>`<td${i===r.length-1&&/fail|warn/.test(x)?` style="color:var(--${x})"`:""}>${fmt(x,4)}</td>`).join("")}</tr>`).join("")}</table></div>`;
  $("#panel").innerHTML=h;if(innerWidth<900)$("#panel").scrollIntoView({behavior:"smooth"});}
@@ -132,7 +154,7 @@ const lim=(c,l)=>c[l]==null?"–":`${c.direction==="below"?"<":">"} ${fmt(c[l])}
 $("#crit").innerHTML=Object.keys(M).length?`<p class="muted">${C.name||""} ${C.version?"("+C.version+")":""}</p><div class='tbl'><table><tr><th>check</th><th>warn</th><th>fail</th><th>unit</th></tr>`+Object.entries(M).map(([k,c])=>`<tr><td>${c.label}${c.abs?" (|value|)":""}</td><td>${lim(c,"warn")}</td><td>${lim(c,"fail")}</td><td>${c.unit||""}</td></tr>`).join("")+
  Object.entries(C.flag_levels||{}).map(([k,l])=>`<tr><td>${(D.flag_labels||{})[k]||k}</td><td colspan="3">${l}</td></tr>`).join("")+"</table></div>":"";
 $("#dl").innerHTML=(D.definitions||[]).map(([a,b])=>`<dt>${a}</dt><dd>${b}</dd>`).join("");
-function drawAll(){index();kpis();drawGrid();issues();dists();mats();table();$("#panel").innerHTML='<span class="muted">Click a CCD in the grid.</span>';
+function drawAll(){index();kpis();showBox();drawGrid();issues();dists();mats();table();$("#panel").innerHTML='<span class="muted">Click a CCD in the grid.</span>';
  const h=decodeURIComponent(location.hash.slice(1));if(by[h])show(h);}
 drawAll();
 </script></body></html>

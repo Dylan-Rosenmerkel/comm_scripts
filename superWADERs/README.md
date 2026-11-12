@@ -68,16 +68,30 @@ LSM2026/                        the --campaign folder (or superWADERs_<run name>
 Every full report links back to its overview ("← overview of all modules").
 
 **The overview pages** (`index.html`, `<tool>/index.html`, self-contained, offline) share one layout:
-- **Module × CCD grid:** a passing cell shows its main numbers, a failing or warning cell says what is wrong. Click a
-  cell for every number, the reasons, the history of the CCD's images and links to the module pages.
+- **Module × CCD grid.** Every cell shows the CCD's verdict and its main values, in amber / red when outside a limit,
+  and the first problem:
+
+  | page | values in the cells |
+  |---|---|
+  | images | read noise, gain, dark current, hot columns |
+  | packets | read noise, single-skip noise, PSD σ_CDS, gain |
+  | dark current | last and median rate, plateau, number of images |
+  | defect maps | bright / dark columns, hot / cold pixel spots |
+  | serial register | streaks per 1000 reads, read noise, dark charge |
+  | campaign | every tool's main values, labelled with the tool (IM, PK, DC, DF, SR) |
+
+- **"Cells show" selector:** turns the grid into a map of any one value over all modules and CCDs. Judged values are
+  coloured by their limits, the others by a scale, with the min / median / max shown.
+- **CCD panel:** click a cell for every value, the reasons, the history of the CCD's images and links to the full
+  reports.
 - **What needs attention:** findings grouped by type.
 - **Distributions:** every judged metric over all CCDs, with the warn / fail limits.
 - **Crosstalk matrices** (images).
-- **Full table:** sortable, filterable, with CSV download.
+- **Full table:** every value, sortable, filterable, with CSV download. The campaign page's table has every tool's
+  values per CCD.
 - **Criteria and definitions.**
 
-The images overview has one view per image setting (e.g. 500-skip 1×1 and 1-skip 1×1). The module pages of each tool
-link back to its overview.
+The images overview has one view per image setting (e.g. 500-skip 1×1 and 1-skip 1×1).
 
 **Verdicts** come from the criteria file the campaign keeps (`criteria.json`, a copy of
 `commissioning/criteria_default.json` or of `--criteria FILE`):
