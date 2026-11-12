@@ -7,7 +7,8 @@ the FITS header of an image carries):
       the inline per-skip window sums; psd_*: raw samples without windows (for noise spectra).
       -> decoded and checked (inline sums = sums of the flagged raw samples), plots and an interactive viewer
          (L0/<name>/), a summary per trace. Traces are not images: nothing goes into the image pipeline.
-  L1  images (*_1x1_L1_*): the pedestal and signal window sums of EVERY skip of every pixel.
+  L1  images (*_<R>x<C>x<S>_<B1>x<B2>_L1_*, binned or not): the pedestal and signal window sums of EVERY skip of
+      every pixel.
       -> FITS images like the DAQ's averaged images (avg_img_*.fits: header from the .meta, one image extension
          per channel in channel order, pixel = mean over skips of (pedestal - signal) / n in ADU), one per number of
          skips N (the first N skips after --l1-skip-first), written to L1/ and run through the pipeline like any
@@ -17,7 +18,8 @@ the FITS header of an image carries):
 The file readers are copies of ccd_opt_ml's (src/raw_levels/, utils/sync_from_ccd_opt_ml.py): decode_trace,
 trace_regions, plot_trace, view_trace for L0; for L1 the layout of decode_l1 (also skip_noise_L1.py), read here row
 by row (a full L1 image holds 4 x skips words per pixel: GBs), keeping only the sums needed for the requested N.
-Binned (NxN) level-1 images have another layout and are not read.
+Binned level-1 images are read too: a row starts after its run of LINE markers (one per vertical shift, NPBIN of
+them), and the per-pixel record is the same as unbinned; NCOL (name / .meta) is already the number of binned columns.
 """
 import glob
 import json
@@ -94,7 +96,7 @@ def l1_skip_means(path, ncol, nskip, skip_first, ns):
     head = np.asarray(w[:256], np.int64)
     first = np.flatnonzero(head == L1.LINE)
     if not len(first):
-        raise ValueError(f"{os.path.basename(path)}: no LINE marker at the start: not a 1x1 level-1 image")
+        raise ValueError(f"{os.path.basename(path)}: no LINE marker at the start: not a level-1 image")
     row_len = ncol * pix
     out = {n: [] for n in ns}
     problems, r = [], 0

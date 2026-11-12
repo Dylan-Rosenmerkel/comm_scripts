@@ -242,11 +242,11 @@ engine (--engine; default waders for run_WADERs, native for run_superWADERs):
   Raw DAQ files (native only; src/raw_data.py, readers copied from ccd_opt_ml into src/raw_levels/):
     level-0 traces (trace_*, psd_* .RJ45ADCDATA<ch>): decoded, checked (inline sums vs raw samples) and plotted
           (L0/<trace>/overview.png, viewer.html, summary.json); not images, so not run through the pipeline.
-    level-1 images (*_1x1_L1_*.RJ45ADCDATA<ch> + .meta): one FITS image per number of skips N (--l1-skips; the
-          mean of skips K..K+N-1, --l1-skip-first K), with the DAQ header from the .meta, written to L1/ and run
-          through the pipeline; then L1/noise_vs_skips.csv/.png (noise and gain per CCD against N) and
-          L1/compare/ (the DC-fit, baseline and sigma plots of every N side by side). Give the four channel
-          files of an image (or a .txt listing them); binned level-1 images are not read.
+    level-1 images (*_L1_*.RJ45ADCDATA<ch> + .meta, binned or not): one FITS image per number of skips N
+          (--l1-skips; the mean of skips K..K+N-1, --l1-skip-first K), with the DAQ header from the .meta,
+          written to L1/ and run through the pipeline; then L1/noise_vs_skips.csv/.png (noise and gain per CCD
+          against N) and L1/compare/ (the DC-fit, baseline and sigma plots of every N side by side). Give the four channel
+          files of an image (or a .txt listing them).
 
 output (WADERs_analysis_<run name>/):
   *.pdf, *_waders.fits.bz2     panaSKImg plots and processed images
@@ -467,7 +467,7 @@ def build_parser(full=False):
                     help="--engine native: cluster thresholds. auto (default): in electrons from each CCD's dark "
                          "charge; sigma0: panaSKImg's 10 / 30 x pedestal sigma; PIX,SEED: fixed, in electrons")
     ap.add_argument("--l1-skips", metavar="auto|N,N,...", default="auto",
-                    help="--engine native, level-1 inputs (*_1x1_L1_*.RJ45ADCDATA<ch>): one FITS image per number of "
+                    help="--engine native, level-1 inputs (*_L1_*.RJ45ADCDATA<ch>): one FITS image per number of "
                          "skips N (mean of the first N skips), all run through the pipeline. auto (default): 1, 2, 5, "
                          "10, 20, 50, ... and all; 'all' = every skip (details: -h -v)")
     ap.add_argument("--l1-skip-first", metavar="K", type=int, default=0,
