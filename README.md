@@ -190,8 +190,10 @@ What each tool does:
   from the active region, CTI n/a); its plot is in the page's "Image_4 plot" tab.
   `defects.csv` is the defect log.
 - **Serial-register images** (`--sr`): streaks in the serial register (readout artifacts): runs of >=
-  `--sr-min-length` pixels above `--sr-threshold` x noise along one read, confined to it. Streak list, counts per
-  1000 reads, lengths, positions along the register, dark charge per read.
+  `--sr-min-length` pixels above `--sr-threshold` x noise along one read, confined to it. Page: a Diagnostics tab
+  (streaks per image and per 1000 reads, dark charge, read noise and gain per image, dark charge per read, streak
+  lengths and positions, a table of all numbers) and one tab per image with the streaks marked; the streak list
+  is in `sr_streaks.csv`.
 
 ### The interactive pages
 

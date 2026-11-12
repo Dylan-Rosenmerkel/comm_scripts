@@ -616,10 +616,11 @@ async function defectsTab(t, items) {        // defect map, the CCDs as frames
   const host = el("div"), list = el("div"), cache = []; let iv = null;
   const fb = frameBar(t, items, async i => {
     const d = items[i].d;
-    head.replaceChildren(el("h2", "", d.title), table(d.numbers), el("p", "readout", "Coloured marks: the defects found (tick to show / hide a type). Click a line of the defect list to go to it."));
+    head.replaceChildren(el("h2", "", d.title), table(d.numbers), el("p", "readout", "Coloured marks: what was found (tick to show / hide a type)." + (d.defects ? " Click a line of the list below to go to it." : "")));
     const v = cache[i] || (cache[i] = [await arr(d.pixels), await arr(d.mask)]);
     const ov = { mask: v[1], types: d.types };
     if (!iv) iv = new ImageView(host, v[0], d.w, d.h, { unit: d.unit, overlay: ov }); else iv.setImage(v[0], d.w, d.h, ov, d.unit);
+    if (!d.defects) { list.replaceChildren(); return; }       // no list on this page (e.g. serial-register streaks)
     list.replaceChildren(el("h3", "", `List (${d.defects.length}${d.defects_more ? ", the " + d.defects.length + " largest of " + (d.defects.length + d.defects_more) : ""}; click a line to go to it)`));
     const types = [...new Set(d.defects.map(x => x[0]))], ctl = el("div", "controls");
     ctl.innerHTML = `show <select><option value="">all types</option>${types.map(ty => `<option>${ty}</option>`).join("")}</select> sort <select><option value="v">largest value first</option><option value="p">by position</option></select>`;

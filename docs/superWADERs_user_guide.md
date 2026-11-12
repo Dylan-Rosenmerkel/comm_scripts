@@ -121,8 +121,11 @@ run_superWADERs sr_images.txt --sr [--sr-threshold 4] [--sr-min-length 3] [--no-
 Streaks = serial-register events (readout artifacts): runs of >= `--sr-min-length` pixels above `--sr-threshold` x
 noise along one read (row), confined to it. `sr/`: `sr_streaks.csv` (one line per streak), `sr_summary.csv` (per
 image and CCD: streaks, per 1000 reads, median length, DC), per CCD a PNG (counts per image, lengths, positions
-along the register, dark charge per read) and one interactive page per module `<module>_ACM<id>_sr.html` (the
-images with the streaks marked, the frame slider over the CCDs).
+along the register, dark charge per read) and one interactive page per module `<module>_ACM<id>_sr.html`:
+**Diagnostics** (per image: streaks, streaks per 1000 reads, dark charge from the fit and the 0e-/1e- counts, read
+noise, gain; dark charge per read; streak lengths and start positions; a table of all numbers; the CCDs overlaid)
+and one tab per image with the streaks marked (frame slider over the CCDs). The streak list is only in
+`sr_streaks.csv`, not on the page.
 
 ## 3. Using the HTML pages
 

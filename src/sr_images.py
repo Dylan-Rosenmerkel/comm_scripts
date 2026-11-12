@@ -10,8 +10,9 @@ image (pedestal and fits from the native engine):
   numbers         streaks per image, per read (row) and per 1000 reads, lengths, charge, position along the register
   DC plots        dark charge per read (row, from the 0e- fraction) against the read number / time, and the fit's DC
 Outputs (out_dir/sr/): sr_streaks.csv (one line per streak), sr_summary.csv, per CCD a PNG, and one interactive
-page per module (CCD check boxes; streak counts, DC per read, the image with the streaks marked with a slider over the
-CCDs, a clickable streak list).
+page per module (CCD check boxes): a Diagnostics tab (per image: streaks, streaks per 1000 reads, dark charge (fit and
+0e-/1e- counts), read noise, gain; dark charge per read; streak lengths and start positions; a table of every
+number) and one tab per image with the streaks marked (frame slider over the CCDs; no streak list on the page).
 Tested only on synthetic data so far (no SR image files yet): thresholds may need tuning on real SR images.
 """
 import os
@@ -78,7 +79,9 @@ def run(images, summaries, out_dir, mods_of, meta_of, thr_sigma=4.0, min_len=3, 
             st = find_streaks(img, active, thr, min_len)
             ccd = m.get(f"CH{n - 1}") or f"ch{n - 1}"
             per_ccd.setdefault((acm, n, ccd), []).append(dict(image=os.path.basename(p), img=img, unit=unit, thr=thr, streaks=st,
-                                                              lam_rows=c.get("lam_rows"), dc=c["dc_e"], noise=noise, rows=ps.shape[0]))
+                                                              lam_rows=c.get("lam_rows"), dc=c["dc_e"], noise=noise, rows=ps.shape[0],
+                                                              noise_e=c["noise_e"], gain=g, gain_err=c.get("gain_err"),
+                                                              lam01=c.get("lam01"), resolved=resolved))
             for r in st:
                 rows_csv.append([mods_of(acm, n, ccd), acm, n, ccd, os.path.basename(p), *r[:4], f"{r[4]:.4g}", f"{r[5]:.4g}", unit])
             sum_csv.append([mods_of(acm, n, ccd), acm, n, ccd, os.path.basename(p), ps.shape[0], len(st),
@@ -99,7 +102,7 @@ def run(images, summaries, out_dir, mods_of, meta_of, thr_sigma=4.0, min_len=3, 
     for (acm, n, ccd), items in sorted(per_ccd.items()):
         mod = mods_of(acm, n, ccd)
         rid = f"{mod}_ACM{acm}_EXT{n}_{ccd}_sr"
-        # figure: counts per image, per read, lengths, positions, DC per read
+        # figure (PNG file): counts per image, lengths, positions, DC per read
         fig, ax = plt.subplots(2, 2, figsize=(13, 8))
         ax[0, 0].bar(range(len(items)), [len(it["streaks"]) for it in items])
         ax[0, 0].set(xlabel="image (time order of the list)", ylabel="streaks", title="serial-register streaks per image")
@@ -114,16 +117,55 @@ def run(images, summaries, out_dir, mods_of, meta_of, thr_sigma=4.0, min_len=3, 
         ax[1, 1].set(xlabel="read (row)", ylabel="dark charge per pixel [e-]", title="dark charge per read")
         fig.suptitle(f"{mod} ACM {acm} EXT{n} {ccd}: serial-register images")
         fig.tight_layout()
-        png = os.path.join(d, rid + ".png")
-        fig.savefig(png, dpi=100)
+        fig.savefig(os.path.join(d, rid + ".png"), dpi=100)
         plt.close(fig)
-        import base64
-        tabs = [dict(id="sr", label="Streaks", kind="figure", data=dict(
-            title="Serial-register streaks and dark charge per read",
-            numbers=[[it["image"], f"{len(it['streaks'])} streaks in {it['rows']} reads ({1000 * len(it['streaks']) / max(it['rows'], 1):.3g} "
-                      f"per 1000), threshold {it['thr']:.3g} {it['unit']}, DC {it['dc']:.4g} e-/pix"] for it in items],
-            figures=[dict(caption="counts, lengths, positions, dark charge per read", png=base64.b64encode(open(png, "rb").read()).decode())]),
-            log=[f"{it['image']}: noise {it['noise']:.3g} {it['unit']}, threshold {it['thr']:.3g} {it['unit']}, min length {min_len}" for it in items])]
+        # Diagnostics tab: interactive plots per image (CCDs overlaid on the module page), a table of every number
+        enc = PR.enc
+        x = np.arange(1, len(items) + 1, dtype=float)
+        nan = float("nan")
+        ser = lambda y, name, style="line": dict(x=enc(x, "f8"), y=enc(np.array(y, float)), name=name, style=style)
+        lens = np.array([r[3] for r in allst], float)
+        cols = np.array([r[1] for r in allst], float)
+        def hist(v, bins):
+            if not v.size:
+                return dict(x=enc(np.zeros(1), "f8"), y=enc(np.zeros(1)), name="streaks", style="step")
+            h, e = np.histogram(v, bins)
+            return dict(x=enc(e[:-1], "f8"), y=enc(h.astype(float)), name="streaks", style="step")
+        plots = [dict(title="streaks per image", xlabel="image (order of the list)", ylabel="streaks",
+                      series=[ser([len(it["streaks"]) for it in items], "streaks")]),
+                 dict(title="streaks per 1000 reads", xlabel="image (order of the list)", ylabel="per 1000 reads",
+                      series=[ser([1000 * len(it["streaks"]) / max(it["rows"], 1) for it in items], "per 1000 reads")]),
+                 dict(title="dark charge per image", xlabel="image (order of the list)", ylabel="e-/pix",
+                      series=[ser([it["dc"] for it in items], "dark-current fit"),
+                              ser([it["lam01"] if it["lam01"] is not None else nan for it in items], "0e-/1e- pixel counts", "points")]),
+                 dict(title="read noise per image", xlabel="image (order of the list)", ylabel="e-",
+                      series=[ser([it["noise_e"] for it in items], "noise")]),
+                 dict(title="gain per image", xlabel="image (order of the list)", ylabel="ADU/e-",
+                      series=[ser([it["gain"] for it in items], "gain")]),
+                 dict(title="dark charge per read (one series per image)", xlabel="read (row)", ylabel="e-/pix",
+                      series=[dict(x=enc(np.arange(len(it["lam_rows"]), dtype=float), "f8"), y=enc(np.array(it["lam_rows"], float)),
+                                   name=it["image"][-28:], style="points") for it in items if it["lam_rows"]]),
+                 dict(title="streak lengths (all images)", xlabel="length [pixels]", ylabel="streaks",
+                      series=[hist(lens, np.arange(min_len, max(lens.max() if lens.size else min_len, min_len) + 2))]),
+                 dict(title="where the streaks start (all images)", xlabel="first column", ylabel="streaks",
+                      series=[hist(cols, 50)])]
+        fmt = lambda v, f="{:.4g}": "-" if v is None or (isinstance(v, float) and not np.isfinite(v)) else f.format(v)
+        table = dict(head=["#", "image", "reads", "streaks", "per 1000 reads", "median length", "DC fit [e-/pix]",
+                           "DC 0e-/1e- [e-/pix]", "noise [e-]", "gain [ADU/e-]", "peaks resolved", "threshold"],
+                     rows=[[str(k + 1), it["image"], str(it["rows"]), str(len(it["streaks"])),
+                            fmt(1000 * len(it["streaks"]) / max(it["rows"], 1), "{:.3g}"),
+                            fmt(float(np.median([r[3] for r in it["streaks"]])) if it["streaks"] else None, "{:.3g}"),
+                            fmt(it["dc"]), fmt(it["lam01"]), fmt(it["noise_e"], "{:.3f}"), fmt(it["gain"], "{:.4f}"),
+                            "yes" if it["resolved"] else "no", f"{it['thr']:.3g} {it['unit']}"] for k, it in enumerate(items)])
+        nst_all = len(allst)
+        nums = [["images", str(len(items))], ["streaks", f"{nst_all} ({1000 * nst_all / max(sum(it['rows'] for it in items), 1):.3g} per 1000 reads)"],
+                ["median dark charge", f"{np.median([it['dc'] for it in items]):.4g} e-/pix"],
+                ["median read noise", f"{np.median([it['noise_e'] for it in items]):.4g} e-", bool(np.median([it['noise_e'] for it in items]) > 0.3)],
+                ["median gain", f"{np.median([it['gain'] for it in items]):.4g} ADU/e-"]]
+        tabs = [dict(id="diag", label="Diagnostics", kind="plots", data=dict(
+            title="Diagnostics: streaks, dark charge, noise and gain per image", numbers=nums, table=table, plots=plots),
+            log=[f"{it['image']}: noise {it['noise']:.3g} {it['unit']}, threshold {it['thr']:.3g} {it['unit']}, min length {min_len}, "
+                 f"{len(it['streaks'])} streaks, DC {it['dc']:.4g} e-/pix, gain {it['gain']:.4f} ADU/e-" for it in items])]
         for k, it in enumerate(items):
             mask = np.zeros(it["img"].shape, np.uint8)
             for r in it["streaks"]:
@@ -131,8 +173,8 @@ def run(images, summaries, out_dir, mods_of, meta_of, thr_sigma=4.0, min_len=3, 
             tabs.append(dict(id=f"img{k}", label=f"image {k + 1}", kind="defects", log=[it["image"]], data=dict(
                 title=f"{it['image']}: streaks marked", unit=it["unit"], w=int(it["img"].shape[1]), h=int(it["img"].shape[0]),
                 pixels=PR.enc(it["img"]), mask=PR.enc(mask, "u1"), types=[dict(name="streak", color="#ff3b30", n=len(it["streaks"]))],
-                defects=[["streak", r[1], r[0], r[3], r[4], it["unit"]] for r in sorted(it["streaks"], key=lambda r: -r[4])[:1500]],
-                defects_more=max(0, len(it["streaks"]) - 1500), numbers=[["streaks", str(len(it["streaks"]))], ["reads", str(it["rows"])]])))
+                defects=None, numbers=[["streaks", str(len(it["streaks"]))], ["reads", str(it["rows"])],
+                                       ["threshold", f"{it['thr']:.3g} {it['unit']}"]])))
         nst = sum(len(it["streaks"]) for it in items)
         modules.setdefault(mod, []).append((acm, n, ccd, tabs, nst))
         lines.append(f"  {mod} ACM {acm} EXT{n} {ccd}: {nst} streaks in {len(items)} image(s)")
