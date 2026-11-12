@@ -1,14 +1,15 @@
-# run_superWADERs: user guide (2026-11-11)
+# run_superWADERs: user guide (2026-11-12)
 
-`run_superWADERs` = `run_WADERs` with comm_scripts' own (native) engine: no panaSKImg needed, same command line and
-output folders, plus the commissioning tools below. `run_WADERs` itself still runs panaSKImg by default
-(`--engine native|waders` switches either command). Python: the `damic` conda environment (found automatically).
+`run_superWADERs` is a separate program (`superWADERs/`; overview, clustering and layout in
+[superWADERs/README.md](../superWADERs/README.md)): its own engine (no panaSKImg), clustering chosen per CCD, and the
+commissioning tools below. It uses nothing from `run_WADERs` or `src/`. Python: the `damic` conda environment (found
+automatically).
 
 ```
 run_superWADERs INPUT [-o PARENT] [-j N] [options]       # INPUT: one file, or a .txt list (one path per line)
 run_superWADERs -h            # all flags          run_superWADERs -h -v     # the full guide
 ```
-Results: `PARENT/WADERs_analysis_<input name>/` (`--overwrite` to replace an existing one), `summary.txt` first.
+Results: `PARENT/superWADERs_<input name>/` (`--overwrite` to replace an existing one), `summary.txt` first.
 
 ## 1. What it takes as input
 
@@ -35,12 +36,15 @@ Without an entry: `--module ACM=NAME`, then the data folder name (`..._DMa_DMb_D
 
 ## 2. The commands
 
-### Ordinary runs (as run_WADERs)
+### Fits and clusters
 ```
-run_superWADERs images.txt --gain-correction --clusterer both --composite --module-list modules.csv
+run_superWADERs images.txt --gain-correction --composite --module-list modules.csv
 ```
-`--thresholds auto|sigma0|PIX,SEED` (native: cluster thresholds; default auto = from the dark charge), `--tune`,
-`--all-ext`, `--no-clusters`, `--gain-*`, `--composite`: as in run_WADERs (`-h`).
+Clustering: `--clusterer auto` (default; one chain per CCD: A_GMX + Bayesian few-electron switch, A_GMX crowded mode,
+A_GMX 'unmodelled', threshold clusterer; see superWADERs/README.md), `agmx` or `threshold` (one clusterer everywhere).
+`--thresholds auto|sigma0|PIX,SEED` (threshold clusterer), `--gain` / `--gain-file` (CCDs without a comb), `--tune`,
+`--no-clusters`, `--gain-*`, `--composite`: `-h`. Every CCD is processed (flooded CCDs go to the threshold clusterer).
+Per CCD, `summary.txt` lists the chain and why; `characterisation/<image>.json` has the full record.
 
 ### L1 images: images with N skips (`--l1-skips`)
 ```
@@ -196,11 +200,12 @@ Every page works offline (no network) in Chrome, Safari or Firefox; open it by d
 
 | what | file |
 |---|---|
-| command | `bin/run_superWADERs` (launcher), `bin/run_WADERs` (`run_native`, `run_packet`, `module_resolver`) |
-| native engine | `src/native_pipeline.py`, `native_kernels.py`, `native_rootio.py`, `native_plots.py` |
-| L0 / L1 | `src/raw_data.py`; readers copied from ccd_opt_ml in `src/raw_levels/` (`utils/sync_from_ccd_opt_ml.py [--check]`) |
-| packet report and the page template | `src/packet_report.py`, `src/packet_report_template.html` |
-| DC series | `src/dc_series.py` |
-| defects | `src/defects.py`; group scripts copied in `src/lsm_defects/` (`utils/sync_from_lsm_analysis.py [--check]`) |
-| SR images | `src/sr_images.py` |
-| docs | this guide; `docs/native_pipeline.md`, `docs/native_pipeline_validation.md`, `docs/superWADERs_commissioning_next_steps.md` |
+| command | `superWADERs/run_superWADERs` (`bin/run_superWADERs` starts it) |
+| engine | `superWADERs/engine/`: `native_pipeline.py`, `characterise.py`, `native_kernels.py`, `native_rootio.py`, `native_plots.py`, and its own autoconfig / gain modules |
+| clustering | `superWADERs/clustering/` (A_GMX, Bayesian few-electron finder) |
+| L0 / L1 | `superWADERs/commissioning/raw_data.py`; readers copied from ccd_opt_ml in `raw_levels/` (`utils/sync_from_ccd_opt_ml.py [--check]`) |
+| packet report and the page template | `superWADERs/commissioning/packet_report.py`, `packet_report_template.html` |
+| DC series | `superWADERs/commissioning/dc_series.py` |
+| defects | `superWADERs/commissioning/defects.py`; group scripts copied in `lsm_defects/` (`utils/sync_from_lsm_analysis.py [--check]`) |
+| SR images | `superWADERs/commissioning/sr_images.py` |
+| docs | this guide; `superWADERs/README.md`; `docs/native_pipeline.md`, `docs/native_pipeline_validation.md` (engine validation), `docs/superWADERs_commissioning_next_steps.md` |

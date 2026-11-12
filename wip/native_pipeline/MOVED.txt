@@ -1,1 +1,2 @@
 native pipeline moved to src/ (native_pipeline.py, native_kernels.py, native_rootio.py), utils/validate_native.py and docs/native_pipeline*.md; composite/ is the MakeComposite copy used for the compatibility test.
+2026-11-12: the any-image front end of this folder (characterise.py, --clusterer auto) is now in superWADERs/engine/ and is the default of run_superWADERs (superWADERs/README.md). This folder is kept as the record of the study (ANYIMAGE.md, run.py).

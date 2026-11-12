@@ -10,12 +10,14 @@ Scripts to analyse skipper-CCD images with panaSKImg (WADERs) without writing JS
 ```
 comm_scripts/
   README.md
-  bin/     commands to run          run_WADERs (and the alias runWADERs), run_superWADERs (run_WADERs with the native
-                                    engine as default, plus the commissioning tools), run_AGMX (A_GMX clusters for a
-                                    finished run)
+  bin/     commands to run          run_WADERs (and the alias runWADERs), run_superWADERs (starts
+                                    superWADERs/run_superWADERs), run_AGMX (A_GMX clusters for a finished run)
   src/     the pipeline modules     autoconfig_panaSKImg.py, gain_dc_split.py,
-                                    gain_vs_charge.py, fit_quality.py, agmx_root.py (A_GMX -> panaSKImg cluster files);
-                                    native engine and commissioning tools of run_superWADERs (see that section)
+  of run_WADERs                     gain_vs_charge.py, fit_quality.py, agmx_root.py (A_GMX -> panaSKImg cluster files);
+                                    native_*.py and the commissioning tools for run_WADERs --engine native
+  superWADERs/  a separate program  run_superWADERs with its own engine, clustering (clusterer auto: one chain per
+                                    CCD) and commissioning tools; uses nothing from bin/run_WADERs, src/, clustering_tests/
+                                    or wip/ (superWADERs/README.md)
   utils/   standalone helpers       compare_dcfit_vs_skips.py, split_clustersRec_by_ext.py,
                                     skip_noise_L1.py, compare_runs.py
   clustering_tests/  research code   alternative clustering methods (A_GMX, GMX, MHC, MFD+G, ...) and the
@@ -43,12 +45,15 @@ function does what. Everything still open: `docs/notes/OPEN_ITEMS.md`.
 ```bash
 /path/to/comm_scripts/bin/run_WADERs image.fz          # one image
 /path/to/comm_scripts/bin/run_WADERs my_images.txt     # a list, one image path per line
-/path/to/comm_scripts/bin/run_superWADERs my_images.txt   # the same without panaSKImg (native engine)
+/path/to/comm_scripts/bin/run_superWADERs my_images.txt   # superWADERs: no panaSKImg, clustering chosen per CCD
 ```
 
-`run_superWADERs` is `run_WADERs` without panaSKImg (its own "native" engine), plus the commissioning tools: raw
+`run_superWADERs` is a separate program (`superWADERs/`): its own engine and clustering, with the chain chosen per
+CCD (Bayesian few-electron finder / A_GMX / crowded A_GMX / unmodelled / threshold), plus the commissioning tools: raw
 L0 / L1 files, commissioning packet reports, dark current over a series, defect maps and serial-register images.
-See [run_superWADERs](#run_superwaders-native-engine-and-commissioning-tools) below.
+See [run_superWADERs](#run_superwaders-a-separate-program) below and [superWADERs/README.md](superWADERs/README.md).
+
+The rest of this section is about `run_WADERs`.
 
 Results go to `WADERs_analysis_<image or list name>/` in the current folder (`-o` to choose another):
 
@@ -105,19 +110,24 @@ gain periods by 0.6 % (on Fe-55 it was as good or slightly better).
 On the 2025-08-27 Image 5s the per-image and pooled curves gave the same front-side K-alpha to
 within a few eV whenever an image's own comb was usable.
 
-## run_superWADERs: native engine and commissioning tools
+## run_superWADERs: a separate program
 
-`run_superWADERs` = `run_WADERs --engine native`: comm_scripts' own pedestal, fits, clustering and cluster files in
-panaSKImg's format (`src/native_pipeline.py`), one process per image, with the same options, output folders and
-`summary.txt`. `run_WADERs` still runs panaSKImg by default; `--engine native|waders` switches either command. It
-needs the `damic` conda environment (found automatically, as for `run_WADERs`).
+`run_superWADERs` (`superWADERs/`, started by `bin/run_superWADERs`) has its own engine, clustering and commissioning
+tools, and uses nothing from `bin/run_WADERs`, `src/`, `clustering_tests/` or `wip/` (its modules started as copies of
+them on 2026-11-12 and now change on their own). Pedestal, fits and cluster files in panaSKImg's format are the native
+engine's; the clustering is chosen per CCD (`--clusterer auto`, the default): A_GMX with the Bayesian few-electron
+switch on sparse electron-counting CCDs, A_GMX crowded mode on crowded ones, A_GMX 'unmodelled' (hysteresis) on noisy
+or structured ones, the threshold clusterer on flooded / unresolved ones; every choice is listed in `summary.txt`.
+Clustering, layout and what has been checked: [superWADERs/README.md](superWADERs/README.md). It needs the `damic`
+conda environment (found automatically). `run_WADERs --engine native` still runs `src/`'s copy of the native engine
+(threshold or A_GMX clusters), unchanged.
 
 ```bash
 run_superWADERs INPUT [-o PARENT] [-j N] [--overwrite] [options]    # INPUT: one file, or a .txt list (one path per line)
 run_superWADERs -h                                                  # every flag;  -h -v: the full guide
 ```
 
-Results: `PARENT/WADERs_analysis_<input name>/`; read `summary.txt` first. The full user guide, with what every
+Results: `PARENT/superWADERs_<input name>/`; read `summary.txt` first. The full user guide, with what every
 number and plot means and what data are still needed to validate each tool, is
 [docs/superWADERs_user_guide.md](docs/superWADERs_user_guide.md).
 
@@ -150,7 +160,7 @@ Without an entry the name comes from `--module ACM=NAME`, then the data folder n
 
 | task | command | output (in the run folder) |
 |---|---|---|
-| ordinary analysis without panaSKImg | `run_superWADERs images.txt [--gain-correction] [--clusterer both] [--composite]` | as run_WADERs |
+| fits and clusters (chain per CCD) | `run_superWADERs images.txt [--gain-correction] [--composite]` | `root/` (+ `root_gaincorr*/`), `summary.txt`, `characterisation/` |
 | L0 traces / PSD traces | `run_superWADERs traces.txt [--l0-no-html]` | `L0/<trace>/`: `overview.png`, `viewer.html`, `summary.json` |
 | L1 images at several skip counts | `run_superWADERs l1.txt --l1-skips 1,10,100,1000 [--l1-skip-first K]` | `L1/`: one FITS per N (all through the pipeline), `noise_vs_skips.csv/.png`, `compare/`, `<image>_diagnostics/` |
 | commissioning packet | `run_superWADERs packet.txt --packet --module-list modules.csv` | `packet/index.html` + one page per module |
@@ -163,10 +173,12 @@ has an `index.html` listing its pages. Add `--no-clusters` when you need no clus
 
 What each tool does:
 
-- **Native engine**: the same steps as run_WADERs (autoconfig, gain from the many-peak fit where better, dark current
-  from the 0e-/1e- peaks, every panaSKImg pedestal method, `--tune`), and panaSKImg's `--save-plots` PDFs. Cluster
-  thresholds: `--thresholds auto` (default; in electrons from each CCD's dark charge), `sigma0` (WADERs' 10 / 30
-  sigma) or `PIX,SEED`.
+- **Engine**: the same steps as run_WADERs (autoconfig, gain from the many-peak fit where better, dark current
+  from the 0e-/1e- peaks, every panaSKImg pedestal method, `--tune`), and panaSKImg's `--save-plots` PDFs. Before
+  the fits, a characterisation of every image and CCD (`characterisation/<image>.json`); clustering chain per CCD
+  (`--clusterer auto`, or `agmx` / `threshold` everywhere). Thresholds of the threshold clusterer: `--thresholds auto`
+  (default; in electrons from each CCD's dark charge), `sigma0` (WADERs' 10 / 30 sigma) or `PIX,SEED`. CCDs without
+  a measurable comb: `--gain` / `--gain-file`.
 - **L1** (`--l1-skips`, `--l1-skip-first K`): one image per number of skips N (mean of skips K..K+N-1) with the DAQ
   header from the `.meta`; noise and gain per CCD against N with the 1/sqrt(N) line; the DC-fit, baseline and sigma
   plots of every N side by side; diagnostics per channel (start-of-pixel transient and the suggested
@@ -225,14 +237,11 @@ can be sent to others as it is.
 
 | file | what |
 |---|---|
-| `bin/run_superWADERs` | the command (starts `bin/run_WADERs` with the native engine as default) |
-| `src/native_pipeline.py`, `native_kernels.py`, `native_rootio.py`, `native_plots.py` | native engine: pedestal, fits, clustering, cluster files, plots |
-| `src/raw_data.py`, `src/raw_levels/` | L0 / L1 readers, L1 -> FITS, diagnostics (`raw_levels/`: copies from ccd_opt_ml, `utils/sync_from_ccd_opt_ml.py`) |
-| `src/packet_report.py`, `src/packet_report_template.html` | packet reports and the page used by every report |
-| `src/dc_series.py` | `--dc-series` |
-| `src/defects.py`, `src/lsm_defects/` | `--defect-map` (the group's scripts: copies, `utils/sync_from_lsm_analysis.py`) |
-| `src/sr_images.py` | `--sr` |
-| `docs/superWADERs_user_guide.md`, `docs/native_pipeline.md`, `docs/superWADERs_commissioning_next_steps.md` | user guide, native-engine validation, plan and open items |
+| `superWADERs/run_superWADERs` | the command (`bin/run_superWADERs` starts it) |
+| `superWADERs/engine/` | `native_pipeline.py` (pedestal, fits, calibration, clustering chain, cluster files), `characterise.py` (front end), and superWADERs' own copies of autoconfig, gain_dc_split, gain_vs_charge, ... |
+| `superWADERs/clustering/` | A_GMX and the Bayesian few-electron finder |
+| `superWADERs/commissioning/` | `raw_data.py` + `raw_levels/` (L0 / L1; copies from ccd_opt_ml, `utils/sync_from_ccd_opt_ml.py`), `packet_report.py` + template, `dc_series.py`, `defects.py` + `lsm_defects/` (`utils/sync_from_lsm_analysis.py`), `sr_images.py` |
+| `superWADERs/README.md`, `docs/superWADERs_user_guide.md`, `docs/superWADERs_commissioning_next_steps.md` | overview, user guide, plan and open items |
 
 **Not yet validated on real data** (see the user guide, section 5, for the data needed): a full commissioning packet
 (5-minute 1x1 1-skip and 10x10 500-skip images), serial-register images (tested only on synthetic data), the defect
@@ -341,7 +350,7 @@ events. Code in `wip/lowdc/` (not in `src/`); off by default, so nothing changes
 How to use:
 
 ```bash
-AGMX_FEWE=auto run_WADERs images.txt --clusterer agmx      # or run_superWADERs; single-image mode (conservative)
+AGMX_FEWE=auto run_WADERs images.txt --clusterer agmx      # single-image mode (conservative); run_superWADERs does this per CCD by itself
 ```
 ```python
 # recommended: run-pooled mode (dark charge, event rates, cut and noise model from all images of the run)
@@ -388,10 +397,11 @@ cl = adaptive.adaptive_cluster(Q_k, valid_k, engine="gmx", fewe="auto", fewe_lam
 - **Untuned values:** the f_c cut and the halo.
 - The L2 gains (1.3 / 0.82 ADU/e-) are unconfirmed.
 
-## Any image: characterisation front end and `--clusterer auto` (work in progress)
+## Any image: characterisation front end and `--clusterer auto` (now the default of run_superWADERs)
 
-`wip/native_pipeline/` (copies of `src/native_*.py` plus `characterise.py` and `run.py`; not yet in `src/` or
-`run_superWADERs`; details in `wip/native_pipeline/ANYIMAGE.md`). Before clustering, each image and CCD is
+Developed in `wip/native_pipeline/` (details and its robustness suite: `wip/native_pipeline/ANYIMAGE.md`); since
+2026-11-12 it is part of `superWADERs/` (`engine/characterise.py`, `engine/native_pipeline.py`) and the default
+clustering of `run_superWADERs`. `src/` and `run_WADERs` do not have it. Before clustering, each image and CCD is
 characterised: data form, geometry, binning, dead / quiet channel, first-column artefact, saturation, gain source,
 noise, dark charge, crowding. Every fallback is logged, and the record goes to `characterisation/<image>.json` and
 into each ROOT file. The chain is then chosen per CCD:
@@ -405,12 +415,10 @@ into each ROOT file. The chain is then chosen per CCD:
 | raw skips / std images | compressed first / refused |
 
 ```bash
-PY=/opt/homebrew/Caskroom/miniforge/base/envs/damic/bin/python      # the damic environment
-cd wip/native_pipeline
-$PY native_pipeline.py images.txt -o OUT --clusterer auto [--curve RUN/gain_vs_charge] [-j 2]
-$PY native_pipeline.py l2_images.txt -o OUT --clusterer auto --gain EXT1=1.3,EXT2=1.3,EXT3=1.3,EXT4=0.82   # no comb: give the gain
-$PY characterise.py IMAGES... -o OUT                                   # the front end alone (JSON per image)
-$PY run.py -j 2                                                        # the robustness suite
+run_superWADERs images.txt [--gain-correction]                         # clusterer auto is the default
+run_superWADERs l2_images.txt --gain EXT1=1.3,EXT2=1.3,EXT3=1.3,EXT4=0.82   # no comb: give the gain
+python superWADERs/engine/characterise.py IMAGES... -o OUT              # the front end alone (JSON per image)
+cd wip/native_pipeline && $PY run.py -j 2                               # the wip robustness suite (its own copies)
 ```
 
 **Validated:**
@@ -434,8 +442,7 @@ $PY run.py -j 2                                                        # the rob
 - **Binned images:** clustering is not adapted to the bin size.
 - **Dark charge below ~1e-5 e-/pix** cannot be measured from a few images.
 - **Not yet ported:** the work-arounds for `gmx.py` (< 61 rows) and for strips are not fixed in `clustering_tests/`.
-- **Not in the main pipeline yet:** to be ported into `src/native_pipeline.py` and `run_superWADERs` as a diff
-  against `src/` at d6859c2f.
+- **Ported to superWADERs/** (2026-11-12); run there on synthetic images only so far (superWADERs/README.md).
 
 ## Tests
 

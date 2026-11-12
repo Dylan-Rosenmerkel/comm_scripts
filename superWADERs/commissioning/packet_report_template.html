@@ -1,0 +1,741 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+:root { --bg:#ffffff; --fg:#1d1d1f; --muted:#6b6b70; --line:#d8d8dc; --panel:#f6f6f8; --accent:#2a6fdb; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#16171a; --fg:#e8e8ea; --muted:#a0a0a8; --line:#34353a; --panel:#1f2024; --accent:#6a9cff; } }
+:root[data-theme="dark"] { --bg:#16171a; --fg:#e8e8ea; --muted:#a0a0a8; --line:#34353a; --panel:#1f2024; --accent:#6a9cff; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.45 -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+header { padding:14px 20px 8px; border-bottom:1px solid var(--line); }
+header h1 { font-size:19px; margin:0 0 4px; }
+header .id { color:var(--muted); font-size:13px; }
+nav { display:flex; flex-wrap:wrap; gap:4px; padding:8px 20px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); z-index:5; }
+nav button { border:1px solid var(--line); background:var(--panel); color:var(--fg); padding:5px 12px; border-radius:6px; cursor:pointer; font-size:13px; }
+nav button.on { background:var(--accent); color:#fff; border-color:var(--accent); }
+nav .sp { flex:1; }
+main { padding:14px 20px 40px; max-width:1500px; }
+.tab { display:none; }
+.tab.on { display:block; }
+h2 { font-size:16px; margin:6px 0 10px; }
+h3 { font-size:14px; margin:16px 0 6px; color:var(--muted); font-weight:600; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(460px, 1fr)); gap:14px; }
+.card { border:1px solid var(--line); border-radius:8px; padding:10px; background:var(--panel); min-width:0; }
+.plot { position:relative; width:100%; }
+.plot canvas { width:100%; display:block; cursor:crosshair; }
+.plot .tip { position:absolute; pointer-events:none; background:rgba(0,0,0,.75); color:#fff; font:11px monospace; padding:2px 5px; border-radius:3px; display:none; white-space:nowrap; z-index:3; }
+.plot .ptitle { font-size:13px; font-weight:600; margin-bottom:2px; }
+.plot .help { font-size:11px; color:var(--muted); }
+table.num { border-collapse:collapse; font-size:13px; }
+table.num td, table.num th { border-bottom:1px solid var(--line); padding:3px 10px 3px 0; text-align:left; }
+table.num td.v { font-variant-numeric:tabular-nums; }
+.flag { color:#c0392b; font-weight:600; }
+.log { font:12px/1.4 monospace; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:8px; white-space:pre-wrap; max-height:260px; overflow:auto; }
+.comment textarea { width:100%; min-height:90px; font:13px/1.4 inherit; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:8px; }
+.comment .saved { font-size:11px; color:var(--muted); }
+.printtext { display:none; white-space:pre-wrap; border:1px solid #999; padding:6px; }
+.controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; font-size:12px; margin:4px 0 6px; }
+.controls input[type=number] { width:90px; }
+.controls select, .controls input { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:2px 4px; }
+.imgwrap { position:relative; width:100%; height:560px; border:1px solid var(--line); background:#000; overflow:hidden; }
+.imgwrap canvas { width:100%; height:100%; display:block; cursor:grab; image-rendering:pixelated; }
+.readout { font:12px monospace; color:var(--muted); min-height:16px; }
+.loading { color:var(--muted); font-style:italic; }
+.pbtn { display:flex; gap:4px; justify-content:flex-end; margin:-2px 0 2px; }
+.pbtn button, .controls button { border:1px solid var(--line); background:var(--bg); color:var(--fg); border-radius:4px; padding:1px 7px; font-size:11px; cursor:pointer; }
+.pbtn button:hover, .controls button:hover, nav button:hover { border-color:var(--accent); }
+nav button .dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:#c0392b; margin-left:6px; vertical-align:middle; }
+#help { display:none; position:fixed; right:20px; top:60px; width:min(560px, calc(100vw - 40px)); max-height:80vh; overflow:auto; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 18px; z-index:20; box-shadow:0 8px 30px rgba(0,0,0,.3); font-size:13px; }
+#help h3 { color:var(--fg); margin-top:10px; }
+#help kbd { border:1px solid var(--line); border-radius:3px; padding:0 4px; font-size:11px; background:var(--bg); }
+.hint { background:rgba(42,111,219,.12); border:1px solid var(--accent); border-radius:8px; padding:8px 12px; margin:10px 20px 0; font-size:13px; display:flex; gap:10px; align-items:center; }
+.hint button { margin-left:auto; }
+.cbar { height:12px; width:100%; border:1px solid var(--line); }
+.cbarlab { display:flex; justify-content:space-between; font:11px monospace; color:var(--muted); }
+.legend { display:flex; flex-wrap:wrap; gap:12px; font-size:12px; margin:4px 0; }
+.legend label { cursor:pointer; }
+.sw { display:inline-block; width:10px; height:10px; margin-right:4px; vertical-align:middle; border-radius:2px; }
+table.num tr.click { cursor:pointer; }
+table.num tr.click:hover td { color:var(--accent); }
+.ccdbar { flex-basis:100%; display:flex; flex-wrap:wrap; gap:6px 10px; align-items:center; font-size:13px; padding-top:6px; }
+.ccdbar label { cursor:pointer; display:inline-flex; align-items:center; gap:3px; padding:2px 6px; border:1px solid var(--line); border-radius:6px; background:var(--panel); }
+.ccdbar label.all { font-weight:600; }
+.ccdbar button.only { border:none; background:none; color:var(--accent); font-size:11px; padding:0 6px 0 0; margin-left:-6px; cursor:pointer; }
+.ccdbar .cflag { color:#c0392b; }
+.frames { display:flex; flex-wrap:wrap; gap:8px; align-items:center; font-size:13px; margin:6px 0 8px; padding:6px 10px; border:1px solid var(--line); border-radius:8px; background:var(--panel); }
+.frames input[type=range] { width:min(260px, 45vw); }
+.frames button { border:1px solid var(--line); background:var(--bg); color:var(--fg); border-radius:4px; padding:2px 9px; cursor:pointer; }
+.frames .cur { font-weight:600; }
+h2.ccdhead { margin-top:22px; padding-top:10px; border-top:2px solid var(--line); }
+.xscroll { overflow-x:auto; }
+.dlist { display:grid; grid-template-columns:repeat(auto-fill, minmax(340px, 1fr)); gap:6px 22px; align-items:start; }
+.dlist table.num { width:100%; font-size:12px; }
+table.num.cmp th, table.num.cmp td { padding-right:18px; min-width:150px; }
+table.num.cmp tr > th:first-child { min-width:190px; }
+table.num.cmp td.same { color:var(--muted); }
+.figure img { max-width:100%; border:1px solid var(--line); border-radius:6px; background:#fff; }
+@media print {
+  nav, .noprint, .plot .help, .controls, input[type=file] { display:none !important; }
+  .tab { display:block !important; page-break-after:always; }
+  .comment textarea { display:none; }
+  .printtext { display:block; }
+  .log { max-height:none; }
+  .imgwrap { height:420px; }
+  body { background:#fff; color:#000; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title"></h1>
+  <div class="id" id="ident"></div>
+</header>
+<nav id="nav"></nav>
+<main id="main"></main>
+<script id="data" type="application/json">__DATA__</script>
+<script>
+"use strict";
+const D = JSON.parse(document.getElementById("data").textContent);
+const KEY = "superWADERs:" + D.report_id;
+
+// ---------------------------------------------------------------- data arrays (gzip + base64)
+async function arr(a) {
+  if (!a) return null;
+  const bin = Uint8Array.from(atob(a.b64), c => c.charCodeAt(0));
+  const buf = await new Response(new Blob([bin]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer();
+  let out;
+  if (a.dtype === "f4") out = new Float32Array(buf);
+  else if (a.dtype === "f8") out = new Float64Array(buf);
+  else if (a.dtype === "u1") out = new Uint8Array(buf);
+  else { const d = new Int32Array(buf); out = new Float64Array(d.length); let s = 0; for (let i = 0; i < d.length; i++) { s += d[i]; out[i] = s; } }  // i4d: deltas
+  if (a.scale) for (let i = 0; i < out.length; i++) out[i] = out[i] * a.scale + a.offset;
+  return out;
+}
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const COLORS = ["#2a6fdb", "#e0832b", "#2a9d6f", "#b04fc8", "#c0392b", "#7f8c8d"];
+
+// ---------------------------------------------------------------- interactive line plot
+function nice(lo, hi, n, log) {
+  if (log) { const e0 = Math.floor(Math.log10(lo)), e1 = Math.ceil(Math.log10(hi)), k = Math.max(1, Math.ceil((e1 - e0) / n)), t = [];
+    for (let e = e0; e <= e1; e += k) t.push(Math.pow(10, e)); return t.filter(v => v >= lo * 0.999 && v <= hi * 1.001); }
+  const span = hi - lo; if (!(span > 0)) return [lo];
+  const step0 = span / n, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 5, 10].map(m => m * mag).find(s => span / s <= n);
+  const t = []; for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-9; v += step) t.push(Math.abs(v) < step * 1e-9 ? 0 : v);
+  return t;
+}
+const fmt = v => { const a = Math.abs(v); return (a !== 0 && (a < 1e-3 || a >= 1e5)) ? v.toExponential(2) : (+v.toPrecision(5)).toString(); };
+
+class LinePlot {
+  constructor(parent, o) {
+    this.o = Object.assign({ height: 300, logx: false, logy: false, xlabel: "", ylabel: "", title: "", yauto: true }, o);
+    const box = document.createElement("div"); box.className = "plot"; parent.appendChild(box);
+    if (this.o.title) { const t = document.createElement("div"); t.className = "ptitle"; t.textContent = this.o.title; box.appendChild(t); }
+    const pb = document.createElement("div"); pb.className = "pbtn noprint"; box.appendChild(pb);
+    const btn = (lab, tip, f) => { const b = document.createElement("button"); b.textContent = lab; b.title = tip; b.onclick = f; pb.appendChild(b); };
+    btn("reset", "show everything again (also: double-click)", () => { this.view = Object.assign({}, this.home); this.draw(); });
+    btn(this.o.logy ? "lin y" : "log y", "switch the y axis between linear and logarithmic", e => { this.o.logy = !this.o.logy; e.target.textContent = this.o.logy ? "lin y" : "log y"; this.home = this._extent(); this.view = Object.assign({}, this.home); this.draw(); });
+    btn("PNG", "save this plot as a picture", () => { const a = document.createElement("a"); a.href = this.c.toDataURL("image/png"); a.download = (this.o.title || "plot").replace(/[^a-z0-9]+/gi, "_") + ".png"; a.click(); });
+    this.c = document.createElement("canvas"); box.appendChild(this.c);
+    this.tip = document.createElement("div"); this.tip.className = "tip"; box.appendChild(this.tip);
+    const h = document.createElement("div"); h.className = "help";
+    h.textContent = "drag: zoom box · shift+drag: pan · wheel: zoom x (alt: y) · double-click: reset"; box.appendChild(h);
+    this.series = []; this.masks = []; this.box = box; this.view = null;
+    this.c.style.height = this.o.height + "px";
+    this._events(); new ResizeObserver(() => this.draw()).observe(box);
+  }
+  set(series, masks) { this.series = series || []; this.masks = masks || []; this.home = this._extent(); this.view = Object.assign({}, this.home); this.draw(); }
+  _tx(v, log) { return log ? Math.log10(v) : v; }
+  _extent() {
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const s of this.series) {
+      const n = s.y.length;
+      for (let i = 0; i < n; i++) {
+        const x = s.x ? s.x[i] : s.x0 + i * s.dx, y = s.y[i];
+        if (!isFinite(y) || (this.o.logy && y <= 0) || (this.o.logx && x <= 0)) continue;
+        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+      }
+    }
+    if (!isFinite(x0)) return { x0: 0, x1: 1, y0: 0, y1: 1 };
+    if (this.o.ylim) { y0 = this.o.ylim[0]; y1 = this.o.ylim[1]; }
+    if (this.o.logy) y0 = Math.max(y0, y1 * 1e-7);      // a model tail at 1e-300 would squash the data
+    return this._pad({ x0, x1, y0, y1 });
+  }
+  _pad(v) {
+    const ly = this.o.logy;
+    if (this.series.some(s => s.style === "points") && !this.o.logx) { const dx = (v.x1 - v.x0) * 0.03 || 1; v = Object.assign({}, v, { x0: v.x0 - dx, x1: v.x1 + dx }); }
+    if (ly) return { x0: v.x0, x1: v.x1, y0: v.y0 / 1.5, y1: v.y1 * 1.5 };
+    const d = (v.y1 - v.y0) || Math.abs(v.y1) || 1; return { x0: v.x0, x1: v.x1, y0: v.y0 - 0.05 * d, y1: v.y1 + 0.05 * d };
+  }
+  _yfit() {      // y range of the visible x range
+    let y0 = Infinity, y1 = -Infinity; const v = this.view;
+    for (const s of this.series) {
+      const [i0, i1] = this._range(s);
+      for (let i = i0; i < i1; i++) { const y = s.y[i]; if (!isFinite(y) || (this.o.logy && y <= 0)) continue; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    }
+    if (isFinite(y0)) { if (this.o.logy) y0 = Math.max(y0, y1 * 1e-7); const p = this._pad({ x0: v.x0, x1: v.x1, y0, y1 }); v.y0 = p.y0; v.y1 = p.y1; }
+  }
+  _range(s) {     // indices of the points inside the x view (x sorted)
+    const n = s.y.length, v = this.view;
+    if (!s.x) { return [Math.max(0, Math.floor((v.x0 - s.x0) / s.dx) - 1), Math.min(n, Math.ceil((v.x1 - s.x0) / s.dx) + 2)]; }
+    const bs = t => { let lo = 0, hi = n; while (lo < hi) { const m = (lo + hi) >> 1; if (s.x[m] < t) lo = m + 1; else hi = m; } return lo; };
+    return [Math.max(0, bs(v.x0) - 1), Math.min(n, bs(v.x1) + 1)];
+  }
+  draw() {
+    if (!this.view) return;
+    const dpr = window.devicePixelRatio || 1, W = this.c.clientWidth, H = this.o.height;
+    if (!W) return;
+    this.c.width = W * dpr; this.c.height = H * dpr;
+    const g = this.c.getContext("2d"); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const L = 64, R = 12, T = 8, B = 38, pw = W - L - R, ph = H - T - B; this.geom = { L, T, pw, ph };
+    const v = this.view, lx = this.o.logx, ly = this.o.logy;
+    const X = x => L + (this._tx(x, lx) - this._tx(v.x0, lx)) / (this._tx(v.x1, lx) - this._tx(v.x0, lx)) * pw;
+    const Y = y => T + ph - (this._tx(y, ly) - this._tx(v.y0, ly)) / (this._tx(v.y1, ly) - this._tx(v.y0, ly)) * ph;
+    this.X = X; this.Y = Y;
+    g.fillStyle = css("--bg"); g.fillRect(0, 0, W, H);
+    g.font = "11px sans-serif"; g.strokeStyle = css("--line"); g.fillStyle = css("--muted"); g.lineWidth = 1;
+    for (const t of nice(v.x0, v.x1, Math.max(3, pw / 90), lx)) { const x = X(t); g.beginPath(); g.moveTo(x, T); g.lineTo(x, T + ph); g.stroke(); g.textAlign = "center"; g.fillText(fmt(t), x, T + ph + 14); }
+    for (const t of nice(v.y0, v.y1, Math.max(3, ph / 45), ly)) { const y = Y(t); g.beginPath(); g.moveTo(L, y); g.lineTo(L + pw, y); g.stroke(); g.textAlign = "right"; g.fillText(fmt(t), L - 4, y + 4); }
+    g.textAlign = "center"; g.fillStyle = css("--fg"); g.fillText(this.o.xlabel, L + pw / 2, H - 4);
+    g.save(); g.translate(12, T + ph / 2); g.rotate(-Math.PI / 2); g.fillText(this.o.ylabel, 0, 0); g.restore();
+    g.save(); g.beginPath(); g.rect(L, T, pw, ph); g.clip();
+    for (const m of this.masks) {       // shaded x ranges (e.g. window flags): per pixel column
+      const s = m.ref; const [i0, i1] = this._range(s); const step = Math.max(1, (i1 - i0) / pw);
+      g.fillStyle = m.color;
+      for (let c = 0; c < pw; c++) {
+        const a = Math.floor(i0 + c * step), b = Math.min(i1, Math.floor(i0 + (c + 1) * step) + 1);
+        for (let i = a; i < b; i++) if (m.m[i]) { g.fillRect(L + c, T, 1, ph); break; }
+      }
+    }
+    this.series.forEach((s, k) => {
+      const col = s.color || COLORS[k % COLORS.length]; g.strokeStyle = col; g.fillStyle = col; g.lineWidth = s.width || 1.2;
+      g.setLineDash(s.dash || []);
+      const [i0, i1] = this._range(s); const n = i1 - i0;
+      const xv = i => s.x ? s.x[i] : s.x0 + i * s.dx;
+      if (s.style === "points") { for (let i = i0; i < i1; i++) { const y = s.y[i]; if (isFinite(y) && (!ly || y > 0)) g.fillRect(X(xv(i)) - 1.5, Y(y) - 1.5, 3, 3); } return; }
+      if (n > 3 * pw && !lx) {         // min / max per pixel column
+        const step = n / pw; g.beginPath();
+        for (let c = 0; c < pw; c++) {
+          const a = Math.floor(i0 + c * step), b = Math.min(i1, Math.floor(i0 + (c + 1) * step));
+          let lo = Infinity, hi = -Infinity;
+          for (let i = a; i < b; i++) { const y = s.y[i]; if (y < lo) lo = y; if (y > hi) hi = y; }
+          if (lo === Infinity || (ly && hi <= 0)) continue;
+          if (ly && lo <= 0) lo = hi;
+          g.moveTo(L + c + 0.5, Y(lo)); g.lineTo(L + c + 0.5, Y(hi));
+        }
+        g.stroke(); return;
+      }
+      g.beginPath(); let pen = false;
+      for (let i = i0; i < i1; i++) {
+        const x = xv(i), y = s.y[i];
+        if (!isFinite(y) || (ly && y <= 0) || (lx && x <= 0)) { pen = false; continue; }
+        if (s.style === "step") { const x2 = i + 1 < s.y.length ? xv(i + 1) : x + (s.dx || 0); if (!pen) g.moveTo(X(x), Y(y)); else g.lineTo(X(x), Y(y)); g.lineTo(X(x2), Y(y)); pen = true; continue; }
+        if (!pen) { g.moveTo(X(x), Y(y)); pen = true; } else g.lineTo(X(x), Y(y));
+      }
+      g.stroke();
+    });
+    g.setLineDash([]); g.restore();
+    let ly0 = T + 6; g.font = "11px sans-serif"; g.textAlign = "right";
+    const named = this.series.map((s, k) => [s, k]).filter(([s]) => s.name);
+    named.slice(0, named.length > 10 ? 9 : 10).forEach(([s, k]) => { g.fillStyle = s.color || COLORS[k % COLORS.length]; g.fillText(s.name, L + pw - 6, ly0 + 8); ly0 += 14; });
+    if (named.length > 10) { g.fillStyle = css("--muted"); g.fillText(`+ ${named.length - 9} more`, L + pw - 6, ly0 + 8); }
+    g.strokeStyle = css("--muted"); g.strokeRect(L, T, pw, ph);
+    if (this.sel) { g.fillStyle = "rgba(42,111,219,.15)"; const s = this.sel; g.fillRect(Math.min(s.a, s.b), T, Math.abs(s.b - s.a), ph); }
+  }
+  _inv(px, py) {
+    const { L, T, pw, ph } = this.geom, v = this.view, lx = this.o.logx, ly = this.o.logy;
+    const fx = (px - L) / pw, fy = (T + ph - py) / ph;
+    const ix = this._tx(v.x0, lx) + fx * (this._tx(v.x1, lx) - this._tx(v.x0, lx)), iy = this._tx(v.y0, ly) + fy * (this._tx(v.y1, ly) - this._tx(v.y0, ly));
+    return [lx ? Math.pow(10, ix) : ix, ly ? Math.pow(10, iy) : iy];
+  }
+  _events() {
+    const c = this.c; let drag = null;
+    const pos = e => { const r = c.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+    c.addEventListener("mousedown", e => { const [x, y] = pos(e); drag = { x, y, pan: e.shiftKey, v: Object.assign({}, this.view) }; });
+    window.addEventListener("mouseup", e => {
+      if (!drag) return; const [x] = pos(e);
+      if (!drag.pan && Math.abs(x - drag.x) > 4) { const [a] = this._inv(Math.min(x, drag.x), 0), [b] = this._inv(Math.max(x, drag.x), 0); this.view.x0 = a; this.view.x1 = b; if (this.o.yauto) this._yfit(); }
+      drag = null; this.sel = null; this.draw();
+    });
+    c.addEventListener("mousemove", e => {
+      const [x, y] = pos(e);
+      if (drag && drag.pan) {
+        const [ax, ay] = this._inv(drag.x, drag.y), [bx, by] = this._inv(x, y), v = this.view, lx = this.o.logx, ly = this.o.logy;
+        const sh = (a, b, d0, d1, lg) => lg ? [d0 * a / b, d1 * a / b] : [d0 + a - b, d1 + a - b];
+        [v.x0, v.x1] = sh(ax, bx, drag.v.x0, drag.v.x1, lx); [v.y0, v.y1] = sh(ay, by, drag.v.y0, drag.v.y1, ly);
+        drag.x = x; drag.y = y; drag.v = Object.assign({}, v); this.draw(); return;
+      }
+      if (drag) { this.sel = { a: drag.x, b: x }; this.draw(); }
+      if (!this.series.length || !this.geom) return;
+      const [vx] = this._inv(x, y); const s = this.series[0]; let i;
+      if (s.x) { let lo = 0, hi = s.y.length - 1; while (lo < hi) { const m = (lo + hi) >> 1; if (s.x[m] < vx) lo = m + 1; else hi = m; } i = lo; } else i = Math.round((vx - s.x0) / s.dx);
+      if (i < 0 || i >= s.y.length) { this.tip.style.display = "none"; return; }
+      const xx = s.x ? s.x[i] : s.x0 + i * s.dx;
+      this.tip.textContent = `x ${fmt(xx)}  y ${fmt(s.y[i])}` + this.series.slice(1).map(t => { const j = t.x ? null : Math.round((xx - t.x0) / t.dx); return (j !== null && j >= 0 && j < t.y.length) ? `  ${t.name || ""} ${fmt(t.y[j])}` : ""; }).join("");
+      this.tip.style.display = "block"; this.tip.style.left = Math.min(x + 12, c.clientWidth - 220) + "px"; this.tip.style.top = (y + 16) + "px";
+    });
+    c.addEventListener("mouseleave", () => { this.tip.style.display = "none"; });
+    c.addEventListener("dblclick", () => { this.view = Object.assign({}, this.home); this.draw(); });
+    c.addEventListener("wheel", e => {
+      e.preventDefault(); const [x, y] = pos(e); const f = e.deltaY > 0 ? 1.25 : 0.8, v = this.view;
+      const [cx, cy] = this._inv(x, y);
+      const z = (c0, a, b, lg) => lg ? [c0 * Math.pow(a / c0, f), c0 * Math.pow(b / c0, f)] : [c0 + (a - c0) * f, c0 + (b - c0) * f];
+      if (e.altKey) [v.y0, v.y1] = z(cy, v.y0, v.y1, this.o.logy); else { [v.x0, v.x1] = z(cx, v.x0, v.x1, this.o.logx); if (this.o.yauto) this._yfit(); }
+      this.draw();
+    }, { passive: false });
+  }
+}
+
+// ---------------------------------------------------------------- ds9-like image viewer
+const CMAPS = {
+  gray: t => [t, t, t],
+  viridis: t => { const s = [[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]]; const x = t * 4, i = Math.min(3, Math.floor(x)), f = x - i; return s[i].map((a, k) => (a + (s[i + 1][k] - a) * f) / 255); },
+  heat: t => [Math.min(1, 3 * t), Math.min(1, Math.max(0, 3 * t - 1)), Math.max(0, 3 * t - 2)],
+};
+class ImageView {
+  constructor(parent, img, w, h, o) {
+    this.o = o || {};
+    const ctl = document.createElement("div"); ctl.className = "controls"; parent.appendChild(ctl);
+    ctl.innerHTML = `scale <select class="mode"><option value="auto">auto (background)</option><option value="z">99.5 %</option><option value="p99">99 %</option><option value="p95">95 %</option><option value="mm">min/max</option><option value="man">manual</option></select>
+      min <input type="number" step="any" class="vmin"> max <input type="number" step="any" class="vmax">
+      colormap <select class="cmap"><option>gray</option><option>viridis</option><option>heat</option></select>
+      <label><input type="checkbox" class="logs"> asinh</label>
+      <button class="fit" title="whole image in the window">fit</button> <button class="one" title="one image pixel per screen pixel">1:1</button>
+      <button class="zin" title="zoom in">+</button> <button class="zout" title="zoom out">&minus;</button>
+      <button class="png" title="save the current view as a picture">PNG</button>
+      <span class="help">wheel: zoom · drag: pan · shift+drag: region statistics · click: row / column cut</span>`;
+    if (this.o.overlay) {
+      const lg = document.createElement("div"); lg.className = "legend"; parent.appendChild(lg); this.lg = lg;
+      this.show = {};
+      this.o.overlay.types.forEach((ty, k) => { this.show[k + 1] = true; const l = document.createElement("label"); l.innerHTML = `<input type="checkbox" checked> <span class="sw" style="background:${ty.color}"></span>${ty.name} (<span class="cnt">${ty.n}</span>)`; l.querySelector("input").onchange = e => { this.show[k + 1] = e.target.checked; this.draw(); }; lg.appendChild(l); });
+      const l = document.createElement("label"); l.innerHTML = `<input type="checkbox" checked> show markings`; l.querySelector("input").onchange = e => { this.ovon = e.target.checked; this.draw(); }; this.ovon = true; lg.appendChild(l);
+    }
+    const wrap = document.createElement("div"); wrap.className = "imgwrap"; parent.appendChild(wrap);
+    this.c = document.createElement("canvas"); wrap.appendChild(this.c);
+    this.cb = document.createElement("canvas"); this.cb.className = "cbar"; this.cb.width = 256; this.cb.height = 1; parent.appendChild(this.cb);
+    this.cbl = document.createElement("div"); this.cbl.className = "cbarlab"; parent.appendChild(this.cbl);
+    this.ro = document.createElement("div"); this.ro.className = "readout"; parent.appendChild(this.ro);
+    this.stats = document.createElement("div"); this.stats.className = "readout"; parent.appendChild(this.stats);
+    const cuts = document.createElement("div"); cuts.className = "grid"; parent.appendChild(cuts);
+    const a = document.createElement("div"), b = document.createElement("div"); a.className = b.className = "card"; cuts.appendChild(a); cuts.appendChild(b);
+    this.rowcut = new LinePlot(a, { title: "row cut (click in the image)", xlabel: "column", ylabel: this.o.unit || "", height: 200 });
+    this.colcut = new LinePlot(b, { title: "column cut", xlabel: "row", ylabel: this.o.unit || "", height: 200 });
+    this.ctl = ctl; this.off = document.createElement("canvas");
+    ["mode", "cmap", "vmin", "vmax", "logs"].forEach(k => ctl.querySelector("." + k).addEventListener("change", () => this.render()));
+    ctl.querySelector(".fit").onclick = () => { this.fit(); this.draw(); };
+    ctl.querySelector(".one").onclick = () => { this.s = 1; this.draw(); };
+    const zoom = f => { const W = this.c.clientWidth / 2, H = this.c.clientHeight / 2; this.ox = W - (W - this.ox) * f; this.oy = H - (H - this.oy) * f; this.s *= f; this.draw(); };
+    ctl.querySelector(".zin").onclick = () => zoom(1.5); ctl.querySelector(".zout").onclick = () => zoom(1 / 1.5);
+    ctl.querySelector(".png").onclick = () => { const a = document.createElement("a"); a.href = this.c.toDataURL("image/png"); a.download = "image_view.png"; a.click(); };
+    this._events(); new ResizeObserver(() => { if (!this.s) this.fit(); this.draw(); }).observe(wrap);
+    this.setImage(img, w, h, this.o.overlay);
+  }
+  setImage(img, w, h, overlay, unit) {     // show another image (ds9 frame): zoom, pan and cuts are kept when the size is the same
+    if (this.w !== w || this.h !== h) { this.s = undefined; this.lastcut = null; }
+    this.img = img; this.w = w; this.h = h; this.off.width = w; this.off.height = h;
+    if (unit) this.o.unit = unit;
+    const sorted = Float32Array.from(img.filter((v, i) => i % Math.max(1, Math.floor(img.length / 200000)) === 0 && isFinite(v))).sort();
+    this.q = p => sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(p * (sorted.length - 1))))];
+    if (overlay) { this.o.overlay = overlay; if (this.lg) this.lg.querySelectorAll(".cnt").forEach((s, k) => { s.textContent = overlay.types[k].n; }); }
+    this.mark = null; this.box = null; this.stats.textContent = "";
+    this.render(); const [c, r] = this.lastcut || [w >> 1, h >> 1]; this.cut(c, r);   // first: the middle row and column
+  }
+  limits() {
+    const m = this.ctl.querySelector(".mode").value;
+    if (m === "man") return [parseFloat(this.ctl.querySelector(".vmin").value), parseFloat(this.ctl.querySelector(".vmax").value)];
+    let lo, hi;
+    if (m === "auto") {       // like ds9 zscale: around the background, so faint structure and tracks both show
+      const med = this.q(0.5), mad = Math.max(this.q(0.75) - this.q(0.25), 1e-6) / 1.349;
+      lo = Math.max(this.q(0), med - 3 * mad); hi = Math.min(this.q(1), med + 10 * mad);
+      if (!(hi > lo)) { lo = this.q(0.0025); hi = this.q(0.9975); }
+    } else { const r = { z: [0.0025, 0.9975], p99: [0.005, 0.995], p95: [0.025, 0.975], mm: [0, 1] }[m]; lo = this.q(r[0]); hi = this.q(r[1]); } this.ctl.querySelector(".vmin").value = (+lo.toPrecision(5)); this.ctl.querySelector(".vmax").value = (+hi.toPrecision(5)); return [lo, hi];
+  }
+  render() {
+    const [lo, hi] = this.limits(), cm = CMAPS[this.ctl.querySelector(".cmap").value], asinh = this.ctl.querySelector(".logs").checked;
+    const g = this.off.getContext("2d"), id = g.createImageData(this.w, this.h), d = id.data, span = (hi - lo) || 1;
+    const lut = new Uint8ClampedArray(256 * 3); for (let k = 0; k < 256; k++) { const c = cm(k / 255); lut[3 * k] = c[0] * 255; lut[3 * k + 1] = c[1] * 255; lut[3 * k + 2] = c[2] * 255; }
+    const A = Math.asinh(10);
+    for (let r = 0; r < this.h; r++) for (let c = 0; c < this.w; c++) {
+      const v = this.img[r * this.w + c]; let t = (v - lo) / span; t = t < 0 ? 0 : t > 1 ? 1 : t; if (asinh) t = Math.asinh(10 * t) / A;
+      const k = isFinite(v) ? Math.round(t * 255) : 0, o = 4 * ((this.h - 1 - r) * this.w + c);   // row 0 at the bottom (as ds9)
+      d[o] = lut[3 * k]; d[o + 1] = lut[3 * k + 1]; d[o + 2] = lut[3 * k + 2]; d[o + 3] = 255;
+    }
+    g.putImageData(id, 0, 0);
+    const cg = this.cb.getContext("2d"), ci = cg.createImageData(256, 1);
+    for (let k = 0; k < 256; k++) { const tt = asinh ? Math.sinh(k / 255 * A) / 10 : k / 255, kk = Math.round(Math.min(1, tt) * 255); ci.data[4 * k] = lut[3 * kk]; ci.data[4 * k + 1] = lut[3 * kk + 1]; ci.data[4 * k + 2] = lut[3 * kk + 2]; ci.data[4 * k + 3] = 255; }
+    cg.putImageData(ci, 0, 0); this.cbl.innerHTML = `<span>${fmt(lo)}</span><span>${this.o.unit || ""}</span><span>${fmt(hi)}</span>`;
+    this.draw();
+  }
+  goto(col, row, zoomTo) { const W = this.c.clientWidth, H = this.c.clientHeight; this.s = Math.max(this.s, zoomTo || 8); this.ox = W / 2 - (col + 0.5) * this.s; this.oy = H / 2 - (this.h - row - 0.5) * this.s; this.mark = [col, row]; this.draw(); this.cut(col, row); }
+  fit() { const W = this.c.clientWidth, H = this.c.clientHeight; this.s = Math.min(W / this.w, H / this.h); this.ox = (W - this.w * this.s) / 2; this.oy = (H - this.h * this.s) / 2; }
+  draw() {
+    const dpr = window.devicePixelRatio || 1, W = this.c.clientWidth, H = this.c.clientHeight; if (!W) return;
+    if (this.s === undefined) this.fit(); if (this.ox === undefined) { this.ox = 0; this.oy = 0; }
+    this.c.width = W * dpr; this.c.height = H * dpr; const g = this.c.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0); g.imageSmoothingEnabled = false; g.fillStyle = "#000"; g.fillRect(0, 0, W, H);
+    g.drawImage(this.off, this.ox, this.oy, this.w * this.s, this.h * this.s);
+    if (this.o.overlay && this.ovon) {       // defect markings: one colour per type
+      const m = this.o.overlay.mask, T = this.o.overlay.types, sz = Math.max(this.s, 1.5);
+      for (let r = 0; r < this.h; r++) for (let c = 0; c < this.w; c++) { const k = m[r * this.w + c]; if (k && this.show[k]) { g.fillStyle = T[k - 1].color; g.globalAlpha = 0.55; g.fillRect(this.ox + c * this.s, this.oy + (this.h - 1 - r) * this.s, sz, sz); } }
+      g.globalAlpha = 1;
+    }
+    if (this.mark) { g.strokeStyle = "#0ff"; g.lineWidth = 2; const [c0, r0] = this.mark, R = Math.max(8, 3 * this.s); g.strokeRect(this.ox + (c0 + 0.5) * this.s - R, this.oy + (this.h - r0 - 0.5) * this.s - R, 2 * R, 2 * R); g.lineWidth = 1; }
+    if (this.box) { g.strokeStyle = "#ff0"; const [x0, y0, x1, y1] = this.box; g.strokeRect(this.ox + x0 * this.s, this.oy + (this.h - y1) * this.s, (x1 - x0) * this.s, (y1 - y0) * this.s); }
+  }
+  pix(px, py) { return [Math.floor((px - this.ox) / this.s), this.h - 1 - Math.floor((py - this.oy) / this.s)]; }   // (col, row)
+  _events() {
+    const c = this.c; let drag = null;
+    const pos = e => { const r = c.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+    c.addEventListener("wheel", e => { e.preventDefault(); const [x, y] = pos(e), f = e.deltaY > 0 ? 0.8 : 1.25; this.ox = x - (x - this.ox) * f; this.oy = y - (y - this.oy) * f; this.s *= f; this.draw(); }, { passive: false });
+    c.addEventListener("mousedown", e => { const [x, y] = pos(e); drag = { x, y, x0: x, y0: y, box: e.shiftKey }; });
+    window.addEventListener("mouseup", e => {
+      if (!drag) return; const [x, y] = pos(e);
+      if (drag.box) this.region(this.pix(drag.x0, drag.y0), this.pix(x, y));
+      else if (Math.hypot(x - drag.x0, y - drag.y0) < 3) this.cut(...this.pix(x, y));
+      drag = null;
+    });
+    c.addEventListener("mousemove", e => {
+      const [x, y] = pos(e); const [col, row] = this.pix(x, y);
+      if (col >= 0 && col < this.w && row >= 0 && row < this.h) this.ro.textContent = `column ${col}  row ${row}  value ${fmt(this.img[row * this.w + col])} ${this.o.unit || ""}`;
+      if (!drag) return;
+      if (drag.box) { const [a, b] = this.pix(drag.x0, drag.y0); this.box = [Math.min(a, col), Math.min(b, row), Math.max(a, col) + 1, Math.max(b, row) + 1]; this.draw(); return; }
+      this.ox += x - drag.x; this.oy += y - drag.y; drag.x = x; drag.y = y; this.draw();
+    });
+  }
+  cut(col, row) {
+    if (col < 0 || col >= this.w || row < 0 || row >= this.h) return;
+    this.lastcut = [col, row];
+    this.rowcut.set([{ x0: 0, dx: 1, y: this.img.subarray(row * this.w, (row + 1) * this.w), name: `row ${row}` }]);
+    const cc = new Float64Array(this.h); for (let r = 0; r < this.h; r++) cc[r] = this.img[r * this.w + col];
+    this.colcut.set([{ x0: 0, dx: 1, y: cc, name: `column ${col}` }]);
+  }
+  region(a, b) {
+    const c0 = Math.max(0, Math.min(a[0], b[0])), c1 = Math.min(this.w - 1, Math.max(a[0], b[0])), r0 = Math.max(0, Math.min(a[1], b[1])), r1 = Math.min(this.h - 1, Math.max(a[1], b[1]));
+    const v = []; for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) { const x = this.img[r * this.w + c]; if (isFinite(x)) v.push(x); }
+    if (!v.length) return; v.sort((p, q) => p - q);
+    const n = v.length, mean = v.reduce((s, x) => s + x, 0) / n, sd = Math.sqrt(v.reduce((s, x) => s + (x - mean) ** 2, 0) / Math.max(1, n - 1));
+    this.box = [c0, r0, c1 + 1, r1 + 1]; this.draw();
+    this.stats.textContent = `region columns ${c0}-${c1}, rows ${r0}-${r1}: ${n} pixels, mean ${fmt(mean)}, median ${fmt(v[n >> 1])}, std ${fmt(sd)}, min ${fmt(v[0])}, max ${fmt(v[n - 1])} ${this.o.unit || ""}`;
+  }
+}
+
+// ---------------------------------------------------------------- page: CCD selection, tabs, comments, logs
+function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; }
+function table(rows) { const t = el("table", "num"); for (const [k, v, flag] of rows) { const tr = el("tr"); tr.appendChild(el("th", "", k)); tr.appendChild(el("td", "v" + (flag ? " flag" : ""), v)); t.appendChild(tr); } return t; }
+function commentBox(parent, key, label) {
+  const box = el("div", "comment"); box.appendChild(el("h3", "", label || "Comments"));
+  const ta = el("textarea"); ta.placeholder = "Notes on this page (saved in this browser; 'Save comments' writes a file)"; box.appendChild(ta);
+  const pt = el("div", "printtext"); box.appendChild(pt); const st = el("div", "saved"); box.appendChild(st);
+  const store = () => { try { const all = JSON.parse(localStorage.getItem(KEY) || "{}"); all[key] = ta.value; localStorage.setItem(KEY, JSON.stringify(all)); st.textContent = "saved in this browser " + new Date().toLocaleTimeString(); } catch (e) { st.textContent = "browser storage not available: use Save comments"; } pt.textContent = ta.value; };
+  try { ta.value = (JSON.parse(localStorage.getItem(KEY) || "{}"))[key] || ""; } catch (e) {}
+  pt.textContent = ta.value; ta.addEventListener("input", store); ta.dataset.key = key; parent.appendChild(box);
+}
+
+// The CCDs of the module (D.ccds): every tab with tb.per = {ccd key: data} shows the ticked CCDs
+const CCDS = D.ccds && D.ccds.length ? D.ccds : null;
+if (CCDS) CCDS.forEach((c, i) => { c.color = COLORS[i % COLORS.length]; });
+let SEL = CCDS ? CCDS.map(c => c.key) : [];
+try { const s = JSON.parse(localStorage.getItem(KEY + ":ccds") || "null"); if (CCDS && Array.isArray(s)) { const k = CCDS.map(c => c.key).filter(x => s.includes(x)); if (k.length) SEL = k; } } catch (e) {}
+const DASHES = [[], [6, 3], [2, 2], [8, 3, 2, 3]];
+const swatch = c => c ? `<span class="sw" style="background:${c.color}"></span>` : "";
+function chosen(tb) {     // [{c, d}]: data of the ticked CCDs that have this tab (one item without a CCD on a tab of the whole module)
+  if (!tb.per) return [{ c: null, d: tb.kind === "overview" && !tb.data ? { numbers: tb.numbers, files: tb.files } : tb.data }];
+  return CCDS.filter(c => SEL.includes(c.key) && tb.per[c.key] != null).map(c => ({ c, d: tb.per[c.key] }));
+}
+function logOf(tb) {
+  if (!tb.logs) return tb.log || [];
+  return CCDS.filter(c => SEL.includes(c.key) && tb.logs[c.key]).flatMap(c => [`--- ${c.label}`, ...tb.logs[c.key]]);
+}
+function ccdHead(parent, c) { if (c) parent.appendChild(el("h2", "ccdhead", `${swatch(c)}${c.label}`)); }
+function wrapX(node) { const w = el("div", "xscroll"); w.appendChild(node); return w; }
+function cmpTable(items) {   // numbers of several CCDs side by side: one column per CCD
+  if (items.length === 1) return table(items[0].rows || []);
+  const names = [], val = items.map(() => ({}));
+  items.forEach((it, j) => (it.rows || []).forEach(r => { if (!names.includes(r[0])) names.push(r[0]); val[j][r[0]] = r; }));
+  const t = el("table", "num cmp"), h = el("tr"); h.appendChild(el("th", "", ""));
+  items.forEach(it => h.appendChild(el("th", "", `${swatch(it.c)}${it.c.label}`))); t.appendChild(h);
+  for (const n of names) {
+    const tr = el("tr"); tr.appendChild(el("th", "", n));
+    if (val.every(v => v[n] && v[n][1] === val[0][n][1] && !v[n][2])) { const td = el("td", "v same", val[0][n][1]); td.colSpan = val.length; tr.appendChild(td); }   // the same for every CCD: once
+    else val.forEach(v => { const r = v[n]; tr.appendChild(el("td", "v" + (r && r[2] ? " flag" : ""), r ? r[1] : "&ndash;")); });
+    t.appendChild(tr);
+  }
+  return t;
+}
+function frameBar(parent, items, onChange) {   // ds9-like frames: one CCD at a time, slider / arrows / arrow keys / blink
+  const bar = el("div", "frames"); parent.appendChild(bar);
+  const cur = el("span", "cur"); let i0 = 0, timer = null;
+  const go = async i => { i0 = (i + items.length) % items.length; if (r) r.value = i0; cur.innerHTML = items[i0].c ? `${swatch(items[i0].c)}${items[i0].c.label}` + (items.length > 1 ? ` &nbsp;(${i0 + 1} of ${items.length})` : "") : ""; await onChange(i0); };
+  let r = null;
+  if (items.length > 1) {
+    bar.appendChild(el("span", "", "CCD"));
+    const prev = el("button", "", "&#9664;"); prev.title = "previous CCD (left arrow key)"; prev.onclick = () => go(i0 - 1);
+    r = el("input"); r.type = "range"; r.min = 0; r.max = items.length - 1; r.step = 1; r.value = 0; r.title = "slide to switch between the CCDs"; r.oninput = () => go(+r.value);
+    const next = el("button", "", "&#9654;"); next.title = "next CCD (right arrow key)"; next.onclick = () => go(i0 + 1);
+    const blink = el("button", "", "blink"); blink.title = "switch through the CCDs every second (as ds9 blink); again to stop";
+    blink.onclick = () => { if (timer) { clearInterval(timer); timer = null; blink.textContent = "blink"; } else { timer = setInterval(() => { if (!bar.isConnected || bar.offsetParent === null) { clearInterval(timer); timer = null; blink.textContent = "blink"; return; } go(i0 + 1); }, 1000); blink.textContent = "stop"; } };
+    bar.append(prev, r, next, cur, blink, el("span", "help", "zoom, pan, scale and the cut stay when you switch"));
+    document.addEventListener("keydown", e => { if (!bar.isConnected || bar.offsetParent === null || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return; if (e.key === "ArrowRight") go(i0 + 1); else if (e.key === "ArrowLeft") go(i0 - 1); });
+  } else bar.appendChild(cur);
+  if (!items[0].c) bar.style.display = "none";
+  return { go };
+}
+function logBox(parent, lines) { parent.appendChild(el("h3", "", "Log")); const l = el("div", "log"); l.textContent = (lines || []).join("\n"); parent.appendChild(l); }
+
+const nav = document.getElementById("nav"), main = document.getElementById("main"), tabs = [];
+function addTab(tb, render) {
+  const b = el("button", "", tb.label), t = el("section", "tab"); t.id = "tab_" + tb.id; nav.appendChild(b); main.appendChild(t);
+  const dot = el("span", "dot"); dot.title = "a number on this tab is outside the usual range (for a ticked CCD)"; b.appendChild(dot);
+  const content = el("div"), foot = el("div"); t.append(content, foot);
+  commentBox(foot, tb.id, "Comments on this page");
+  foot.appendChild(el("h3", "", "Log")); const lg = el("div", "log"); foot.appendChild(lg);
+  let fresh = false, gen = 0;
+  const build = async () => {
+    fresh = true; const my = ++gen;
+    content.replaceChildren(el("p", "loading", "loading ..."));
+    const box = el("div"), items = chosen(tb);
+    if (!items.length) box.appendChild(el("p", "loading", `No data here for the ticked CCD(s). This tab has data for: ${CCDS.filter(c => tb.per[c.key] != null).map(c => c.label).join(", ")}.`));
+    else await render(box, items);
+    if (my === gen) { content.replaceChildren(box); lg.textContent = logOf(tb).join("\n"); }
+  };
+  const show = async () => { tabs.forEach(x => { x.b.classList.remove("on"); x.t.classList.remove("on"); }); b.classList.add("on"); t.classList.add("on"); location.hash = tb.id; if (!fresh) await build(); };
+  b.onclick = show;
+  tabs.push({ tb, b, t, dot, show,
+    build: async () => { if (!fresh) await build(); },
+    stale: () => { if (tb.per) fresh = false; } });
+}
+function updateDots() { tabs.forEach(x => { const f = x.tb.per ? (x.tb.flagged_ccds || []).some(k => SEL.includes(k)) : x.tb.flagged; x.dot.style.display = f ? "" : "none"; }); }
+
+// ---------------------------------------------------------------- tab contents (items: [{c: CCD or null, d: data}])
+const each = f => async (t, items) => { for (const it of items) { const box = el("div"); t.appendChild(box); ccdHead(box, it.c); await f(box, it.d); } };
+async function overviewTab(t, items) {
+  t.appendChild(el("h2", "", "Overview"));
+  t.appendChild(wrapX(cmpTable(items.map(it => ({ c: it.c, rows: it.d.numbers })))));
+  const files = []; items.forEach(it => (it.d.files || []).forEach(f => { if (!files.some(g => g[1] === f[1])) files.push(f); }));
+  t.appendChild(el("h3", "", "Packet contents")); t.appendChild(table(files));
+}
+async function traceTab(t, tr) {
+  t.appendChild(el("h2", "", `Trace: ${tr.file}`));
+  t.appendChild(table(tr.numbers));
+  const vals = await arr(tr.values), rd = await arr(tr.rd), ru = await arr(tr.ru);
+  const c1 = el("div", "card"); t.appendChild(c1);
+  const p = new LinePlot(c1, { title: "raw video signal (all samples; zoom in to see single skip cycles)", xlabel: "time [us]", ylabel: "ADC value [ADU]", height: 340 });
+  const s = { x0: 0, dx: tr.dt_us, y: vals, color: css("--fg"), width: 1 };
+  p.set([s], [{ ref: s, m: rd, color: "rgba(192,57,43,.16)" }, { ref: s, m: ru, color: "rgba(42,157,111,.16)" }]);
+  const grid = el("div", "grid"); t.appendChild(grid);
+  if (tr.skips) {
+    const a = el("div", "card"); grid.appendChild(a);
+    const q = new LinePlot(a, { title: "per-skip window means (inline L1 sums), all pixels in order", xlabel: "skip record", ylabel: "ADU", height: 260 });
+    q.set([{ x0: 0, dx: 1, y: await arr(tr.skips.pedestal), name: "pedestal", color: "#c0392b", style: "points" }, { x0: 0, dx: 1, y: await arr(tr.skips.signal), name: "signal", color: "#2a9d6f", style: "points" }]);
+    const b = el("div", "card"); grid.appendChild(b);
+    const r = new LinePlot(b, { title: "CDS = pedestal - signal per skip", xlabel: "skip record", ylabel: "ADU", height: 260 });
+    r.set([{ x0: 0, dx: 1, y: await arr(tr.skips.cds), name: "CDS", color: "#2a6fdb" }]);
+  }
+  if (tr.folded) {
+    const a = el("div", "card"); grid.appendChild(a);
+    const f = new LinePlot(a, { title: "skip cycle folded (mean, +-1 sigma over skips)", xlabel: "time in cycle [us]", ylabel: "ADU", height: 260 });
+    const m = await arr(tr.folded.mean), sd = await arr(tr.folded.std), up = m.map((v, i) => v + sd[i]), dn = m.map((v, i) => v - sd[i]);
+    f.set([{ x0: 0, dx: tr.dt_us, y: m, name: "mean" }, { x0: 0, dx: tr.dt_us, y: up, color: "#9ab", dash: [3, 3] }, { x0: 0, dx: tr.dt_us, y: dn, color: "#9ab", dash: [3, 3] }]);
+  }
+  if (tr.spectrum) {
+    const a = el("div", "card"); grid.appendChild(a);
+    const f = new LinePlot(a, { title: "noise spectrum (cycle shape removed)", xlabel: "frequency [Hz]", ylabel: "ADU / sqrt(Hz)", logx: true, logy: true, height: 260 });
+    f.set([{ x: await arr(tr.spectrum.f), y: await arr(tr.spectrum.a), color: "#b04fc8" }]);
+  }
+}
+async function psdTab(t, items) {     // the CCDs overlaid: one colour per CCD
+  const multi = items.length > 1;
+  t.appendChild(el("h2", "", multi ? `PSD (noise traces) of ${items.length} CCDs, overlaid` : "PSD (noise traces)"));
+  t.appendChild(table(items.flatMap(it => it.d.numbers.map(r => [multi ? `${swatch(it.c)}${it.c.label}: ${r[0]}` : r[0], r[1], r[2]]))));
+  const grid = el("div", "grid"); t.appendChild(grid);
+  const mk = (title, o) => { const a = el("div", "card"); grid.appendChild(a); return new LinePlot(a, Object.assign({ title, height: 290 }, o)); };
+  const tr = mk("ADC trace", { xlabel: "time [us]", ylabel: "sample value [ADU]" });
+  const pg = mk("periodogram", { xlabel: "frequency [Hz]", ylabel: "ADU / sqrt(Hz)", logx: true, logy: true });
+  const wl = mk("Welch (linear)", { xlabel: "frequency [Hz]", ylabel: "ADU / sqrt(Hz)" });
+  const wg = mk("Welch (log)", { xlabel: "frequency [Hz]", ylabel: "ADU / sqrt(Hz)", logx: true, logy: true });
+  const S = { t: [], p: [], wl: [], wg: [] };
+  for (const it of items) for (const [k, f] of it.d.files.entries()) {
+    const col = multi ? it.c.color : COLORS[k % COLORS.length], dash = multi ? DASHES[k % DASHES.length] : undefined;
+    const lab = multi ? it.c.label + (it.d.files.length > 1 ? ` (${k + 1})` : "") : f.label;
+    const v = await arr(f.values), fp = await arr(f.pf), ap = await arr(f.pa), fw = await arr(f.wf), aw = await arr(f.wa);
+    S.t.push({ x0: 0, dx: f.dt_us, y: v, color: col, dash, name: lab });
+    S.p.push({ x: fp, y: ap, color: col, dash, name: lab });
+    S.wl.push({ x: fw, y: aw, color: col, dash, name: lab });
+    S.wg.push({ x: fw, y: aw, color: col, dash, name: `${multi ? lab + ": " : ""}sigma_ADU ${fmt(f.sigma_adu)}  sigma_CDS ${fmt(f.sigma_cds)}` });
+  }
+  tr.set(S.t); pg.set(S.p); wl.set(S.wl); wg.set(S.wg);
+}
+async function imageSummaryTab(t, items) {   // per image: numbers side by side, fit histogram per CCD, profiles overlaid
+  const multi = items.length > 1, files = [];
+  items.forEach(it => it.d.forEach(im => { if (!files.includes(im.file)) files.push(im.file); }));
+  const first = items[0].d[0];
+  t.appendChild(el("h2", "", files.length > 1 ? `Dark-current fits and profiles of ${files.length} images` : `${first.role}: numbers and profiles`));
+  for (const f of files) {
+    const per = items.map(it => ({ c: it.c, im: it.d.find(x => x.file === f) })).filter(x => x.im);
+    const card = el("div", "card"); t.appendChild(card);
+    card.appendChild(el("h3", "", `${per[0].im.role}: ${f}`));
+    card.appendChild(wrapX(cmpTable(per.map(x => ({ c: x.c, rows: x.im.numbers })))));
+    const grid = el("div", "grid"); card.appendChild(grid);
+    const mk = (title, o) => { const a = el("div", "card"); grid.appendChild(a); return new LinePlot(a, Object.assign({ title, height: 250 }, o)); };
+    for (const x of per) {
+      if (!x.im.hist) continue;
+      const h = mk((multi ? x.c.label + ": " : "") + (x.im.hist.fitted ? "pixel charge and dark-current fit" : "pixel charge (electron peaks not resolved: no fit)"), { xlabel: "pixel charge [ADU]", ylabel: "counts", logy: true });
+      const ser = [{ x: await arr(x.im.hist.x), y: await arr(x.im.hist.y), style: "step", color: multi ? x.c.color : css("--fg"), name: "pixels" }];
+      if (x.im.hist.mx) ser.push({ x: await arr(x.im.hist.mx), y: await arr(x.im.hist.my), color: "#c0392b", width: 2, name: "fit" });
+      h.set(ser);
+    }
+    const prof = async (key, title, o) => {
+      const ser = [];
+      for (const x of per) if (x.im[key]) ser.push({ x0: 0, dx: 1, y: await arr(x.im[key]), style: o.style, color: multi ? x.c.color : undefined, name: multi ? x.c.label : undefined });
+      if (ser.length) mk(title + (multi ? " (CCDs overlaid)" : ""), o).set(ser);
+    };
+    await prof("mu_row", "pedestal (baseline) per row", { xlabel: "row", ylabel: "ADU", style: "points" });
+    await prof("sig_row", "pedestal sigma per row", { xlabel: "row", ylabel: "ADU", style: "points" });
+    await prof("lam_row", "dark charge per row (from the 0e- fraction)", { xlabel: "row", ylabel: "e- / pix", style: "points" });
+    await prof("col_med", "median per column", { xlabel: "column", ylabel: per[0].im.unit });
+    await prof("row_med", "median per row (active region)", { xlabel: "row", ylabel: per[0].im.unit });
+  }
+}
+async function imageTab(t, items) {          // one viewer, the CCDs as frames
+  const d0 = items[0].d;
+  t.appendChild(el("h2", "", `${d0.role}: ${d0.file}`));
+  const info = el("div", "readout"), host = el("div"), cache = []; let iv = null;
+  const fb = frameBar(t, items, async i => {
+    const d = items[i].d;
+    info.textContent = `${d.h} rows x ${d.w} columns${d.decimated ? ` (shown binned ${d.decimated}x${d.decimated})` : ""}; values: pedestal-subtracted, ${d.unit}`;
+    const v = cache[i] || (cache[i] = await arr(d.pixels));
+    if (!iv) iv = new ImageView(host, v, d.w, d.h, { unit: d.unit }); else iv.setImage(v, d.w, d.h, null, d.unit);
+  });
+  t.append(info, host); await fb.go(0);
+}
+async function defectsTab(t, items) {        // defect map, the CCDs as frames
+  const head = el("div"); t.appendChild(head);
+  const host = el("div"), list = el("div"), cache = []; let iv = null;
+  const fb = frameBar(t, items, async i => {
+    const d = items[i].d;
+    head.replaceChildren(el("h2", "", d.title), table(d.numbers), el("p", "readout", "Coloured marks: what was found (tick to show / hide a type)." + (d.defects ? " Click a line of the list below to go to it." : "")));
+    const v = cache[i] || (cache[i] = [await arr(d.pixels), await arr(d.mask)]);
+    const ov = { mask: v[1], types: d.types };
+    if (!iv) iv = new ImageView(host, v[0], d.w, d.h, { unit: d.unit, overlay: ov }); else iv.setImage(v[0], d.w, d.h, ov, d.unit);
+    if (!d.defects) { list.replaceChildren(); return; }       // no list on this page (e.g. serial-register streaks)
+    list.replaceChildren(el("h3", "", `List (${d.defects.length}${d.defects_more ? ", the " + d.defects.length + " largest of " + (d.defects.length + d.defects_more) : ""}; click a line to go to it)`));
+    const types = [...new Set(d.defects.map(x => x[0]))], ctl = el("div", "controls");
+    ctl.innerHTML = `show <select><option value="">all types</option>${types.map(ty => `<option>${ty}</option>`).join("")}</select> sort <select><option value="v">largest value first</option><option value="p">by position</option></select>`;
+    const cols = el("div", "dlist"); list.append(ctl, cols);
+    const fill = () => {        // the list in columns of 40 lines: long lists stay short on the page
+      const [fs, ss] = ctl.querySelectorAll("select");
+      let xs = d.defects.filter(x => !fs.value || x[0] === fs.value);
+      if (ss.value === "p") xs = xs.slice().sort((a, b) => a[2] - b[2] || a[1] - b[1]);
+      cols.replaceChildren();
+      const seen = xs.some(x => x[5] !== "composite" && x[5] !== d.unit);
+      for (let i = 0; i < xs.length; i += 40) {
+        const tb = el("table", "num"); tb.innerHTML = `<tr><th>type</th><th>col</th><th>row</th><th>size</th><th>value</th>${seen ? "<th>seen in</th>" : ""}</tr>`;
+        for (const x of xs.slice(i, i + 40)) { const tr = el("tr", "click"); tr.innerHTML = `<td>${x[0]}</td><td>${x[1]}</td><td>${x[2] < 0 ? "all" : x[2]}</td><td>${x[3]}</td><td>${fmt(x[4])}</td>${seen ? `<td>${x[5]}</td>` : ""}`; tr.onclick = () => { iv.goto(x[1], x[2] < 0 ? d.h >> 1 : x[2]); host.scrollIntoView({ behavior: "smooth" }); }; tb.appendChild(tr); }
+        cols.appendChild(tb);
+      }
+      if (!xs.length) cols.appendChild(el("p", "readout", "nothing found"));
+    };
+    ctl.querySelectorAll("select").forEach(s => s.onchange = fill); fill();
+  });
+  t.append(host, list); await fb.go(0);
+}
+async function figureTab(t, d) {
+  t.appendChild(el("h2", "", d.title));
+  if (d.numbers) t.appendChild(table(d.numbers));
+  for (const f of d.figures) { const c = el("div", "figure"); c.appendChild(el("h3", "", f.caption)); const im = el("img"); im.src = "data:image/png;base64," + f.png; c.appendChild(im); t.appendChild(c); }
+}
+async function plotsTab(t, items) {          // the CCDs overlaid: one colour per CCD, tables with a CCD column
+  const d0 = items[0].d, multi = items.length > 1;
+  t.appendChild(el("h2", "", d0.title));
+  if (d0.text) for (const p of d0.text) t.appendChild(el("p", "", p));
+  const nums = items.filter(it => it.d.numbers);
+  if (nums.length) t.appendChild(wrapX(cmpTable(nums.map(it => ({ c: it.c, rows: it.d.numbers })))));
+  if (d0.table) {
+    const tb = el("table", "num"); let h = "<tr>" + (multi ? ["CCD"] : []).concat(d0.table.head).map(x => `<th>${x}</th>`).join("") + "</tr>";
+    for (const it of items) for (const r of (it.d.table ? it.d.table.rows : [])) h += "<tr>" + (multi ? `<td>${swatch(it.c)}${it.c.label}</td>` : "") + r.map(c => `<td class="v">${c}</td>`).join("") + "</tr>";
+    tb.innerHTML = h; t.appendChild(wrapX(tb));
+  }
+  if (!d0.plots || !d0.plots.length) return;
+  const grid = el("div", "grid"); t.appendChild(grid);
+  for (const [j, p] of d0.plots.entries()) {
+    const a = el("div", "card"); grid.appendChild(a);
+    const lp = new LinePlot(a, { title: p.title, xlabel: p.xlabel, ylabel: p.ylabel, logx: !!p.logx, logy: !!p.logy, height: 270, yauto: true });
+    const ns = p.series.length;
+    if (multi && ns > 1 && ns <= DASHES.length)      // one colour per CCD; the line style tells the series apart
+      a.firstChild.insertBefore(el("div", "help", p.series.map((s, k) => `${(s.style || "line") === "points" ? "points" : ["solid", "dashed", "dotted", "dash-dot"][k]}: ${s.name}`).join(" &middot; ")), a.firstChild.children[1]);
+    const ser = [];
+    for (const it of items) {
+      const q = (it.d.plots || [])[j]; if (!q) continue;
+      for (const [k, s] of q.series.entries()) ser.push({ x: await arr(s.x), y: await arr(s.y), style: s.style || "line", color: multi ? it.c.color : s.color,
+        dash: multi ? DASHES[k % DASHES.length] : undefined, name: !multi ? s.name : k === 0 ? it.c.label : "" });
+    }
+    lp.set(ser);
+  }
+}
+
+const HELP = `<h2 style="margin-top:0">How to use this report</h2>
+<p>One page per module. <b>CCDs</b> (below the tabs): tick the CCDs to show, <b>all CCDs in the module</b> for all of them, <b>only</b> next to a CCD for that one alone. Every tab follows the choice: traces one below the other, PSD and profiles overlaid (one colour per CCD), numbers side by side, images one CCD at a time. A red dot on a tab: one of its numbers is outside the usual range for a ticked CCD; a red dot on a CCD: that CCD has such numbers.</p>
+<h3>Plots</h3><p><kbd>drag</kbd> draw a box to zoom in on a range · <kbd>shift</kbd>+<kbd>drag</kbd> move the view · <kbd>wheel</kbd> zoom the x axis (with <kbd>alt</kbd>: the y axis) · <kbd>double-click</kbd> or <b>reset</b>: everything again · <b>log y</b>: switch the y axis · <b>PNG</b>: save the plot. Move the mouse over a plot to read the values.</p>
+<h3>Images (like ds9 frames)</h3><p>The slider, <b>&#9664;</b> / <b>&#9654;</b> or the <kbd>&larr;</kbd> <kbd>&rarr;</kbd> keys switch between the ticked CCDs; zoom, pan, scale and the row / column cut stay, so the same spot can be compared. <b>blink</b> switches every second. <kbd>wheel</kbd> or <b>+</b>/<b>&minus;</b> zoom · <kbd>drag</kbd> move · <kbd>click</kbd> a pixel: its row and column are plotted below · <kbd>shift</kbd>+<kbd>drag</kbd> a box: statistics of that region · <b>scale</b>: colour range (auto: around the background level, like ds9 zscale; 99.5 %: ignores the brightest pixels; manual: type min / max) · <b>asinh</b>: brings out faint structure · <b>fit</b> / <b>1:1</b> whole image / one image pixel per screen pixel. Row 0 is at the bottom (as ds9).</p>
+<h3>Comments</h3><p>Type in the box at the bottom of any tab; it is kept in this browser automatically. <b>Save comments</b> writes them to a file (keep it next to the report, send it to others); <b>Load comments</b> reads such a file back.</p>
+<h3>PDF</h3><p><b>Export PDF</b> opens the print dialog with every tab on its own page (the ticked CCDs) and the comments included: choose "Save as PDF".</p>
+<h3>Log</h3><p>Each tab ends with the log of how its numbers were made (per ticked CCD): files, settings from the data header, checks, fit results.</p>`;
+
+(async function () {
+  document.title = D.title; document.getElementById("title").textContent = D.title;
+  document.getElementById("ident").textContent = D.ident;
+  const R = { overview: overviewTab, trace: each(traceTab), psd: psdTab, summary: imageSummaryTab, image: imageTab, defects: defectsTab, figure: each(figureTab), plots: plotsTab };
+  for (const tb of D.tabs) addTab(tb, (t, items) => R[tb.kind](t, items));
+  const sp = el("span", "sp"); nav.appendChild(sp);
+  const save = el("button", "noprint", "Save comments"), load = el("button", "noprint", "Load comments"), pdf = el("button", "noprint", "Export PDF");
+  const hb = el("button", "noprint", "? Help"); nav.appendChild(hb);
+  const help = el("div", ""); help.id = "help"; help.innerHTML = HELP + `<p><button id="hclose">close</button></p>`; document.body.appendChild(help);
+  hb.onclick = () => { help.style.display = help.style.display === "block" ? "none" : "block"; };
+  help.querySelector("#hclose").onclick = () => { help.style.display = "none"; };
+  document.addEventListener("keydown", e => { if (e.key === "Escape") help.style.display = "none"; });
+  let seen = false; try { seen = localStorage.getItem("superWADERs:hint2") === "1"; } catch (e) {}
+  if (!seen) { const h = el("div", "hint noprint", `<span>New here? Tick the CCDs to show below the tabs (all, or one with <b>only</b>). Plots and images are interactive: drag to zoom, double-click to reset; in an image, the slider or the arrow keys switch CCD. Comments are saved as you type. Press <b>? Help</b> for everything.</span><button>got it</button>`); document.querySelector("header").after(h); h.querySelector("button").onclick = () => { h.remove(); try { localStorage.setItem("superWADERs:hint2", "1"); } catch (e) {} }; }
+  save.title = "write all comments of this report to a .json file"; load.title = "read comments from such a file"; pdf.title = "print every tab (with comments) - choose Save as PDF";
+  const file = el("input"); file.type = "file"; file.accept = ".json"; file.style.display = "none";
+  nav.append(save, load, pdf, file);
+  if (CCDS) {
+    const bar = el("div", "ccdbar noprint"); bar.appendChild(el("b", "", "CCDs"));
+    const all = el("label", "all", `<input type="checkbox"> all CCDs in the module`); all.title = "show every CCD of the module"; bar.appendChild(all);
+    const boxes = [];
+    const setSel = keys => {
+      if (keys.length) { SEL = CCDS.map(c => c.key).filter(k => keys.includes(k)); try { localStorage.setItem(KEY + ":ccds", JSON.stringify(SEL)); } catch (e) {} }
+      boxes.forEach(([c, i]) => { i.checked = SEL.includes(c.key); }); all.querySelector("input").checked = SEL.length === CCDS.length;
+      if (!keys.length) return;                                // at least one CCD stays ticked
+      updateDots(); tabs.forEach(x => x.stale()); const cur = tabs.find(x => x.b.classList.contains("on")); if (cur) cur.show();
+    };
+    for (const c of CCDS) {
+      const l = el("label", "", `<input type="checkbox"> ${swatch(c)}${c.label}` + ((c.flagged || []).length ? ` <span class="cflag" title="numbers outside the usual range on: ${c.flagged.join(", ")}">&#9679;</span>` : ""));
+      const i = l.querySelector("input"); i.onchange = () => setSel(i.checked ? [...SEL, c.key] : SEL.filter(k => k !== c.key));
+      const o = el("button", "only", "only"); o.title = `show ${c.label} alone`; o.onclick = () => setSel([c.key]);
+      bar.append(l, o); boxes.push([c, i]);
+    }
+    all.querySelector("input").onchange = e => setSel(e.target.checked ? CCDS.map(c => c.key) : [CCDS[0].key]);
+    nav.appendChild(bar);
+    boxes.forEach(([c, i]) => { i.checked = SEL.includes(c.key); }); all.querySelector("input").checked = SEL.length === CCDS.length;
+  }
+  updateDots();
+  save.onclick = () => {
+    const out = { report: D.report_id, saved: new Date().toISOString(), comments: {} };
+    document.querySelectorAll(".comment textarea").forEach(ta => out.comments[ta.dataset.key] = ta.value);
+    try { Object.assign(out.comments, Object.fromEntries(Object.entries(JSON.parse(localStorage.getItem(KEY) || "{}")).filter(([k]) => !(k in out.comments)))); } catch (e) {}
+    const a = el("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(out, null, 1)], { type: "application/json" })); a.download = D.report_id + "_comments.json"; a.click();
+  };
+  load.onclick = () => file.click();
+  file.onchange = async () => {
+    const j = JSON.parse(await file.files[0].text()); localStorage.setItem(KEY, JSON.stringify(j.comments || {}));
+    document.querySelectorAll(".comment textarea").forEach(ta => { ta.value = (j.comments || {})[ta.dataset.key] || ""; ta.nextElementSibling.textContent = ta.value; });
+  };
+  pdf.onclick = async () => { for (const x of tabs) await x.build(); tabs.forEach(x => x.t.classList.add("on")); setTimeout(() => { window.print(); tabs.forEach(x => x.t.classList.remove("on")); (tabs.find(x => x.b.classList.contains("on")) || tabs[0]).t.classList.add("on"); }, 400); };
+  const want = location.hash.slice(1); (tabs.find(x => x.tb.id === want) || tabs[0]).show();
+})();
+</script>
+</body>
+</html>

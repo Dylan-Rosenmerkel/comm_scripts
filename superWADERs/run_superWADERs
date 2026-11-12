@@ -1,0 +1,1062 @@
+#!/usr/bin/env python3
+"""run_superWADERs: skipper-CCD images (and raw DAQ files) -> fits, clusters, cluster files and commissioning reports,
+with superWADERs' own engine. No panaSKImg, and nothing from bin/run_WADERs or comm_scripts/src: every module it uses
+is in this folder (engine/, clustering/, commissioning/).
+
+    run_superWADERs INPUT [-o PARENT] [-j N] [options]      INPUT: an image, a raw DAQ file, or a .txt list of them
+    run_superWADERs -h            the flags;      run_superWADERs -h -v      the full guide
+
+What happens (one function each, called in order by main()):
+  check_request         inputs exist, output folder free, option combinations valid (standard library only)
+  ensure_environment    if this python lacks numpy / astropy / scipy / numba / ROOT, re-run inside the conda
+                        environment that has them (the damic environment)
+  raw_inputs            level-0 traces -> L0/ (decoded, checked, plotted); level-1 images -> L1/ FITS images with N
+                        skips, which join the images
+  (--packet)            commissioning packet reports (packet/) and nothing else
+  front_end             characterise every image and CCD before anything is fitted (engine/characterise.py): data form
+                        (skip-resolved raw files are compressed first), geometry, dead / quiet channels, first-column
+                        artefact, gain source, noise, dark charge, electron counting -> a clustering plan per CCD;
+                        run-pooled dark charge for the Bayesian few-electron finder (images of one run setting)
+  gain_correction       --gain-correction: fits of every CCD, g(n) curves per module / gain period / image
+  process               per image one process (-j at a time): pedestal, the two dark-current fits and the gain
+                        choice, calibration, and per CCD the clustering chain (below); cluster files in panaSKImg's
+                        format -> root/ (and root_gaincorr*/)
+  composite             --composite: MakeComposite_Fe55_Clusters_Extensions.cc on the cluster files
+  commissioning         --dc-series, --defect-map, --sr on the run's images
+  summary               summary.txt, fit_quality.csv, native_summary.json, characterisation/<image>.json
+
+Clustering (--clusterer auto, the default), chosen per CCD after calibration and before clustering
+(characterise.decide_ccd, on the numbers A_GMX itself uses):
+  electron counting, sparse (core fill < 0.10)   A_GMX; inside it the Bayesian few-electron switch replaces A_GMX's
+                                                 small clusters in sparse, low-dark-charge blocks (run-pooled dark
+                                                 charge when the run setting has >= 2 images and DC <= 1.5e-2 e-/pix)
+  electron counting, crowded (core fill >= 0.10) A_GMX crowded mode
+  read noise >= 1 e-, or a structured background A_GMX 'unmodelled' (hysteresis on the calibrated image)
+  flooded, or peaks not resolved                 threshold clusterer (--thresholds; auto -> sigma0 rule there)
+Every choice and every fallback is written to summary.txt, characterisation/<image>.json and each ROOT file.
+"""
+# Only the standard library at module level: this part has to run in any python, before the environment is found.
+import argparse
+import concurrent.futures as cf
+import glob
+import importlib.util
+import json
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, field
+
+PROG = "run_superWADERs"
+SCRIPT_PATH = os.path.realpath(__file__)
+SW_DIR = os.path.dirname(SCRIPT_PATH)                                  # superWADERs/
+for _d in ("commissioning", "clustering", "engine"):                   # engine first on the path
+    _d = os.path.join(SW_DIR, _d)
+    if _d in sys.path:
+        sys.path.remove(_d)
+    sys.path.insert(0, _d)
+from naming import acm_id, image_stem  # noqa: E402  (standard library only)
+
+NEEDED_MODULES = ("numpy", "astropy", "scipy", "numba", "skimage", "matplotlib", "ROOT")
+INSIDE_FLAG = "RUN_SUPERWADERS_IN_ENV"
+OUT_PREFIX = "superWADERs_"
+IMAGE_EXT = (".fz", ".fits", ".fits.bz2", ".fits.gz")
+RAW_INPUT = re.compile(r"\.RJ45ADCDATA\d$")
+RESERVED_AUTOCONFIG = ("--peaks", "--per-ext", "--tune", "-o", "--output", "--gain", "--cluster-threshold-e")
+DEFAULT_COMPOSITE_MACRO = os.path.expanduser(
+    "~/Documents/LSM_Module_Testing_Analysis/src/MakeComposite_Fe55_Clusters_Extensions.cc")
+ACM_ORDER = ("110", "109", "106")      # ACM ids in the order of the modules in a ..._DMa_DMb_DMc_... data folder
+
+
+def die(msg):
+    sys.exit(f"{PROG}: {msg}")
+
+
+# =============================================================================
+# Environment
+# =============================================================================
+def env_ready():
+    return all(importlib.util.find_spec(m) is not None for m in NEEDED_MODULES)
+
+
+def find_conda():
+    """conda / mamba / micromamba executable, or None."""
+    cands = [os.environ.get("CONDA_EXE"), os.environ.get("MAMBA_EXE"),
+             shutil.which("conda"), shutil.which("mamba"), shutil.which("micromamba")]
+    home = os.path.expanduser("~")
+    for base in ("miniforge3", "mambaforge", "miniconda3", "anaconda3", "micromamba"):
+        cands.append(os.path.join(home, base, "bin", "conda"))
+    cands += ["/opt/conda/bin/conda", "/opt/homebrew/Caskroom/miniforge/base/bin/conda",
+              "/usr/local/Caskroom/miniforge/base/bin/conda"]
+    return next((c for c in cands if c and os.path.isfile(c)), None)
+
+
+def _env_has(env, module):
+    """True if the environment's site-packages hold `module` (a package folder or a module file)."""
+    for sp in glob.glob(os.path.join(env, "lib", "python3*", "site-packages")) + \
+            [os.path.join(env, "Lib", "site-packages")]:
+        if os.path.isdir(os.path.join(sp, module)) or glob.glob(os.path.join(sp, module + "*.py")):
+            return True
+    return False
+
+
+def find_env(conda, name):
+    """Prefix of the environment to use: --env / $SUPERWADERS_ENV; else one named 'damic'; else the first environment
+    whose site-packages hold numba and ROOT."""
+    try:
+        out = subprocess.run([conda, "env", "list", "--json"], capture_output=True, text=True, check=True).stdout
+        envs = json.loads(out).get("envs", [])
+    except (subprocess.CalledProcessError, json.JSONDecodeError, OSError):
+        return None
+    if name:
+        return next((e for e in envs if os.path.basename(e) == name or e == name), None)
+    named = [e for e in envs if os.path.basename(e) == "damic"]
+    if named:
+        return named[0]
+    return next((e for e in envs if _env_has(e, "numba") and _env_has(e, "ROOT")), None)
+
+
+def ensure_environment(env_name):
+    """Return if this python has everything; otherwise re-run this script inside the conda environment."""
+    if env_ready():
+        return
+    missing = [m for m in NEEDED_MODULES if importlib.util.find_spec(m) is None]
+    if os.environ.get(INSIDE_FLAG):
+        die(f"the environment is missing {', '.join(missing)}")
+    conda = find_conda()
+    if not conda:
+        die(f"this python lacks {', '.join(missing)} and no conda was found; activate the damic environment")
+    env = find_env(conda, env_name)
+    if not env:
+        die("no conda environment with numba and ROOT found" + (f" (looked for '{env_name}')" if env_name else "")
+            + "; use --env NAME")
+    print(f"{PROG}: using environment {env}", flush=True)
+    cmd = [conda, "run"]
+    if not os.path.basename(conda).startswith("micromamba"):
+        cmd.append("--no-capture-output")
+    cmd += ["-p", env, "python", SCRIPT_PATH] + sys.argv[1:]
+    sys.exit(subprocess.run(cmd, env=dict(os.environ, **{INSIDE_FLAG: "1", "PYTHONUNBUFFERED": "1"})).returncode)
+
+
+# =============================================================================
+# Inputs and module names
+# =============================================================================
+def read_inputs(path):
+    """(run name, [paths]) from an image, a raw DAQ file (.RJ45ADCDATA<ch>) or a .txt list of them."""
+    path = os.path.abspath(path)
+    if not os.path.isfile(path):
+        die(f"{path} not found")
+    if path.endswith(".txt"):
+        base, files = os.path.dirname(path), []
+        with open(path) as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                p = line if os.path.isabs(line) else os.path.join(base, line)
+                if not os.path.isfile(p):
+                    die(f"{p} (from {os.path.basename(path)}) not found")
+                files.append(os.path.abspath(p))
+        if not files:
+            die(f"nothing listed in {path}")
+        return os.path.basename(path)[:-4], files
+    if RAW_INPUT.search(path):
+        return RAW_INPUT.sub("", os.path.basename(path)), [path]
+    if not path.endswith(IMAGE_EXT):
+        die(f"{path} is neither an image ({', '.join(IMAGE_EXT)}), a raw DAQ file (.RJ45ADCDATA<ch>) nor a .txt list")
+    return image_stem(path), [path]
+
+
+def parse_modules(items):
+    """{ACM id: module name} from --module ACM=NAME arguments."""
+    modules = {}
+    for it in items:
+        acm, sep, name = it.partition("=")
+        if not sep or not acm.strip() or not name.strip():
+            die(f"--module {it}: expected ACM=NAME, e.g. 109=DM02")
+        modules[acm.strip()] = name.strip()
+    return modules
+
+
+def module_name(acm, src, modules):
+    """(module name, where it came from) of an image: --module, else the DMa_DMb_DMc folder name, else ACM<id>."""
+    if acm in modules:
+        return modules[acm], "--module"
+    m = re.search(r"(DM\d+)_(DM\d+)_(DM\d+)", os.path.dirname(src))
+    if m and acm in ACM_ORDER:
+        return m.group(ACM_ORDER.index(acm) + 1), "folder name"
+    return (f"ACM{acm}" if acm else "DMXX"), "no module found"
+
+
+def module_resolver(run):
+    """Module name of a CCD: --module-list (per ACM or per CCD), else --module, else the data folder name, else
+    ACM<id>. Returns f(acm, ext, ccd)."""
+    import packet_report as PR
+    mods = PR.read_module_list(run.args.module_list)
+
+    def f(acm, ext=None, ccd=None):
+        m = PR.module_for(mods, acm, ext, ccd)
+        if m.startswith("ACM"):
+            name, why = module_name(str(acm), run.images[0] if run.images else "", run.modules)
+            if why != "no module found":
+                m = name
+        return m
+    return f
+
+
+# =============================================================================
+# Command line
+# =============================================================================
+SHORT_DESCRIPTION = """\
+Skipper-CCD images (and raw DAQ files) -> fits, clusters (one clustering chain per CCD, chosen from what the image
+is), cluster ROOT files in panaSKImg's format, commissioning reports; all in superWADERs_<run name>/."""
+
+SHORT_EPILOG = """\
+examples:
+  run_superWADERs images.txt                          fits and clusters (clusterer auto)
+  run_superWADERs images.txt --gain-correction --composite --module-list modules.csv
+  run_superWADERs packet.txt --packet --module-list modules.csv
+  run_superWADERs series.txt --dc-series --no-clusters
+
+run_superWADERs -h -v   full guide: inputs, outputs, the clustering chains, the commissioning tools"""
+
+HELP_EPILOG = """\
+inputs (one file or a .txt list, one path per line, relative to the .txt; # comments; any order):
+  avg_*.fits, .fits.bz2, .fz, .fits.gz   averaged images (any size, binning, number of skips); skip-resolved raw
+                                         FITS files are compressed first (mean over the skips, --skip-start K)
+  trace_* / psd_* .RJ45ADCDATA<ch>       level-0 traces: decoded, checked, plotted -> L0/
+  *_L1_*.RJ45ADCDATA0..3 (+ .meta)       level-1 images, binned or not: one FITS image per --l1-skips N -> L1/,
+                                         then through the pipeline; noise vs N, fits side by side, diagnostics
+
+output (superWADERs_<run name>/; <run name> = image or .txt name):
+  summary.txt                  read first: fits per CCD, the clustering chain of every CCD and why, fallbacks
+  fit_quality.csv              gain, noise, dark current per CCD with errors scaled by sqrt(chi2/ndf)
+  native_summary.json          everything per image and CCD (fits, gain choice, pedestal, thresholds, decisions)
+  characterisation/<image>.json   the front end's record per image and CCD, with the result
+  root/                        cluster files, one per CCD (panaSKImg_clustersRec_<image>_ext<n>.root; trees
+                               clustersRec, info, process_config; TNamed native_config, characterisation, agmx_config)
+  root/root_files.txt          their full paths (input list for MakeComposite)
+  *_FitDarkCurrentProcess_DCfit_EXTn.pdf, *_PedestalSubtractionProcess_Baseline/Sigma_EXTn.pdf   plots
+  gain_vs_charge/, root_gaincorr*/   with --gain-correction;   composite*/   with --composite
+  L0/, L1/, packet/, dc_series/, defects/, sr/   raw files and commissioning tools
+  compressed/                  skip-resolved raw files, compressed
+  logs/                        failures and MakeComposite output
+
+clustering (--clusterer; default auto):
+  auto       one chain per CCD (see the table below), decided after calibration on the calibrated image
+  agmx       A_GMX on every CCD (crowded mode on CCDs with core fill >= 0.10; Bayesian switch off)
+  threshold  the threshold clusterer on every CCD (pixel > T_pix, 8-connected, kept with a pixel >= T_seed)
+  auto's chains:
+    no CCD signal (zero peak not sharp)             skipped
+    'no CCD signal' but a sharp zero peak ('quiet') kept, as electron counting (cannot be told from a very low DC)
+    electron counting, core fill < 0.10             A_GMX + Bayesian few-electron switch (run-pooled dark charge
+                                                    when >= 2 images share the run setting and DC <= 1.5e-2 e-/pix)
+    electron counting, core fill >= 0.10            A_GMX crowded mode
+    read noise >= 1 e- / structured background      A_GMX 'unmodelled' (hysteresis); > 30 % of the pixels above
+                                                    4.5 e- -> threshold clusterer instead (flood guard)
+    flooded (no peaks, > 10 e-/pix) / not counting  threshold clusterer
+  --thresholds auto|sigma0|PIX,SEED   thresholds of the threshold clusterer: auto = in electrons from the CCD's
+                                      dark charge where the peaks are resolved, else panaSKImg's 10 / 30 sigma0
+  CCDs without a measurable comb get their gain from --gain, --gain-file, other images of the same CCD and run
+  setting, or the reference prior, in this order (always flagged). The first active column is masked in the
+  clustering region when it carries a significant artefact.
+
+--gain-correction [pooled|per-image|both]: the gain falls with the charge in a pixel (~3 % at 1000 e-). g(n) is
+  measured from the electron comb of the images (one curve per module, split into gain periods where the gain
+  steps; per-image: one per image) and the clusters are written again with g(n) energies (epsilon(T), --temperature)
+  -> root_gaincorr/ (root_gaincorr_per_image/). --gain-model, --gain-combine, --gain-memory, --gain-periods,
+  --gain-anchor: see -h.
+
+--composite: MakeComposite_Fe55_Clusters_Extensions.cc once per image type (Image_<N>) and module on the cluster
+  files (gain-corrected ones with --gain-correction). Module names: --module-list, --module ACM=NAME, a
+  ..._DMa_DMb_DMc_... data folder, else ACM<id>. Macro: --composite-macro or $MAKECOMPOSITE_MACRO.
+
+commissioning tools:
+  --packet       the list is a commissioning packet (traces, PSD traces, images, L1 files): one interactive page
+                 per module (packet/), no clustering
+  --dc-series    dark current over the series (dc_series/: dc_report.pdf, dc_series.csv, pages)
+  --defect-map   median composites per module and image size, column and hot / cold pixel defects (defects/)
+  --sr           serial-register images: streaks along a read (sr/)
+  Add --no-clusters when no cluster files are needed (much faster). The pages work offline (double-click).
+
+module names (--module-list FILE): one line per ACM (or per CCD), comma / tab / space separated:
+  # ACM, module[, EXT<n> or CCD name]
+  101, DM24
+  103, PA03, EXT2
+
+environment: numpy, astropy, scipy, numba, scikit-image, matplotlib, ROOT (the damic conda environment, found
+  automatically; --env NAME or $SUPERWADERS_ENV). No panaSKImg / pysimdamicm.
+"""
+
+
+def build_parser(full=False):
+    ap = argparse.ArgumentParser(
+        prog=PROG, usage=f"{PROG} INPUT [options]      (-h: flags, -h -v: full guide)",
+        description=(__doc__ if full else SHORT_DESCRIPTION), epilog=(HELP_EPILOG if full else SHORT_EPILOG),
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("input", metavar="INPUT", help="an image, a raw DAQ file or a .txt list (one path per line)")
+    ap.add_argument("-o", "--parent", metavar="DIR", default=".",
+                    help="folder in which superWADERs_<run name> is made (default: current folder)")
+    ap.add_argument("-j", "--jobs", metavar="N", type=int, default=min(2, os.cpu_count() or 1),
+                    help="images processed at the same time, one process each (default 2)")
+    ap.add_argument("--overwrite", action="store_true", help="replace an existing superWADERs_<run name> folder")
+    g = ap.add_argument_group("clustering")
+    g.add_argument("--clusterer", choices=("auto", "agmx", "threshold"), default="auto",
+                   help="auto (default): one chain per CCD from the characterisation (Bayes / A_GMX / crowded A_GMX / "
+                        "unmodelled / threshold); agmx or threshold: that clusterer on every CCD (details: -h -v)")
+    g.add_argument("--thresholds", metavar="auto|sigma0|PIX,SEED", default="auto",
+                   help="threshold clusterer: auto (default; in electrons from the dark charge, sigma0 rule where the "
+                        "peaks are not resolved), sigma0 (panaSKImg's 10 / 30 sigma0) or PIX,SEED in electrons")
+    g.add_argument("--no-clusters", action="store_true", help="fits only: no cluster files (much faster)")
+    g.add_argument("--gain", metavar="G|EXT1=G1,...", default=None,
+                   help="gain [ADU/e-] for CCDs whose electron comb cannot be measured (flagged in the summary)")
+    g.add_argument("--gain-file", metavar="JSON", default=None,
+                   help="gains for CCDs without a comb: {EXTn: G}, {acm: {EXTn: G}} or a native_summary.json")
+    g.add_argument("--skip-start", metavar="K", type=int, default=0,
+                   help="skip-resolved raw FITS files: first skip averaged (0-based, default 0)")
+    g.add_argument("--tune", action="store_true",
+                   help="per resolved CCD: pedestal method by smallest total fit error and fit window on the histogram")
+    g.add_argument("--autoconfig-args", metavar='"ARGS"', default="",
+                   help='extra settings for the measurement, in one quoted string (e.g. "--ccd-cols 6200")')
+    g = ap.add_argument_group("gain vs charge")
+    g.add_argument("--gain-correction", nargs="?", const="pooled", choices=("pooled", "per-image", "both"),
+                   metavar="MODE", help="measure g(n) and write gain-corrected cluster files too: pooled (default; one "
+                   "curve per module or gain period -> root_gaincorr/), per-image (-> root_gaincorr_per_image/), both")
+    g.add_argument("--gain-model", choices=("smooth", "interpolated", "broken", "linear"), default="smooth",
+                   help="form of g(n) (default smooth)")
+    g.add_argument("--gain-combine", choices=("coherent", "incoherent"), default="incoherent",
+                   help="several images of a module: comb powers added (incoherent, default) or pixels pooled")
+    g.add_argument("--gain-memory", choices=("off", "auto"), default="off",
+                   help="remove the horizontal readout memory before measuring g(n) (default off)")
+    g.add_argument("--gain-periods", choices=("auto", "off"), default="auto",
+                   help="split a module's images where their gain steps (> 1 %%) and measure a curve per period")
+    g.add_argument("--gain-anchor", choices=("comb", "fit"), default="comb",
+                   help="low-charge gain from the comb (default) or each image's fitted gain")
+    g.add_argument("--temperature", type=float, default=None, metavar="K",
+                   help="CCD temperature for the energy per electron epsilon(T) (default $COMM_TEMPERATURE_K or 130 K)")
+    g = ap.add_argument_group("MakeComposite and module names")
+    g.add_argument("--composite", action="store_true",
+                   help="run MakeComposite_Fe55_Clusters_Extensions.cc on the cluster files per image type and module")
+    g.add_argument("--composite-macro", metavar="PATH", default=os.environ.get("MAKECOMPOSITE_MACRO", DEFAULT_COMPOSITE_MACRO),
+                   help="the macro (default $MAKECOMPOSITE_MACRO, else ~/Documents/LSM_Module_Testing_Analysis/src/...)")
+    g.add_argument("--image-number", metavar="N", type=int, help="image type for the macro (default: Image_<N> in the name)")
+    g.add_argument("--module", metavar="ACM=NAME", action="append", default=[], help="module name of an ACM (repeat)")
+    g.add_argument("--module-list", metavar="FILE",
+                   help="module names per ACM (or per CCD): lines 'ACM, module[, EXT<n> or CCD name]'")
+    g = ap.add_argument_group("raw DAQ files and commissioning tools")
+    g.add_argument("--l1-skips", metavar="auto|N,N,...", default="auto",
+                   help="level-1 images: one FITS image per number of skips N (auto: 1, 2, 5, 10, ... and all)")
+    g.add_argument("--l1-skip-first", metavar="K", type=int, default=0,
+                   help="level-1 images: leave out the first K skips of every pixel (default 0)")
+    g.add_argument("--l0-no-html", action="store_true", help="level-0 traces: no interactive viewer")
+    g.add_argument("--packet", action="store_true", help="the list is a commissioning packet: reports per module "
+                   "(packet/), no clustering")
+    g.add_argument("--dc-series", action="store_true", help="dark current over the series (dc_series/)")
+    g.add_argument("--dc-limit", metavar="E_PER_PIX_PER_DAY", type=float, default=None,
+                   help="with --dc-series: flag CCDs above this dark current")
+    g.add_argument("--defect-map", action="store_true", help="defect maps per module and image size (defects/)")
+    g.add_argument("--defect-sigma", metavar="N", type=float, default=5.0,
+                   help="with --defect-map: hot / cold pixels at N x the local spread (default 5)")
+    g.add_argument("--sr", action="store_true", help="serial-register images: streaks along a read (sr/)")
+    g.add_argument("--sr-threshold", metavar="N", type=float, default=4.0, help="with --sr: N x noise (default 4)")
+    g.add_argument("--sr-min-length", metavar="PIX", type=int, default=3, help="with --sr: shortest streak (default 3)")
+    ap.add_argument("--env", metavar="NAME", default=os.environ.get("SUPERWADERS_ENV"),
+                    help="conda environment (default $SUPERWADERS_ENV, else 'damic', else one with numba and ROOT)")
+    ap.add_argument("-v", "--verbose", action="store_true", help="with -h: the full guide")
+    return ap
+
+
+def parse_args(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if any(a in ("-h", "--help") for a in argv) and any(a in ("-v", "--verbose") for a in argv):
+        build_parser(full=True).print_help()
+        sys.exit(0)
+    return build_parser().parse_args(argv)
+
+
+# =============================================================================
+# The run
+# =============================================================================
+@dataclass
+class Run:
+    """What the steps share. images: every input (images and raw files); dirs: root, logs (+ gc, root_gc)."""
+    args: argparse.Namespace
+    run_name: str
+    images: list
+    out: str
+    modules: dict
+    dirs: dict = field(default_factory=dict)
+    t0: float = 0.0
+    lines: dict = field(default_factory=lambda: {k: [] for k in ("raw", "front", "gc", "comp", "comm")})
+    failed: list = field(default_factory=list)
+
+    def stamp(self):
+        return f"[{time.time() - self.t0:5.0f}s]"
+
+    def say(self, msg):
+        print(f"  {self.stamp()} {msg}", flush=True)
+
+
+def check_request(args):
+    """Checks with the standard library only (before the environment is looked for)."""
+    run_name, files = read_inputs(args.input)
+    out = os.path.join(os.path.abspath(args.parent), OUT_PREFIX + run_name)
+    if os.path.exists(out) and os.listdir(out) and not args.overwrite:
+        die(f"{out} already exists; use --overwrite to replace it")
+    if args.jobs < 1:
+        die("-j/--jobs must be at least 1")
+    stems = {}
+    for p in files:
+        if not RAW_INPUT.search(p):            # the channel files of one raw image share a name
+            stems.setdefault(image_stem(p), []).append(p)
+    dup = {s: ps for s, ps in stems.items() if len(ps) > 1}
+    if dup:
+        die("images with the same name would overwrite each other's results: "
+            + "; ".join(f"{s}: {', '.join(ps)}" for s, ps in sorted(dup.items())))
+    try:
+        auto = shlex.split(args.autoconfig_args)
+    except ValueError as e:
+        die(f"--autoconfig-args cannot be parsed ({e})")
+    bad = sorted({a.split("=")[0] for a in auto} & set(RESERVED_AUTOCONFIG))
+    if bad:
+        die(f"{', '.join(bad)} cannot be given in --autoconfig-args (use --tune, --gain, --thresholds)")
+    if args.thresholds not in ("auto", "sigma0"):
+        try:
+            _ = [float(v) for v in args.thresholds.split(",")]
+            assert len(_) == 2
+        except (ValueError, AssertionError):
+            die("--thresholds: auto, sigma0 or PIX,SEED in electrons (e.g. 2.5,9.5)")
+    if args.composite:
+        if args.no_clusters:
+            die("--composite needs the cluster files; it cannot be used with --no-clusters")
+        args.composite_macro = os.path.abspath(os.path.expanduser(args.composite_macro))
+        if not os.path.isfile(args.composite_macro):
+            die(f"MakeComposite macro {args.composite_macro} not found; give --composite-macro PATH")
+    if args.packet and (args.gain_correction or args.composite or args.dc_series or args.defect_map or args.sr):
+        die("--packet makes the packet reports only; run the other tools separately")
+    return run_name, files, out, parse_modules(args.module)
+
+
+def prepare_output(run):
+    if os.path.exists(run.out) and os.listdir(run.out):
+        shutil.rmtree(run.out)                 # --overwrite (checked in check_request)
+    run.dirs = {k: os.path.join(run.out, k) for k in ("root", "logs")}
+    for d in run.dirs.values():
+        os.makedirs(d, exist_ok=True)
+    if "_ext" in run.out:
+        print("WARNING: the output path contains '_ext'; scripts that read the extension from '_ext<N>' in the path "
+              "(MakeComposite_Fe55_Clusters_Extensions.cc) may misread it")
+
+
+def raw_inputs(run):
+    """Level-0 traces -> L0/; level-1 images -> L1/ FITS images (they join the images). Returns (images, l1 FITS)."""
+    raw = [p for p in run.images if RAW_INPUT.search(p)]
+    images = [p for p in run.images if not RAW_INPUT.search(p)]
+    if not raw:
+        return images, []
+    import raw_data as RD
+    args, lines = run.args, run.lines["raw"]
+    kinds = {p: RD.kind(p) for p in raw}
+    l0 = [p for p, k in kinds.items() if k == "L0"]
+    if l0:
+        run.say(f"level-0 traces: {len(l0)}")
+        lines += RD.report_l0(l0, os.path.join(run.out, "L0"), html=not args.l0_no_html) + [""]
+    l1 = [p for p, k in kinds.items() if k == "L1"]
+    made = []
+    if l1:
+        run.say(f"level-1 images -> FITS ({len({RD.base_of(p) for p in l1})} image(s))")
+        made, ls = RD.convert_l1(l1, args.l1_skips, args.l1_skip_first, os.path.join(run.out, "L1"))
+        lines += ["level-1 images -> FITS images with N skips (L1/; header from the .meta):"] + ls + [""]
+    other = [p for p, k in kinds.items() if k == "raw"]
+    if other:
+        lines += ["not read (DAQ binaries of averaged images: give their avg_*.fits): "
+                  + ", ".join(os.path.basename(p) for p in other), ""]
+    return images + made, made
+
+
+def run_packet(run):
+    import packet_report as PR
+    run.say(f"commissioning packet: {len(run.images)} file(s)")
+    lines = PR.build(run.images, run.out, run.args.module_list, shlex.split(run.args.autoconfig_args),
+                     log=lambda m: print(f"  {run.stamp()}{m}", flush=True), mods_of=module_resolver(run))
+    text = "\n".join([f"{PROG} --packet: {run.run_name}  ({len(run.images)} file(s), {time.time() - run.t0:.0f} s)",
+                      ""] + lines)
+    with open(os.path.join(run.out, "summary.txt"), "w") as fh:
+        fh.write(text + "\n")
+    print("\n" + text + f"\nresults: {run.out}")
+    return 1 if any("FAILED" in ln for ln in lines) else 0
+
+
+def front_end(run, NP, images, base_kw):
+    """characterisation of every image (engine/characterise.py) and one task (path to process, keyword arguments)
+    per image. Returns (tasks, records)."""
+    args = run.args
+    run.say(f"characterisation of {len(images)} image(s)")
+    tasks, recs, skipped = NP.auto_tasks(images, run.out, base_kw, args.gain, args.gain_file, args.skip_start,
+                                         log=lambda m: run.say(m.strip()), pool=args.clusterer == "auto")
+    lines = run.lines["front"]
+    for f, why in skipped:
+        lines.append(f"  NOT PROCESSED {os.path.basename(f)}: {why}")
+        run.failed.append((image_stem(f), "all", why))
+    for rec in recs:
+        if not rec.get("process"):
+            continue
+        if rec.get("compressed"):
+            lines.append(f"  {rec['stem']}: skip-resolved raw file, compressed to {rec['process_path']}")
+        for fb in rec.get("fallbacks", []):
+            lines.append(f"  {rec['stem']}: {fb}")
+        for ext, c in sorted(rec.get("ccds", {}).items()):
+            gsrc = (c.get("gain") or {}).get("source")
+            if gsrc not in (None, "comb"):
+                lines.append(f"  {rec['stem']} {ext}: GAIN NOT MEASURED ON THIS CCD -> {c['gain']['value']:.4f} "
+                             f"ADU/e- from {gsrc}")
+            if c.get("channel", {}).get("value") == "quiet":
+                lines.append(f"  {rec['stem']} {ext}: 'no CCD signal' by autoconfig but a sharp zero peak -> kept "
+                             f"('quiet': cannot be told from a very low dark charge)")
+    return tasks, recs
+
+
+def native_record(img, s):
+    """The per-image record of the gain-correction, composite and summary steps, from a process_image summary."""
+    ccds = s["ccds"]
+    notes = []
+    for e, c in sorted(ccds.items()):
+        if "gain_note" in c:
+            notes.append(f"  {e}: {c['gain_note']}")
+            if c.get("pedestal_note"):
+                notes.append(f"  {e}: NOTE {c['pedestal_note']}")
+        else:
+            notes.append(f"  {e}: not run ({c.get('skipped')})")
+    return dict(stem=s["stem"], src=img, orig=img, summary=s, notes=notes,
+                fits={"dc": {e: c["fits"]["dc"] for e, c in ccds.items() if "fits" in c and "dc" in c["fits"]}},
+                final={e: c["fits"]["final"] for e, c in ccds.items() if "fits" in c},
+                held={e: tuple(c["held"]) for e, c in ccds.items() if c.get("held")},
+                refs={e: c["lam01"] for e, c in ccds.items() if c.get("lam01") is not None},
+                skipped=sorted(e for e, c in ccds.items() if "skipped" in c))
+
+
+def process(run, NP, tasks):
+    """NP.process_image on every task, -j images at a time (one process each). Returns {path: summary}."""
+    from multiprocessing import get_context
+    done = {}
+    if not tasks:
+        return done
+    with cf.ProcessPoolExecutor(max_workers=max(1, min(run.args.jobs, len(tasks))), mp_context=get_context("spawn")) as ex:
+        futs = {ex.submit(NP._job, t): t[0] for t in tasks}
+        for fut in cf.as_completed(futs):
+            img = futs[fut]
+            s, err = fut.result()
+            if err:
+                run.say(f"{image_stem(img)}: FAILED ({err.splitlines()[0]})")
+                with open(os.path.join(run.dirs["logs"], f"{image_stem(img)}.log"), "w") as fh:
+                    fh.write(err)
+                run.failed.append((image_stem(img), "all", err.splitlines()[0]))
+                continue
+            done[img] = s
+            for e, c in sorted(s["ccds"].items()):
+                if "gain" not in c:
+                    run.say(f"{s['stem']} {e}: not run ({c.get('skipped')})")
+                    continue
+                nc = ", ".join(f"{k} {v['n_clusters']} ({v.get('chain')})" for k, v in c.items()
+                               if isinstance(v, dict) and "n_clusters" in v)
+                run.say(f"{s['stem']} {e}: gain {c['gain']:.4f} ADU/e-, noise {c['noise_e']:.3f} e-, "
+                        f"DC {c['dc_e']:.4f} e-/pix" + (f"; clusters: {nc}" if nc else ""))
+    return done
+
+
+# ---- g(n) curves (--gain-correction) ---------------------------------------------------------------------------
+def _image_time(stem):
+    m = re.search(r"_(\d{8})_(\d{6})(?:_|$)", stem)
+    return m.group(1) + m.group(2) if m else ""
+
+
+def module_groups(run, configs, GVC, FQ):
+    """Images sharing one g(n) curve: ({key: [records]}, {key: module}, lines). key = ACM id, or <ACM>_period<k>
+    where the gain of all the module's CCDs steps (--gain-periods auto; gain_vs_charge.gain_periods)."""
+    import numpy as np
+    modules = {}
+    for r in configs.values():
+        modules.setdefault(acm_id(r["stem"]) or r["stem"], []).append(r)
+    groups, parent, lines = {}, {}, []
+    for key, rs in sorted(modules.items()):
+        rs = sorted(rs, key=lambda r: (_image_time(r["stem"]), r["stem"]))
+        gains = []
+        for r in rs:
+            fits = r.get("fits", {}).get("dc", {})
+            q = {e: FQ.quality(f) for e, f in fits.items() if e not in r.get("skipped", ())}
+            gains.append({e: (v["gain"], max(v["gain_err_s"], 1e-4)) for e, v in q.items() if v.get("gain")})
+        exts = sorted({e for g in gains for e in g})
+        med = {e: float(np.median([g[e][0] for g in gains if e in g])) for e in exts}
+        x, s, have = [], [], []
+        for i, g in enumerate(gains):
+            if g:
+                d = np.array([np.log(v / med[e]) for e, (v, _) in g.items()])
+                w = np.array([(v / err) ** 2 for e, (v, err) in g.items()])
+                x.append(float(np.sum(w * d) / w.sum()))
+                s.append(float(w.sum() ** -0.5))
+                have.append(i)
+        label = np.zeros(len(rs), int)
+        bad = []
+        if run.args.gain_periods == "auto" and len(have) >= 4:
+            lab, bad = GVC.gain_periods(x, s)
+            for i in range(len(rs)):
+                j = max([k for k, h in enumerate(have) if h <= i], default=0)
+                label[i] = lab[j]
+        if label.max() == 0:
+            groups[key], parent[key] = rs, key
+            continue
+        lines.append(f"  module {key}: {label.max() + 1} gain periods (the gain of its CCDs steps; one curve each):")
+        rel = dict(zip(have, x))
+        for k in range(label.max() + 1):
+            members = [r for r, lb in zip(rs, label) if lb == k]
+            ids = [i for i, lb in enumerate(label) if lb == k]
+            gk = f"{key}_period{k + 1}"
+            groups[gk], parent[gk] = members, key
+            v = [rel[i] for i in ids if i in rel]
+            lines.append(f"    period {k + 1}: {len(members)} image(s), {members[0]['stem']} .. {members[-1]['stem']}"
+                         + (f", gain {np.median(v) * 100:+.2f} % vs module median" if v else ""))
+        out = [rs[i]["stem"] for i, b in zip(have, bad) if b]
+        if out:
+            lines.append(f"    single-image gain outliers (kept in their period): {', '.join(out)}")
+    return groups, parent, lines
+
+
+def measure_curve(run, GVC, rs, name, title, run_exts):
+    res = GVC.measure([r["src"] for r in rs], run_exts, verbose=False, model=run.args.gain_model,
+                      combine=run.args.gain_combine, autoconfig_args=shlex.split(run.args.autoconfig_args),
+                      memory=run.args.gain_memory)
+    mpath = os.path.join(run.dirs["gc"], f"{name}_gain_vs_charge.json")
+    with open(mpath, "w") as fh:
+        json.dump({"images": [r["orig"] for r in rs], "e_per_electron_eV": GVC.E_PER_E, "extensions": res}, fh, indent=1)
+    GVC.plot(res, os.path.join(run.dirs["gc"], f"{name}_gain_vs_charge.png"), title)
+    GVC.plot_nonlinearity(res, os.path.join(run.dirs["gc"], f"{name}_nonlinearity.png"), title)
+    return mpath, res
+
+
+def report_curve(lines, title, res):
+    for ext, rr in sorted(res.items()):
+        if rr.get("ok"):
+            m = rr["model"]
+            lines.append(f"  {title} {ext}: g(0) = {m['a']:.4f} ADU/e- (comb gain {rr['g_1e']:.4f}), "
+                         f"{rr['drop_at_1000'] * 100:.1f}% lower at 1000 e-, measured to {rr['n_max_measured']:.0f} e-"
+                         + (f" -- module curve: own comb not usable ({rr.get('own_reason')})"
+                            if rr.get("source") == "module" else "")
+                         + (f" [readout memory removed, kL {rr['memory']['kL']:.2e}]" if rr.get("memory") else ""))
+        else:
+            lines.append(f"  {title} {ext}: no correction ({rr.get('reason')})")
+
+
+def gain_curves(run, GVC, FQ, configs, run_exts, modes):
+    """g(n) curves in gain_vs_charge/: per module or gain period, and per image with 'per-image' in modes (module
+    curve where the image's own comb is not usable). Returns {(mode, image stem): model file}."""
+    lines = run.lines["gc"]
+    groups, parent, period_lines = module_groups(run, configs, GVC, FQ)
+    curves, module_res, whole = {}, {}, {}
+    lines.append(f"gain vs charge per pixel (--gain-correction {run.args.gain_correction}, --gain-model "
+                 f"{run.args.gain_model}; from the electron comb in clean rows):")
+    lines += period_lines
+    for key, rs in sorted(groups.items()):
+        run.say(f"g(n) for module {key} ({len(rs)} image(s))")
+        mpath, res = measure_curve(run, GVC, rs, f"module_{key}", f"module {key}", run_exts)
+        if key != parent[key] and not all(rr.get("ok") for rr in res.values()):
+            m = parent[key]
+            if m not in whole:
+                whole[m] = measure_curve(run, GVC, [r for k, v in groups.items() if parent[k] == m for r in v],
+                                         f"module_{m}", f"module {m}", run_exts)[1]
+            replaced = False
+            for ext, rr in res.items():
+                rr.setdefault("source", "own")
+                if not rr.get("ok") and whole[m].get(ext, {}).get("ok"):
+                    res[ext] = dict(whole[m][ext], source="module", own_reason=rr.get("reason"))
+                    replaced = True
+            if replaced:
+                with open(mpath, "w") as fh:
+                    json.dump({"images": [r["orig"] for r in rs], "e_per_electron_eV": GVC.E_PER_E, "extensions": res},
+                              fh, indent=1)
+        report_curve(lines, f"module {key}", res)
+        module_res[key] = res
+        if "pooled" in modes:
+            curves.update({("pooled", r["stem"]): mpath for r in rs})
+    if "per-image" in modes:
+        lines.append("one curve per image (a CCD whose own comb is not usable gets the module curve):")
+        for key, rs in sorted(groups.items()):
+            for r in sorted(rs, key=lambda r: r["stem"]):
+                run.say(f"g(n) for image {r['stem']}")
+                mpath, res = measure_curve(run, GVC, [r], f"image_{r['stem']}", r["stem"], run_exts)
+                for ext, rr in res.items():
+                    rr["source"] = "image"
+                    mod = module_res[key].get(ext, {})
+                    if not rr.get("ok") and mod.get("ok"):
+                        res[ext] = dict(mod, source="module", own_reason=rr.get("reason"))
+                with open(mpath, "w") as fh:
+                    json.dump({"images": [r["orig"]], "e_per_electron_eV": GVC.E_PER_E, "extensions": res}, fh, indent=1)
+                report_curve(lines, r["stem"], res)
+                curves[("per-image", r["stem"])] = mpath
+    return curves
+
+
+def front_kalpha(files):
+    """Front-side Fe-55 K-alpha (sigma_xy < 1, 4.5 < E < 7 keV, as MakeComposite): unbinned fit of K-alpha + K-beta
+    (6.490/5.899 x K-alpha, same width) + flat background. Returns (mu, err, n) or None."""
+    import numpy as np
+    import ROOT
+    from scipy import optimize
+    E = []
+    for f in files:
+        tf = ROOT.TFile.Open(f)
+        t = tf.Get("clustersRec") if tf else None
+        if t and isinstance(t, ROOT.TTree):
+            for i in range(t.GetEntries()):
+                t.GetEntry(i)
+                sx, sy = np.array(list(t.fSTD_X)), np.array(list(t.fSTD_Y))
+                e = np.array(list(t.Energy))
+                E.append(e[(np.sqrt(0.5 * (sx ** 2 + sy ** 2)) < 1) & (e > 4.5) & (e < 7.0)])
+        if tf:
+            tf.Close()
+    e = np.concatenate(E) if E else np.array([])
+    if e.size < 30:
+        return None
+    lo, hi, r = 4.5, 7.0, 6.490 / 5.899
+
+    def nll(p):
+        mu, s, fb, fbg = p
+        g = lambda m: np.exp(-0.5 * ((e - m) / s) ** 2) / (s * np.sqrt(2 * np.pi))
+        v = (1 - fbg) * ((1 - fb) * g(mu) + fb * g(mu * r)) + fbg / (hi - lo)
+        return np.inf if np.any(v <= 0) else -np.sum(np.log(v))
+    sel = e[(e > 5.0) & (e < 6.2)]
+    res = optimize.minimize(nll, [np.median(sel) if sel.size else 5.8, 0.1, 0.15, 0.1], method="L-BFGS-B",
+                            bounds=[(5.0, 6.3), (0.03, 0.5), (0.0, 0.5), (1e-4, 0.9)])
+    h = 1e-3
+    curv = (nll(res.x + [h, 0, 0, 0]) - 2 * nll(res.x) + nll(res.x - [h, 0, 0, 0])) / h ** 2
+    return float(res.x[0]), float(1 / np.sqrt(curv)) if curv > 0 else float("nan"), int(e.size)
+
+
+def compare_gain_corrections(run, configs, curves, gc_dirs):
+    """--gain-correction both: per image and CCD, the image's own curve vs the module curve
+    (gain_vs_charge/per_image_vs_pooled.csv). Returns summary lines."""
+    import csv
+    import numpy as np
+    import ROOT
+    rows = []
+    for r in sorted(configs.values(), key=lambda r: r["stem"]):
+        mp = json.load(open(curves[("pooled", r["stem"])]))["extensions"]
+        mi = json.load(open(curves[("per-image", r["stem"])]))["extensions"]
+        for ext in sorted(set(mp) | set(mi)):
+            p, q = mp.get(ext, {}), mi.get(ext, {})
+            row = dict(image=r["stem"], ext=ext, pooled_ok=bool(p.get("ok")), per_image_ok=bool(q.get("ok")),
+                       per_image_source=q.get("source", "image"))
+            for tag, m in (("pooled", p), ("per_image", q)):
+                row[f"a_{tag}"] = round(m["model"]["a"], 5) if m.get("ok") else ""
+                row[f"drop1000_{tag}_pct"] = round(m["drop_at_1000"] * 100, 3) if m.get("ok") else ""
+            if not run.args.no_clusters:
+                name = f"panaSKImg_clustersRec_{r['stem']}_ext{ext[3:]}.root"
+                fp, fi = os.path.join(gc_dirs["pooled"], name), os.path.join(gc_dirs["per-image"], name)
+                ratios, fk_p, fk_i = [], None, None
+                if os.path.exists(fp) and os.path.exists(fi):
+                    tp, ti = ROOT.TFile.Open(fp), ROOT.TFile.Open(fi)
+                    a_, b_ = tp.Get("clustersRec"), ti.Get("clustersRec")
+                    if a_ and b_ and isinstance(a_, ROOT.TTree) and isinstance(b_, ROOT.TTree) \
+                            and a_.GetEntries() == b_.GetEntries():
+                        for k in range(a_.GetEntries()):
+                            a_.GetEntry(k)
+                            b_.GetEntry(k)
+                            ep, ei = np.array(list(a_.Energy)), np.array(list(b_.Energy))
+                            w = ep > 1.0
+                            if ep.shape == ei.shape:
+                                ratios += list(ei[w] / ep[w])
+                    tp.Close()
+                    ti.Close()
+                    fk_p, fk_i = front_kalpha([fp]), front_kalpha([fi])
+                ratios = np.array(ratios)
+                row["median_E_per_image_over_pooled"] = round(float(np.median(ratios)), 5) if ratios.size else ""
+                for tag, fk in (("pooled", fk_p), ("per_image", fk_i)):
+                    row[f"front_kalpha_{tag}_keV"] = round(fk[0], 4) if fk else ""
+            rows.append(row)
+    path = os.path.join(run.dirs["gc"], "per_image_vs_pooled.csv")
+    if rows:
+        keys = list(dict.fromkeys(k for row in rows for k in row))
+        with open(path, "w", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=keys)
+            w.writeheader()
+            w.writerows(rows)
+    lines = [f"per-image vs pooled gain correction (details in {path}):"]
+    for row in rows:
+        if not (row["pooled_ok"] and row["per_image_ok"]):
+            lines.append(f"  {row['image']} {row['ext']}: curve missing (pooled ok {row['pooled_ok']}, "
+                         f"per-image ok {row['per_image_ok']})")
+            continue
+        txt = (f"  {row['image']} {row['ext']}: a {(row['a_per_image'] / row['a_pooled'] - 1) * 100:+.3f}%, drop at "
+               f"1000 e- {row['drop1000_per_image_pct'] - row['drop1000_pooled_pct']:+.2f} points")
+        if row["per_image_source"] == "module":
+            txt += " (own comb not usable: module curve)"
+        if row.get("median_E_per_image_over_pooled", "") != "":
+            txt += f", cluster E per-image/pooled median {row['median_E_per_image_over_pooled']:.5f}"
+        if row.get("front_kalpha_pooled_keV", "") != "":
+            txt += (f", front K-alpha {row['front_kalpha_pooled_keV']:.4f} (pooled) vs "
+                    f"{row['front_kalpha_per_image_keV']:.4f} keV (per image)")
+        lines.append(txt)
+    return lines
+
+
+# ---- --composite ------------------------------------------------------------------------------------------------
+def composite(run, configs, gc_dirs):
+    """MakeComposite_Fe55_Clusters_Extensions.cc once per image type and module, on the gain-corrected files if there
+    are any (with 'both' also on the per-image ones -> composite_per_image/), else on root/."""
+    args, D = run.args, run.dirs
+    lines, failed = run.lines["comp"], []
+    sets = [(D.get("root_gc", D["root"]), os.path.join(run.out, "composite"), "")]
+    if len(gc_dirs) == 2:
+        sets.append((gc_dirs["per-image"], os.path.join(run.out, "composite_per_image"), "_per_image"))
+    root_exe = shutil.which("root") or os.path.join(os.path.dirname(sys.executable), "root")
+    for rootdir, cdir, tag in sets:
+        os.makedirs(os.path.join(cdir, "lists"), exist_ok=True)
+        groups = {}
+        lines.append(f"MakeComposite ({args.composite_macro}) on the cluster files in {rootdir}:")
+        for r in sorted(configs.values(), key=lambda r: r["stem"]):
+            m = re.search(r"Image_(\d+)", r["stem"])
+            num = args.image_number if args.image_number is not None else (int(m.group(1)) if m else None)
+            module, why = module_name(acm_id(r["stem"]), r["orig"], run.modules)
+            lines.append(f"  {r['stem']}: Image {num if num is not None else '?'}, module {module} ({why})")
+            if num is None:
+                lines.append("    not run: no Image_<N> in the name (use --image-number N)")
+                continue
+            groups.setdefault((num, module), []).extend(
+                sorted(glob.glob(os.path.join(rootdir, f"panaSKImg_clustersRec_{r['stem']}_ext*.root"))))
+        for (num, module), files in sorted(groups.items()):     # one at a time: the first run compiles the macro
+            name = f"Image_{num}_{module}"
+            if not files:
+                lines.append(f"  {name}: not run (no cluster files)")
+                continue
+            lst = os.path.join(cdir, "lists", f"{name}_list.txt")
+            with open(lst, "w") as fh:
+                fh.write("".join(f + "\n" for f in files))
+            log = os.path.join(D["logs"], f"composite{tag}_{name}.log")
+            run.say(f"MakeComposite {name}{tag} ({len(files)} file(s))")
+            with open(log, "w") as fh:
+                rc = subprocess.run([root_exe, "-l", "-q", "-b", f'{args.composite_macro}+("{lst}",{num},"{module}","{cdir}")'],
+                                    stdout=fh, stderr=subprocess.STDOUT).returncode
+            plots = os.path.join(cdir, "Fe_55_Analysis_Plots", module, f"{name}_list")
+            ok = rc == 0 and bool(glob.glob(os.path.join(plots, "compare", "*.png")))
+            lines.append(f"  {name}: {'plots in ' + plots if ok else 'FAILED, see ' + log}")
+            if not ok:
+                failed.append(name + tag)
+    return failed
+
+
+# ---- summary ----------------------------------------------------------------------------------------------------
+CHAIN_TEXT = {"agmx": "A_GMX", "crowded": "A_GMX crowded mode", "unmodelled": "A_GMX unmodelled (hysteresis)",
+              "threshold": "threshold clusterer"}
+
+
+def clustering_lines(configs):
+    """Per CCD: the clustering chain, why, the clusters per output (and how many the Bayesian finder made), the
+    thresholds where the threshold clusterer ran, and every fallback."""
+    lines = []
+    for r in sorted(configs.values(), key=lambda r: r["stem"]):
+        for e, c in sorted(r["summary"]["ccds"].items()):
+            if "gain" not in c:
+                continue
+            outs = {k: v for k, v in c.items() if isinstance(v, dict) and "n_clusters" in v}
+            if not outs:
+                continue
+            dec = c.get("decision") or {}
+            first = next(iter(outs.values()))
+            chain = dec.get("chain") or first.get("chain")
+            txt = f"  {r['stem']} {e}: {CHAIN_TEXT.get(chain, chain)}"
+            if dec.get("why"):
+                txt += f" ({dec['why']})"
+            parts = []
+            for k, v in outs.items():
+                p = f"{k} {v['n_clusters']}"
+                nb = (v.get("n_by_finder") or {}).get("bayes")
+                if nb:
+                    p += f" (Bayes {nb})"
+                if v.get("chain") and v["chain"] != chain:
+                    p += f" [{CHAIN_TEXT.get(v['chain'], v['chain'])}]"
+                parts.append(p)
+            lines.append(txt + " -> " + ", ".join(parts))
+            if chain == "threshold" and c.get("thresholds"):
+                t = c["thresholds"]
+                lines.append(f"      pixel > {t['pixel_e']:.2f} e-, seed >= {t['seed_e']:.2f} e- ({t['note']})")
+            fe = ((dec.get("agmx_info") or {}).get("fewe") or {})
+            if isinstance(fe, dict) and fe.get("mode") not in (None, "off"):
+                if fe.get("used"):
+                    b = fe.get("blocks") or {}
+                    lines.append(f"      Bayesian few-electron switch: used in {b.get('bayes', 0) + b.get('both', 0)} of "
+                                 f"{sum(b.values())} blocks, {fe.get('n_bayes')} events kept, {fe.get('n_agmx_replaced')} "
+                                 f"A_GMX clusters replaced (dark charge {fe.get('lam', float('nan')):.2e} e-/pix, "
+                                 f"{'run-pooled' if fe.get('pooled_lam') else 'single-image'})")
+                else:
+                    lines.append(f"      Bayesian few-electron switch: not used ({fe.get('reason')})")
+            for fb in list(dec.get("fallbacks", [])) + list(c.get("fallbacks", [])) + list(c.get("fit_at_limit", [])):
+                lines.append(f"      NOTE {fb}")
+    return lines
+
+
+def summary(run, configs, rows, roots):
+    """fit_quality.csv and summary.txt (also printed)."""
+    args = run.args
+    if rows:
+        import csv
+        with open(os.path.join(run.out, "fit_quality.csv"), "w", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
+            w.writeheader()
+            w.writerows(rows)
+    rows = sorted(rows, key=lambda q: (q["image"], q["ext"]))
+    wid = max([len(q["image"]) for q in rows] + [5])
+    L = [f"{PROG} summary: {run.run_name}  ({len(run.images)} input(s), {time.time() - run.t0:.0f} s)", "",
+         f"{'image':{wid}} {'ext':4} {'chi2/ndf':>8} {'gain [ADU/e-]':>19} {'noise [e-]':>17} "
+         f"{'DC [e-/pix]':>17} {'DC bias':>8}"]
+    for q in rows:
+        bias = f"{q['dc_bias']:+8.3f}" if q["dc_bias"] is not None else "       -"
+        L.append(f"{q['image']:{wid}} {q['ext']:4} {q['chi2ndf']:8.2f} "
+                 f"{q['gain']:8.4f} +- {q['gain_err_s']:.4f}{'*' if q['gain_held'] else ' '} "
+                 f"{q['noise']:7.4f} +- {q['noise_err_s']:.4f} {q['dc']:7.4f} +- {q['dc_err_s']:.4f} {bias}")
+    L += ["", "errors scaled by sqrt(chi2/ndf); * = gain held at the all-peaks fit; DC bias = fit - dark current from "
+              "the 0e-/1e- pixel counts"]
+    if run.lines["front"]:
+        L += ["", "characterisation (characterisation/<image>.json):"] + run.lines["front"]
+    if not args.no_clusters:
+        L += ["", f"clustering per CCD (--clusterer {args.clusterer}):"] + clustering_lines(configs)
+    L += ["", "gain used per CCD (all-peaks fit vs 0e-/1e- fit; details in native_summary.json):"]
+    for r in sorted(configs.values(), key=lambda r: r["stem"]):
+        L.append(f"  {r['stem']}")
+        L += [f"  {n}" for n in r["notes"]]
+    L.append("")
+    L.append("cluster files: none (--no-clusters)" if args.no_clusters else
+             f"cluster files: {len(roots)} (list: {os.path.join(run.dirs['root'], 'root_files.txt')})")
+    for k in ("raw", "gc", "comp", "comm"):
+        if run.lines[k]:
+            L += [""] + run.lines[k]
+    if run.failed:
+        L += ["", "FAILED: " + "; ".join(f"{s} {e} ({why})" for s, e, why in run.failed)]
+    text = "\n".join(L)
+    with open(os.path.join(run.out, "summary.txt"), "w") as fh:
+        fh.write(text + "\n")
+    print("\n" + text)
+
+
+# =============================================================================
+# main
+# =============================================================================
+def file_list(d):
+    fs = sorted(glob.glob(os.path.join(d, "panaSKImg_clustersRec_*.root")))
+    with open(os.path.join(d, "root_files.txt"), "w") as fh:
+        fh.write("".join(f + "\n" for f in fs))
+    return fs
+
+
+def main(argv=None):
+    args = parse_args(argv)
+    run_name, files, out, modules = check_request(args)
+    ensure_environment(args.env)                      # may re-run this script inside the conda environment and exit
+    if args.temperature is not None:                  # read by pair_energy.py at import (g(n) and A_GMX energies)
+        os.environ["COMM_TEMPERATURE_K"] = str(args.temperature)
+    import fit_quality as FQ
+    import gain_dc_split as G
+    import native_pipeline as NP
+    run = Run(args=args, run_name=run_name, images=files, out=out, modules=modules)
+    prepare_output(run)
+    run.t0 = time.time()
+    print(f"{PROG} ({NP.VERSION}): {len(files)} input(s) -> {out}   ({args.jobs} images at a time, "
+          f"clusterer {args.clusterer})")
+    if args.packet:
+        return run_packet(run)
+    images, l1_fits = raw_inputs(run)
+    if not images:                                    # traces only
+        text = "\n".join([f"{PROG} summary: {run_name}  ({len(files)} input(s), {time.time() - run.t0:.0f} s)", ""]
+                         + run.lines["raw"])
+        with open(os.path.join(out, "summary.txt"), "w") as fh:
+            fh.write(text + "\n")
+        print("\n" + text + f"\nresults: {out}")
+        return 1 if any("FAILED" in ln for ln in run.lines["raw"]) else 0
+
+    # ---- front end: characterisation, gains of comb-less CCDs, plans, run-pooled dark charge
+    thr = args.thresholds if args.thresholds in ("auto", "sigma0") else tuple(float(v) for v in args.thresholds.split(","))
+    base = dict(thresholds=thr, anchor=args.gain_anchor, autoconfig_args=shlex.split(args.autoconfig_args),
+                crowded="auto", crowded_shapes="on", all_ext=True, tune=args.tune, verbose=False)
+    tasks, recs = front_end(run, NP, images, base)
+    src_of = {t[0]: t[0] for t in tasks}               # the processed path (compressed raw files: the compressed one)
+
+    # ---- --gain-correction: fits first (each image's gain for the gain periods), then g(n)
+    gc_dirs, curves = {}, {}
+    if args.gain_correction:
+        import gain_vs_charge as GVC
+        run.say("fits of every CCD (for the g(n) groups)")
+        pre = process(run, NP, [(p, out, dict(kw, outputs=[], write=False)) for p, _, kw in tasks])
+        configs = {p: native_record(p, s) for p, s in pre.items()}
+        run.dirs["gc"] = os.path.join(out, "gain_vs_charge")
+        os.makedirs(run.dirs["gc"], exist_ok=True)
+        run_exts = sorted({int(e[3:]) for r in configs.values() for e in r["final"]})
+        modes = ["pooled", "per-image"] if args.gain_correction == "both" else [args.gain_correction]
+        gc_dirs = {m: os.path.join(out, "root_gaincorr" if m == "pooled" else "root_gaincorr_per_image") for m in modes}
+        run.dirs["root_gc"] = gc_dirs.get("pooled", gc_dirs.get("per-image"))
+        curves = gain_curves(run, GVC, FQ, configs, run_exts, modes)
+        tasks = [t for t in tasks if t[0] in pre]
+
+    # ---- the final pass: fits, calibration, clustering chain per CCD, cluster files
+    def outputs(path):
+        if args.no_clusters:
+            return []
+        stem = image_stem(path)
+        return ([("root", args.clusterer, run.dirs["root"], None)]
+                + [(f"gaincorr_{m}", args.clusterer, d, curves[(m, stem)]) for m, d in gc_dirs.items()
+                   if (m, stem) in curves])
+    run.say("fits only (--no-clusters)" if args.no_clusters else
+            "cluster files: " + ", ".join(["root/"] + [os.path.basename(d) + "/" for d in gc_dirs.values()]))
+    final = process(run, NP, [(p, out, dict(kw, outputs=outputs(p), plots=True)) for p, _, kw in tasks])
+    order = [t[0] for t in tasks if t[0] in final]
+    configs = {p: native_record(src_of[p], final[p]) for p in order}
+    with open(os.path.join(out, "native_summary.json"), "w") as fh:
+        json.dump([final[p] for p in order], fh, indent=1, default=str)
+    NP.write_characterisation(out, recs, [final[p] for p in order])
+
+    roots = [] if args.no_clusters else file_list(run.dirs["root"])
+    if gc_dirs and not args.no_clusters:
+        for mode, d in gc_dirs.items():
+            run.lines["gc"].append(f"  corrected cluster files ({mode}): {len(file_list(d))} (list: "
+                                   f"{os.path.join(d, 'root_files.txt')}; same images, energies with g(n))")
+        if len(gc_dirs) == 2:
+            run.lines["gc"] += compare_gain_corrections(run, configs, curves, gc_dirs)
+
+    comp_failed = composite(run, configs, gc_dirs) if args.composite else []
+    rows = []
+    for r in configs.values():
+        for e, fit in sorted(r["final"].items()):
+            q = G.held_quality(fit, r["refs"].get(e), r["held"].get(e))
+            rows.append(dict(image=r["stem"], ext=e, gain_held=e in r["held"], **q))
+    if l1_fits:                                       # images made from level-1 data: noise vs skips, fits side by side
+        import raw_data as RD
+        run.lines["raw"] += RD.l1_noise_summary(rows, os.path.join(out, "L1"), l1_fits)
+        run.lines["raw"] += RD.compare_skips(out, l1_fits, os.path.join(out, "L1")) + [""]
+    if args.dc_series or args.defect_map or args.sr:
+        import packet_report as PR
+        mods_of = module_resolver(run)
+        say = lambda m: print(f"  {run.stamp()}{m}", flush=True)
+        comm = run.lines["comm"]
+        if args.dc_series:
+            import dc_series as DCS
+            run.say("dark-current series")
+            comm += DCS.report([(p, final[p]) for p in order], PR.meta_or_header, mods_of, out, args.dc_limit,
+                               shlex.split(args.autoconfig_args)) + [""]
+        if args.defect_map:
+            import defects as DF
+            run.say("defect maps")
+            comm += DF.run(order, out, mods_of, shlex.split(args.autoconfig_args), log=say, nsig=args.defect_sigma) + [""]
+        if args.sr:
+            import sr_images as SR
+            run.say("serial-register images")
+            comm += SR.run(order, None, out, mods_of, PR.meta_or_header, args.sr_threshold, args.sr_min_length,
+                           shlex.split(args.autoconfig_args), log=say) + [""]
+    if comp_failed:
+        run.failed += [(n, "composite", "MakeComposite failed") for n in comp_failed]
+    summary(run, configs, rows, roots)
+    print(f"\nresults: {out}")
+    return 1 if run.failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
