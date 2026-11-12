@@ -482,7 +482,7 @@ def build_parser(full=False):
     ap.add_argument("--dc-limit", metavar="E_PER_PIX_PER_DAY", type=float, default=None,
                     help="with --dc-series: flag CCDs whose dark current is above this (e-/pix/day)")
     ap.add_argument("--defect-map", action="store_true",
-                    help="--engine native: median composites and column defects (the group's Image_4 / Image_2), "
+                    help="--engine native: median composites and column defects (the group's Image_4), "
                          "defect log and interactive defect map: defects/")
     ap.add_argument("--defect-sigma", metavar="N", type=float, default=5.0,
                     help="with --defect-map: hot / cold pixels at N x the spread of the local residual (default 5)")

@@ -155,7 +155,7 @@ Without an entry the name comes from `--module ACM=NAME`, then the data folder n
 | L1 images at several skip counts | `run_superWADERs l1.txt --l1-skips 1,10,100,1000 [--l1-skip-first K]` | `L1/`: one FITS per N (all through the pipeline), `noise_vs_skips.csv/.png`, `compare/`, `<image>_diagnostics/` |
 | commissioning packet | `run_superWADERs packet.txt --packet --module-list modules.csv` | `packet/index.html` + one page per module |
 | dark current over a series | `run_superWADERs series.txt --dc-series [--dc-limit X] [--no-clusters]` | `dc_series/`: `dc_report.pdf`, `dc_series.csv`, one page per module |
-| defect maps | `run_superWADERs images.txt --defect-map [--defect-sigma 5] [--no-clusters]` | `defects/<module>_ACM<id>_<size>/`: `defects.csv`, `defect_map.html`, composites, the group's Image_4 / Image_2 outputs |
+| defect maps | `run_superWADERs images.txt --defect-map [--defect-sigma 5] [--no-clusters]` | `defects/<module>_ACM<id>_<size>/`: `defects.csv`, `defect_map.html`, composites, the group's Image_4 plot and log |
 | serial-register images | `run_superWADERs sr.txt --sr [--sr-threshold 4] [--sr-min-length 3] [--no-clusters]` | `sr/`: `sr_streaks.csv`, `sr_summary.csv`, PNGs, one page per module |
 
 The commissioning flags can be combined in one run (e.g. `--dc-series --defect-map --sr`), and every report folder
@@ -186,8 +186,8 @@ What each tool does:
   spots (`--defect-sigma`). A hot / cold pixel must be persistent: present in enough images that chance coincidences
   of events or dark electrons are unlikely (< 0.1 per CCD, from each image's occupancy); few or busy images can give
   "none identifiable". Checked on simulated images down to 1e-5 e-/pix and on real data, not yet against a known
-  defect list. The group's `Image_4` / `Image_2` scripts (`src/lsm_defects/`) always run (without an overscan:
-  pedestal and noise from the active region, CTI n/a); their plots are in the page's "Image_4 / Image_2 plots" tab.
+  defect list. The group's `Image_4` (`src/lsm_defects/`) always runs (without an overscan: pedestal and noise
+  from the active region, CTI n/a); its plot is in the page's "Image_4 plot" tab.
   `defects.csv` is the defect log.
 - **Serial-register images** (`--sr`): streaks in the serial register (readout artifacts): runs of >=
   `--sr-min-length` pixels above `--sr-threshold` x noise along one read, confined to it. Streak list, counts per

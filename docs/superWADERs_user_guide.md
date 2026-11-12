@@ -98,10 +98,9 @@ Rates in e-/pix/day: DC / (exposure + readout/2); the row fit gives the rate fro
 run_superWADERs images.txt --defect-map [--defect-sigma 5] [--no-clusters] --module-list modules.csv
 ```
 Per module and image size: all images of one ACM with the same rows x columns and binning form one group, whatever their type or number of skips; `defects/<module>_ACM<id>_<rows>x<cols>_<binning>/`:
-- the group's scripts (D. Venegas-Vargas, copies in src/lsm_defects/): `Image_4` composite median of all images
-  (PNG + log with column defects and the event rate per pixel per day), `Image_2` per image (PNG + log: column
-  defects, CTI), with their geometry set from each image's header (they need an overscan; without one they are
-  skipped and noted);
+- the group's `Image_4` (D. Venegas-Vargas, copy in src/lsm_defects/): composite median of all images (PNG + log
+  with column defects and the event rate per pixel per day), with its geometry set from the images' header; shown
+  in the page's "Image_4 plot" tab;
 - `defects.csv`, the defect log: type (bright / dark column, hot / cold pixel spot), column, row, size, value,
   number of images it is seen in; adjacent flagged columns are one entry (their column range);
 - hot / cold pixels must be persistent: present in enough of the images that chance coincidences of events or
@@ -110,7 +109,7 @@ Per module and image size: all images of one ACM with the same rows x columns an
   the rule used). Checked on simulated images (planted hot / cold pixels, 1e-5 to 1 e-/pix, 0-30 % event pixels,
   2-10 images: no false hot pixels; at 1e-5..1e-3 e-/pix with 4 images 50-75 % of +1 e- and all +4 e- hot pixels
   found) and on real data (DM26 Image 5, L2 ACM 101 and the very-low-DC L2 ACM 103 noise test: no hot or cold pixels);
-- images without an overscan: the group's scripts still run, with pedestal and noise from the active region (CTI n/a);
+- images without an overscan: Image_4 still runs, with pedestal and noise from the active region (CTI n/a);
 - `composite_EXT<n>.fits`;
 - `defect_map.html`: the composite with the defects marked (tick boxes per type), one CCD at a time with the frame
   slider, the defect list of that CCD (click a line to jump to it), and a tab with the scripts' figures and logs. `defects/index.html` lists the modules.
@@ -180,7 +179,7 @@ Every page works offline (no network) in Chrome, Safari or Firefox; open it by d
    peaks.
 4. **A dark-current series**: the images of one cool-down or a long run (with DATEINI/DATEEND), plus the dark-current
    limit(s) the group uses, and (if logged) the cool-down time.
-5. **Defect-map images**: any images of the same size (several per module; e.g. the Image 2 / Image 4 runs), with a module whose defects are known (a list or a previous Image_4 / Image_2 log) to tune
+5. **Defect-map images**: any images of the same size (several per module; e.g. the Image 2 / Image 4 runs), with a module whose defects are known (a list or a previous Image_4 log) to tune
    `--defect-sigma` and compare the defect log.
 6. **Serial-register images**: a few SR images (with .meta), and an example of the plots / numbers the group makes
    for them now, to tune the streak finder (threshold, minimum length) and the DC-per-read plots.

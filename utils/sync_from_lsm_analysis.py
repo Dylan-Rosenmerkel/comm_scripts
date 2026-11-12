@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Copy the defect-map scripts of LSM_Module_Testing_Analysis (D. Venegas-Vargas: src/Image_2.py, src/Image_4.py)
-into comm_scripts/src/lsm_defects/, unchanged except for a first line naming the source and its commit.
+"""Copy the defect-map script of LSM_Module_Testing_Analysis (D. Venegas-Vargas: src/Image_4.py) into
+comm_scripts/src/lsm_defects/, unchanged except for a first line naming the source and its commit.
 
-run_superWADERs --defect-map (src/defects.py) runs them on the run's images (their geometry constants set from each
+run_superWADERs --defect-map (src/defects.py) runs it on the run's images (its geometry constants set from each
 image's header) and adds the defect log and the interactive defect map.
 
     python utils/sync_from_lsm_analysis.py [--source ~/Documents/LSM_Module_Testing_Analysis] [--check]
@@ -14,7 +14,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DST = os.path.join(ROOT, "src", "lsm_defects")
-FILES = ["Image_2.py", "Image_4.py"]
+FILES = ["Image_4.py"]
 MARK = ("# copied from LSM_Module_Testing_Analysis/src/{name} (commit {commit}) by utils/sync_from_lsm_analysis.py: "
         "edit it there, not here\n")
 

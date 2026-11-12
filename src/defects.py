@@ -1,16 +1,13 @@
-"""Defect maps (run_superWADERs --defect-map): median composites and column defects with the group's scripts, plus
-a defect log and an interactive defect map.
+"""Defect maps (run_superWADERs --defect-map): median composites and column defects with the group's Image_4 script,
+plus a defect log and an interactive defect map.
 
-The group's scripts (D. Venegas-Vargas, LSM_Module_Testing_Analysis/src; copies in src/lsm_defects/,
-utils/sync_from_lsm_analysis.py) run unchanged:
-  Image_4  composite median of all images of a module and image type (pedestal per row from the overscan,
-           column defects by a running median / MAD of the column medians, event rate per pixel per day): its PNG
-           and log, as when run by hand;
-  Image_2  per image: column defects / traps and CTI estimates ('Serial Register Defect Maps'): PNG and log.
-Their geometry constants (first overscan column, prescan, first vertical-overscan row) are set from each image's
-header (autoconfig's geometry) instead of the full-frame values written in the scripts. Images without an overscan:
-the scripts still run, with their pedestal (row median) and noise taken from the active region instead of the
-overscan (noise then includes the dark charge) and no CTI (n/a without an overscan).
+The group's Image_4 (D. Venegas-Vargas, LSM_Module_Testing_Analysis/src; copy in src/lsm_defects/,
+utils/sync_from_lsm_analysis.py) runs unchanged: composite median of all images of a module and image type (pedestal
+per row from the overscan, column defects by a running median / MAD of the column medians, event rate per pixel per
+day): its PNG and log, as when run by hand. Its geometry constants (first overscan column, prescan, first
+vertical-overscan row) are set from each image's header (autoconfig's geometry) instead of the full-frame values
+written in the script. Images without an overscan: it still runs, with its pedestal (row median) and noise taken
+from the active region instead of the overscan (noise then includes the dark charge) and no CTI (n/a).
 Added here, per CCD, on the composite median:
   columns      bright / dark columns: Image_4's find_col_traps (median of the column above / below the running
                median +- 6 MAD), with the column's excess over the running median; adjacent flagged columns of one
@@ -28,9 +25,9 @@ Added here, per CCD, on the composite median:
                the images' occupancies below -threshold)
 Images are grouped per ACM by size and binning (rows x columns, NPBIN x NSBIN): any images of the same size form
 one composite, whatever their type or number of skips (e.g. Image 2, Image 4, Image 5, 1-skip or 500-skip).
-Outputs (out_dir/defects/<module>_ACM<id>_<rows>x<cols>_<binning>/): the scripts' PNG / log files, defects.csv (the defect log: one line per
+Outputs (out_dir/defects/<module>_ACM<id>_<rows>x<cols>_<binning>/): Image_4's PNG / log, defects.csv (the defect log: one line per
 defect), composite_EXT<n>.fits, and one interactive page per module (defect_map.html: per CCD the composite with
-the defects marked, a clickable defect list; the scripts' figures and logs), plus defects/index.html.
+the defects marked, a clickable defect list; Image_4's figure and log), plus defects/index.html.
 """
 import glob
 import io
@@ -53,10 +50,9 @@ except ImportError:                                        # Image_4 imports nat
     _ns = types.ModuleType("natsort")
     _ns.natsorted = lambda seq: sorted(seq, key=lambda s: [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", str(s))])
     sys.modules["natsort"] = _ns
-from lsm_defects import Image_2 as I2   # noqa: E402
 from lsm_defects import Image_4 as I4   # noqa: E402
 
-_CTI_Y = {I2: I2.calculate_cti_y, I4: I4.calculate_cti_y}      # restored for images with a vertical overscan
+_CTI_Y = I4.calculate_cti_y      # restored for images with a vertical overscan
 TYPES = [("bright column", "#ff3b30"), ("dark column", "#3a86ff"), ("hot pixel", "#ffbe0b"), ("cold pixel", "#00c2a8")]
 FALSE_SPOTS = 0.1          # expected hot pixels per CCD from chance coincidences of events (sets k, find_defects)
 LEVELS = tuple(2 ** (i / 2) for i in range(9))      # 1 .. 16 x the threshold, in steps of sqrt(2)
@@ -92,12 +88,11 @@ def set_geometry(path, autoconfig_args=()):
 
 
 def apply_geometry(g, nrow):
-    """Set the scripts' constants; without >= 2 rows of vertical overscan their parallel CTI (calculate_cti_y) has
+    """Set Image_4's constants; without >= 2 rows of vertical overscan its parallel CTI (calculate_cti_y) has
     nothing to measure and returns nan (instead of failing)."""
-    for mod in (I2, I4):
-        for k, v in g.items():
-            setattr(mod, k, v)
-        mod.calculate_cti_y = _CTI_Y[mod] if g["y_overscan_start"] < nrow - 2 else (lambda rm: (float("nan"), float("nan")))
+    for k, v in g.items():
+        setattr(I4, k, v)
+    I4.calculate_cti_y = _CTI_Y if g["y_overscan_start"] < nrow - 2 else (lambda rm: (float("nan"), float("nan")))
 
 
 def image_type(path, h0):
@@ -191,17 +186,17 @@ def find_defects(comp, noise, subs, geo, nsig=5.0):
 
 
 class _ActiveRegionPedestal:
-    """For images without an overscan: the scripts' overscan pedestal and noise taken from the active region
-    (columns prescan..), their overscan_start set to the image width, CTI X / Y n/a. Restored on exit."""
+    """For images without an overscan: Image_4's overscan pedestal and noise taken from the active region
+    (columns prescan..), its overscan_start set to the image width, CTI X / Y n/a. Restored on exit."""
     def __init__(self, ncol, prescan):
         self.ncol, self.pre = ncol, prescan
 
     def __enter__(self):
         self.saved = {m: dict(subtract_pedestal=m.subtract_pedestal, robust_noise_from_overscan=m.robust_noise_from_overscan,
                               calculate_cti_x=m.calculate_cti_x, calculate_cti_y=m.calculate_cti_y,
-                              overscan_start=m.overscan_start) for m in (I2, I4)}
+                              overscan_start=m.overscan_start) for m in (I4,)}
         pre = self.pre
-        for m in (I2, I4):
+        for m in (I4,):
             orig_noise = self.saved[m]["robust_noise_from_overscan"]
             m.overscan_start = self.ncol
             m.robust_noise_from_overscan = lambda sub, _start, clip_sigma=5.0, max_iter=2, f=orig_noise: f(sub, pre, clip_sigma, max_iter)
@@ -216,8 +211,6 @@ class _ActiveRegionPedestal:
                 row_med = np.where(np.isfinite(new), new, row_med)
             return np.asarray(data, float) - row_med[:, None]
         I4.subtract_pedestal = ped
-        I2.subtract_pedestal = lambda data, clip_sigma=5.0, max_iter=2: (
-            lambda s: (s, round(I2.robust_noise_from_overscan(s, pre), 2)))(ped(data, clip_sigma, max_iter))
         return self
 
     def __exit__(self, *exc):
@@ -239,7 +232,7 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
         hd = fits.getheader(p, 1)                         # images of the same size and binning go together,
         size = f"{hd['NAXIS2']}x{hd['NAXIS1']}_{h0.get('NPBIN', 1) or 1}x{h0.get('NSBIN', 1) or 1}"   # whatever their type
         groups.setdefault((int(acm) if acm else 0, size), []).append((p, geo, h0))
-    lines = [f"defect maps (--defect-map; images grouped by ACM, size and binning; group scripts Image_4 / Image_2 + "
+    lines = [f"defect maps (--defect-map; images grouped by ACM, size and binning; group script Image_4 + "
              f"defect log; {base}/index.html):"]
     index = []
     for (acm, itype), items in sorted(groups.items()):
@@ -256,7 +249,7 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
         out = io.StringIO()
         nc = fits.getdata(files[0], 1).shape[1]
         has_ovs = geo["overscan_start"] < nc - 2
-        script_note = None if has_ovs else ("no overscan in these images: the group scripts ran with their pedestal (row "
+        script_note = None if has_ovs else ("no overscan in these images: Image_4 ran with its pedestal (row "
                                             "median) and noise from the active region (noise includes the dark charge); "
                                             "CTI X / Y n/a")
         from contextlib import nullcontext
@@ -273,12 +266,10 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
             sys.argv = argv
             with redirect_stdout(out), (nullcontext() if has_ovs else _ActiveRegionPedestal(nc, geo["prescan"])):
                 I4.main()
-                for p in files:
-                    I2.process_fz_and_plot_all_channels(p, f"{name}_{Path(p).name.split('.')[0]}", output_dir=Path(d))
             sys.argv = old
         except Exception as e:                             # the scripts failed: report, the defect log still follows
             sys.argv = old if "old" in dir() else sys.argv
-            script_note = f"group scripts not run: {type(e).__name__}: {e}"
+            script_note = f"Image_4 not run: {type(e).__name__}: {e}"
         try:
             with redirect_stdout(out):
                 subs = [[] for _ in range(4)]
@@ -360,8 +351,8 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
         for lg in sorted(glob.glob(os.path.join(d, "*.log"))):
             logs += [f"--- {os.path.basename(lg)}"] + open(lg).read().splitlines()
         if figs or logs:
-            tabs.append(dict(id="scripts", label="Image_4 / Image_2 plots", kind="figure",
-                             data=dict(title="The group's scripts: Image_4 (composite median of all images) and Image_2 (per image)"
+            tabs.append(dict(id="scripts", label="Image_4 plot", kind="figure",
+                             data=dict(title="The group's Image_4: composite median of all images, column defects"
                                        + (f" ({script_note})" if script_note else ""), figures=figs), log=logs))
         if script_note:
             for lg in list(tabs[0]["logs"].values()) + [tb["log"] for tb in tabs[1:]]:
@@ -377,6 +368,6 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
         nums = [[f"EXT{c + 1}", ", ".join(f"{t}: {sum(1 for r in csv_rows if r[2] == c + 1 and r[5] == t)}" for t, _ in TYPES)] for c in range(4)]
         index.append((module, acm, itype, "4 CCDs", os.path.join(name, "defect_map.html"), [t["label"] for t in tabs], nums, size, []))
         lines.append(f"  {name}: {len(files)} image(s) ({', '.join(kinds)}), {len(csv_rows)} defects (defects.csv, defect_map.html"
-                     + (", Image_4/Image_2 PNG + log)" if not script_note else f"); {script_note}"))
+                     + (", Image_4 PNG + log)" if not script_note else f"); {script_note}"))
     PR.write_index(base, index, "Defect maps")
     return lines
