@@ -522,13 +522,21 @@ def decide_ccd(Q, valid, plan):
         return dict(chain="threshold", why=plan.get("why", "flooded"), frac_above_4p5e=above, crowded="off",
                     fewe="off", fallbacks=fb, seconds=round(time.time() - t0, 2)), None, None
     sigma = float(AM.read_noise(Qv, valid))
-    try:
-        bg = AM.background_map(Qv, valid)
-        bg_meth = "AM.background_map"
-    except Exception as e:                                    # noqa: BLE001
+    if AM.PHYS_FIX and sigma >= NOISE_UNMODELLED_E:
+        # not electron counting: adaptive_cluster takes the 'unmodelled' path on the read noise alone and clusters Q
+        # itself (hysteresis), so the full background map (the slowest step on noisy CCDs: pooled comb fits of every
+        # row) would only feed the recorded spread / lam; the quick estimate is enough for those
         bg = AM.simple_bg(Qv, valid, sigma)
-        bg_meth = "AM.simple_bg"
-        fb.append(f"background_map failed ({type(e).__name__}: {e}) -> simple_bg (as adaptive_cluster)")
+        bg_meth = "AM.simple_bg (read noise >= %.1f e-: the background map is not used by the 'unmodelled' chain)" % \
+            NOISE_UNMODELLED_E
+    else:
+        try:
+            bg = AM.background_map(Qv, valid)
+            bg_meth = "AM.background_map"
+        except Exception as e:                                    # noqa: BLE001
+            bg = AM.simple_bg(Qv, valid, sigma)
+            bg_meth = "AM.simple_bg"
+            fb.append(f"background_map failed ({type(e).__name__}: {e}) -> simple_bg (as adaptive_cluster)")
     noise = float(np.median(bg.s[valid]))
     lam = float(np.median(bg.lam[valid]))
     unmod = (noise >= 0.5 and noise >= EXCESS_RATIO * sigma) or (AM.PHYS_FIX and sigma >= NOISE_UNMODELLED_E)

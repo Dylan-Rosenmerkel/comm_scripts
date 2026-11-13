@@ -71,6 +71,9 @@ def run_prog(name, images, args, out, repo=REPO, extra=()):
     with open(os.path.join(d, "run.log"), "w") as fh:
         rc = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT).returncode
     rd = os.path.join(d, "superWADERs_images")
+    syn = os.path.join(d, "synthetic")                          # run.py's checks read the truth of synthetic cases there
+    if not os.path.exists(syn) and os.path.isdir(os.path.join(R.OUT, "synthetic")):
+        os.symlink(os.path.join(R.OUT, "synthetic"), syn)
     for f in glob.glob(os.path.join(rd, "root", "*.root")):          # check() looks for the files in the run folder
         link = os.path.join(rd, os.path.basename(f))
         if not os.path.exists(link):
@@ -137,6 +140,7 @@ def stage1(out, only=None):
             rec = dict(problems=[f"check failed: {type(ex).__name__}: {ex}"], ccds=[])
         rec.update(rc=rc, seconds=sec, run=rd)
         new_s = summarise_case(rec)
+        new_s["n_clusters"] = sum(n for n, _ in clusters_of(rd).values() if n)    # counted in the ROOT files
         old_s = summarise_case(old[name]) if name in old else None
         rep[name] = dict(rc=rc, seconds=sec, new=new_s, old=old_s, old_seconds=(old.get(name) or {}).get("seconds"),
                          fallbacks=rec.get("fallbacks", [])[:20], ccds=rec.get("ccds"))
@@ -179,11 +183,11 @@ def stage1(out, only=None):
     return rep
 
 
-def stage2_start(out):
+def stage2_start(out, tests=("halo_test.py", "boundary_test.py", "real_l2_switch.py")):
     """the three switch tests, one after the other, in a background process (2 workers)"""
     env = dict(os.environ, SWV_LIVE="1", SWV_SCRATCH=os.path.join(out, "swv_scratch"))
     script = " && ".join(f"{PY} {os.path.join(SWV, s)}" + (" --procs 2" if s != "real_l2_switch.py" else "")
-                         for s in ("halo_test.py", "boundary_test.py", "real_l2_switch.py"))
+                         for s in tests)
     fh = open(os.path.join(out, "stage2_switch.log"), "w")
     log("stage 2: switch tests started (halo, boundary, real L2)")
     return subprocess.Popen(["/bin/bash", "-c", f"cd {SWV} && {script}"], stdout=fh, stderr=subprocess.STDOUT, env=env)
@@ -245,11 +249,12 @@ def main():
     ap.add_argument("out")
     ap.add_argument("--stages", default="1,2,3")
     ap.add_argument("--only", nargs="*", help="stage 1: only these cases")
+    ap.add_argument("--switch-tests", nargs="*", default=["halo_test.py", "boundary_test.py", "real_l2_switch.py"])
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     st = set(a.stages.split(","))
     rep = {}
-    p2 = stage2_start(a.out) if "2" in st else None
+    p2 = stage2_start(a.out, a.switch_tests) if "2" in st else None
     if "1" in st:
         rep["stage1"] = stage1(a.out, a.only)
         write_report(a.out, rep)

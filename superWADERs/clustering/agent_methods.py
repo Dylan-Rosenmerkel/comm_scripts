@@ -47,12 +47,28 @@ SQ2 = np.sqrt(2.0)
 # ----------------------------------------------------------------------------------------------------------
 # 1. background map
 # ----------------------------------------------------------------------------------------------------------
+def pois_pmf(k, lam):
+    """Poisson pmf as scipy.stats.poisson.pmf evaluates it (exp(xlogy(k, lam) - gammaln(k + 1) - lam)), without the
+    distribution-object overhead (~0.1 ms per call; background_map calls it ~10^5-10^6 times)."""
+    k = np.asarray(k, float)
+    return np.exp(special.xlogy(k, lam) - special.gammaln(k + 1) - lam)
+
+
+def pois_isf(q, lam):
+    """scipy.stats.poisson.isf(q, lam) for scalars, as scipy's Poisson _ppf(1 - q) computes it (pdtrik / pdtr),
+    without the distribution-object overhead."""
+    p = 1.0 - q
+    v = np.ceil(special.pdtrik(p, lam))
+    v1 = max(v - 1, 0)
+    return v1 if special.pdtr(v1, lam) >= p else v
+
+
 def comb_pdf(x, o, lam, s, kmax=None):
     """Density of Q = o + Poisson(lam) + N(0, s^2):  p(x) = sum_k Pois(k; lam) * phi((x - o - k) / s) / s."""
     if kmax is None:
         kmax = int(lam + 8 * np.sqrt(lam + 1) + 8 * s + 5)
     k = np.arange(kmax + 1)
-    pk = stats.poisson.pmf(k, lam)
+    pk = pois_pmf(k, lam)
     z = (np.asarray(x)[..., None] - o - k) / s
     return (pk * np.exp(-0.5 * z * z)).sum(-1) / (s * np.sqrt(2 * np.pi))
 
@@ -108,29 +124,37 @@ def smooth_local_linear(y, w, half=15, robust=3):
     """Weighted local-linear smoothing (LOWESS, Cleveland 1979: tricube kernel of half-width `half` rows) of
     a series y with weights w (1/variance), with `robust` robustness iterations (bisquare weights on the
     residuals scaled by 6 MAD), so rows with a wrong integer offset (off by one electron) do not pull the
-    trend. Keeps a linear ramp exact."""
+    trend. Keeps a linear ramp exact.
+    The weighted sums of every window are convolutions with the kernel K(d), d K(d), d^2 K(d) (d = row offset), so
+    each pass is five np.correlate calls instead of a Python loop over rows (same result to ~1e-12)."""
     n = y.size
-    x = np.arange(n, dtype=float)
     ok = np.isfinite(y) & (w > 0)
     y0 = np.where(ok, y, 0.0)
+    d = np.arange(-half, half + 1, dtype=float)
+    K = (1 - (np.abs(d) / (half + 1)) ** 3) ** 3
+    Kd, Kdd = K * d, K * d * d
+    corr = lambda a, v: np.correlate(a, v, "same") if n >= v.size else \
+        np.array([np.dot(a[max(0, i - half):i + half + 1], v[max(0, half - i):half + n - i]) for i in range(n)])
     rw = np.ones(n)
     for it in range(robust + 1):
+        u = w * ok * rw
+        uy = u * y0
+        S0, S1, S2 = corr(u, K), corr(u, Kd), corr(u, Kdd)
+        T0, T1 = corr(uy, K), corr(uy, Kd)
         out = np.full(n, np.nan)
-        for i in range(n):
-            d = np.abs(x - i) / (half + 1)
-            k = np.where(d < 1, (1 - d ** 3) ** 3, 0) * w * ok * rw
-            if k.sum() <= 0:
-                continue
-            xm = (k * x).sum() / k.sum(); ym = (k * y0).sum() / k.sum()
-            sxx = (k * (x - xm) ** 2).sum()
-            b = (k * (x - xm) * (y0 - ym)).sum() / sxx if sxx > 0 else 0.0
-            out[i] = ym + b * (i - xm)
+        g = S0 > 0
+        xm = np.where(g, S1 / np.where(g, S0, 1), 0.0)          # window mean of d (offset from the row)
+        ym = np.where(g, T0 / np.where(g, S0, 1), 0.0)
+        sxx = S2 - xm * S1
+        sxy = T1 - xm * T0
+        b = np.where(sxx > 1e-9 * np.maximum(S2, 1e-300), sxy / np.where(sxx != 0, sxx, 1), 0.0)
+        out[g] = (ym - b * xm)[g]
         if it == robust:
             break
         r = np.where(ok, y - out, 0.0)
         mad = np.median(np.abs(r[ok])) if ok.any() else 0
-        u = r / (6 * max(mad, 1e-6))
-        rw = np.where(np.abs(u) < 1, (1 - u * u) ** 2, 0.0)
+        uu = r / (6 * max(mad, 1e-6))
+        rw = np.where(np.abs(uu) < 1, (1 - uu * uu) ** 2, 0.0)
     return out
 
 
@@ -249,18 +273,18 @@ def fit_row_fast(v, min_frac=0.003):
         n = j - oi
         sel = n >= 0
         lam0 = max(np.mean(n[sel & (n <= 3 + 3 * max(jmode - oi, 0))]) if (sel & (n <= 3 + 3 * max(jmode - oi, 0))).any() else 0.5, 0.01)
-        K = max(3, int(stats.poisson.isf(1e-3, lam0)))
+        K = max(3, int(pois_isf(1e-3, lam0)))
         lam = truncated_poisson_mle(n, K)
         if not np.isfinite(lam):
             continue
         uu, cc = np.unique(n, return_counts=True)
-        p = np.where(uu >= 0, (1 - 1e-3) * stats.poisson.pmf(np.maximum(uu, 0), lam), 0) + 1e-6
+        p = np.where(uu >= 0, (1 - 1e-3) * pois_pmf(np.maximum(uu, 0), lam), 0) + 1e-6
         ll = float((cc * np.log(p)).sum())
         if best is None or ll > best[0]:
             best = (ll, oi, lam)
     _, o_int, lam = best
     for _ in range(2):
-        K = max(3, int(stats.poisson.isf(1e-3, lam)))
+        K = max(3, int(pois_isf(1e-3, lam)))
         lam = truncated_poisson_mle(j - o_int, K)
     return dict(resolved=True, o=float(o_int + o_frac), lam=float(lam), s=float(s), n=int(v.size))
 
@@ -371,10 +395,10 @@ def background_map(Q, valid, n_iter=2, colbin=128, rowbin=60, smooth="local_line
                     oi = int(np.round(o_r[r] - frac[r])) + d
                     n = uu - oi
                     # likelihood of all the row's pixels at the trend lam (outlier mixture as in fit_row_fast)
-                    p = np.where(n >= 0, (1 - 1e-3) * stats.poisson.pmf(np.maximum(n, 0), lt), 0) + 1e-6
+                    p = np.where(n >= 0, (1 - 1e-3) * pois_pmf(np.maximum(n, 0), lt), 0) + 1e-6
                     sc = -float((cc * np.log(p)).sum())
                     if best is None or sc < best[0]:
-                        K = max(3, int(stats.poisson.isf(1e-3, lt)))
+                        K = max(3, int(pois_isf(1e-3, lt)))
                         best = (sc, oi, truncated_poisson_mle(j - oi, K))
                 if best is not None:
                     changed += int(best[1] != int(np.round(o_r[r] - frac[r])))

@@ -1,4 +1,9 @@
-# superWADERs: efficiency notes (2026-11-12) — recorded, not applied
+# superWADERs: efficiency notes (2026-11-12)
+
+**2026-11-13: E1-E3 applied** after the check on real data (DM09 Image_5, Fe-55 DM28 Image_8, AMtest, single skip):
+same cluster counts and total energies in every file, DM09 and single skip identical, a few cluster energies on
+crowded CCDs moved by up to 9e-4 (relative); 10-45 % faster (docs/superWADERs_plan_binned_crowded.md, section 0).
+The text below is the record from before.
 
 Found in the audit of 2026-11-12. **None of these changes is applied.** They are kept here, with the measurements,
 until they have been checked on real data.

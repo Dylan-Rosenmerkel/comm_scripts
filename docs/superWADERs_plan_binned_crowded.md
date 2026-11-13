@@ -20,6 +20,28 @@ every data type on this machine through `run_superWADERs` and compares with earl
 
 Whatever it finds is fixed before the steps below.
 
+**Results (2026-11-13), and what was changed:**
+- All 16 cases run; the chain chosen per CCD is the same as with the wip engine (PD06 flips on 1-2 CCDs at the 0.10
+  cut, item 2.1). DM09: clusters identical in all 12 files for auto, agmx and `run_WADERs --engine native --clusterer
+  agmx`, also after the changes below.
+- **Fixed:** the summary crashed on CCDs whose fit has no error (flooded / unresolved, gain from the prior): AMtest and
+  binned runs ended with an error after all processing (`fit_quality.quality`, `gain_dc_split.held_quality`, in
+  `superWADERs/` and `src/`).
+- **Fixed:** `gmx.detection_bg` on images with < 61 rows (np.convolve 'same' returns 61 values): window sums from the
+  full convolution; identical for >= 61 rows (checked), no crash on strips. In `superWADERs/` and `clustering_tests/`.
+- **Halo test** (switch, 90 images, Fe-55 / muons): efficiency of 2-10 e- events 10-20 px from a deposit 0.86-0.89
+  with the 15 px halo, 0.91-0.96 with 3-10 px; no fakes and big deposits unchanged with every halo. **HALO 15 -> 5 px.**
+- **Boundary test** (90 images, checkerboard of read noise): the current switch loses 26 of 2811 events A_GMX finds
+  (0.9 %) and gains 207; double counting 0.1-0.3 % (A_GMX alone ~2 %); fakes 7 vs 9. Passed.
+- **Real L2 ACM 103 through the switch:** A_GMX alone 109 small clusters (91 on EXT4, median 4 e- in 6 px: noise);
+  the switch replaces 55, finds 0 Bayesian events (as the stand-alone study), 0.1-0.4 s per image vs 0.6 s. The rest
+  on EXT4 is the asymmetric-noise item (3).
+- **Efficiency patch E1-E3 applied:** same cluster counts and total energies in every file; DM09 and single skip
+  identical; on crowded Fe-55 / AMtest CCDs a few cluster energies move by up to 9e-4 (relative); 10-45 % faster.
+- **Open, first item of 1:** the flooded rule (2026-11-12) gives AMtest EXT2 (382 e-/pix) 0 clusters (6421 before)
+  but the 20x20 binned CCDs ~340 each (1-5 before): to be understood with the binned truth benchmark (1.4, 1.6).
+  The 10x10 CCD with 5.8 e- noise gives 1841 'unmodelled' clusters on 180 x 630 bins: probably noise.
+
 ## 1. Binned images (priority)
 
 ### What binning does to the data

@@ -110,7 +110,7 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
     fewe: engine 'gmx' only: 'off' | 'auto' | 'on' (default $AGMX_FEWE, else 'off'): the Bayesian few-electron finder
              (wip/lowdc/bayes/agmx_switch.py, validation: wip/lowdc/switch_validation/VALIDATION.md): after GMX, in
              sparse regions (soft-candidate fraction f_c <= 1.5e-2 per 100 x 100 block, counted outside the big deposits;
-             'on': everywhere unless unmodelled) the clusters of <= 20 e- farther than 15 px from every pixel of a bigger
+             'on': everywhere unless unmodelled) the clusters of <= 20 e- farther than 5 px (agmx_switch.HALO) from every pixel of a bigger
              one are replaced by the Bayesian catalogue (cls 'few-e', regime 'bayes', finder 'bayes', p_ev, N_mean,
              sigma_post); kept clusters get finder 'agmx'. Crowded mode and 'unmodelled' images stay A_GMX. fewe_lam /
              fewe_RN / fewe_threshold / fewe_nm: the run-pooled dark-charge map of this image, event rates, P(event) cut
@@ -126,10 +126,15 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
     if sigma is None:
         sigma = AM.read_noise(Q, valid)
     if bg is None:
-        try:
-            bg = AM.background_map(Q, valid)
-        except Exception:
+        if AM.PHYS_FIX and sigma >= noise_max:
+            # 'unmodelled' on the read noise alone (below): the background map would not be used for the clusters
+            # (the slowest step on such CCDs); the quick estimate fills info['noise'] / info['lam']
             bg = simple_bg(Q, valid, sigma)
+        else:
+            try:
+                bg = AM.background_map(Q, valid)
+            except Exception:
+                bg = simple_bg(Q, valid, sigma)
     info = dict(sigma=sigma, sigma_crowd=sigma_crowd)
     streak_cl, hints = [], None
     cmode = (crowded or CROWDED).lower()

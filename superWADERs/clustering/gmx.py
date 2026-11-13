@@ -147,8 +147,9 @@ def detection_bg(Qc, valid, bg, half=30, lam_grid=np.geomspace(1e-6, 0.9, 400), 
     iso = (nn == 1) & quiet & (nb < 0.5)
     n1 = iso.sum(1).astype(float); nq = quiet.sum(1).astype(float)
     k = np.ones(2 * half + 1)
-    r1 = np.convolve(n1, k, "same") / np.maximum(np.convolve(nq, k, "same"), 1.0)
-    q_all = np.convolve(occ.sum(1) * 0 + ((nn >= 1) & quiet).sum(1), k, "same") / np.maximum(np.convolve(nq, k, "same"), 1.0)
+    win = lambda x: np.convolve(x, k, "full")[half:half + H]   # sum over rows r-half..r+half; also for H < 2 half + 1
+    r1 = win(n1) / np.maximum(win(nq), 1.0)                     # ('same' would return 2 half + 1 values there)
+    q_all = win(occ.sum(1) * 0 + ((nn >= 1) & quiet).sum(1)) / np.maximum(win(nq), 1.0)
     r1 = r1 / np.maximum(np.exp(-24.0 * q_all), 0.5)   # isolated fraction of the dark single pixels
     s_r = np.array([np.median(bg.s[r][valid[r]]) if valid[r].any() else np.nan for r in range(H)])
     s_r = np.where(np.isfinite(s_r), s_r, np.nanmedian(s_r))

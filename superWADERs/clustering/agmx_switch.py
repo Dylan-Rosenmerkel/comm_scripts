@@ -54,7 +54,8 @@ FC_BAYES = 6e-3     # f_c at or below: Bayesian finder for groups <= BIG_E
 FC_AGMX = 1.5e-2    # f_c above: A_GMX only (neighbourhoods start to percolate)
 LAM_2E = 3e-4       # dark charge [e-/pix] at or above: no individual 2-e- events
 BIG_E = 20.0        # electrons: larger groups are A_GMX's (X-rays, tracks)
-HALO = 15.0         # px from the nearest pixel of a big deposit that the Bayesian finder skips
+HALO = 5.0          # px from the nearest pixel of a big deposit that the Bayesian finder skips (halo test 2026-11-13:
+                    # 3-10 px find 91-96 % of 2-10 e- events at 10-20 px from Fe-55 / muons, 15 px 86-89 %; no fakes)
 BIG_PAD = 2         # px: big-deposit footprints padded by this are left out of f_c
 BLOCK = 100         # px, block size of the per-region decision
 F_FAKE = 0.08       # expected fakes per Mpix at the analytic operating point
