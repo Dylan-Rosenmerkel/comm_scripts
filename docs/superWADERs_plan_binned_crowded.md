@@ -67,7 +67,26 @@ Every size in the chain is in pixels and assumes b = 1:
 - the threshold clusterer: fine for energies, but its size cuts are in pixels;
 - the front end: the 'flooded' rule (> 10 e-/pix) is right for the data but the gain then comes from the prior.
 
+### Baseline (2026-11-13, `wip/binned/bench_binned.py`, DM09 Image_5 binned in software, current code)
+
+| setting | K-alpha [keV] | clusters > 1 keV (truth 10764) | truth found | fakes | chain |
+|---|---|---|---|---|---|
+| 1x1 (re-noised) | 5.805 | 10693 | 98 % | 73 | A_GMX |
+| 2x1 | 5.780 | 9594 | 54 % | 550 | A_GMX / unmodelled |
+| 2x2 | 5.928 | 9949 | 56 % | 900 | crowded / unmodelled |
+| 5x5 | 5.835 | 5050 | 29 % | 234 | crowded / threshold |
+| 10x10 | 5.783 | 1136 | 6 % | 13 | crowded (core fill 0.9) |
+
+**Root cause: the gain and dark-current fit, not the clustering.** With > 1 e- per bin the fit takes the first two
+peaks as 0 and 1 e- under a Poisson law: gain 1.49 instead of 1.34 ADU/e- (2x2 and 5x5), dark charge 0.8-1.0
+instead of 2-3 (2x2) and 12-17 e-/bin (5x5); the read noise then looks like 0.5-2 e- and the chain follows from it.
+So step 1.0 comes first.
+
 ### Plan
+
+1.0 **Gain and dark charge at high occupancy.** Gain from the spacing of the electron comb over many peaks (visible
+at 0.15 e- noise up to tens of e- per bin), dark charge from the mean charge per bin / gain (not the 0/1 e- peak
+ratio); the existing fit only where the occupancy is low. Measured on the benchmark (gain, dark charge, then K-alpha).
 
 1.1 **Bin geometry through the chain.** `characterise` already reads NPBIN / NSBIN; pass (b_y, b_x) to
 `adaptive_cluster`, the finder and the threshold clusterer, and express every size in micrometres (15 um pixels):
