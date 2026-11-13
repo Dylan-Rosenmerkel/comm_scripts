@@ -121,7 +121,7 @@ or structured ones, the threshold clusterer on flooded / unresolved ones; every 
 Data arriving packet by packet go into one campaign folder (`--campaign DIR`): only new inputs are processed, and
 every tool (images, packet, dark current, defect maps, serial register) has an overview page (module × CCD grid
 with pass / warn / fail verdicts from a criteria file) combined in `DIR/index.html`; every page has review boxes
-(name, status, comment per CCD or report tab), kept in `DIR/reviews/`; without `--campaign` a run
+(name, status, comment per CCD or report tab), kept in `DIR/reviews.js`; without `--campaign` a run
 stands alone. Clustering, campaigns, layout and what has been checked: [superWADERs/README.md](superWADERs/README.md);
 efficiency notes (not applied): [docs/superWADERs_efficiency_notes.md](docs/superWADERs_efficiency_notes.md). It needs the `damic`
 conda environment (found automatically). `run_WADERs --engine native` still runs `src/`'s copy of the native engine
@@ -167,8 +167,8 @@ Without an entry the name comes from `--module ACM=NAME`, then the data folder n
 |---|---|---|
 | fits and clusters (chain per CCD) | `run_superWADERs images.txt [--gain-correction] [--composite]` | `index.html`, `images/index.html`, `root/` (+ `root_gaincorr*/`), `summary.txt`, `characterisation/` |
 | add a packet / list to a campaign | any command below with `--campaign DIR` (`--criteria FILE`, `--refresh-all`, `--reprocess`) | the same in `DIR/`, for everything the campaign holds; only new inputs are processed |
-| review the pages, saving as you go | `python3 DIR/review_server.py` (or `run_superWADERs --campaign DIR --serve`) | pages on `http://localhost:8765/`; reviews saved into `DIR/reviews/` at once |
-| take in downloaded reviews | `run_superWADERs --campaign DIR [--reviews FILE ...]` (no input) | `DIR/reviews.js` (shown on every page), `reviews.csv`, `reviews.txt` |
+| review the pages, saving as you go | `python3 DIR/review_server.py` (or `run_superWADERs --campaign DIR --serve`) | pages on `http://localhost:8765/`; reviews saved into `DIR/reviews.js` at once |
+| merge a downloaded reviews.js | `run_superWADERs --campaign DIR --reviews FILE` (no input) | `DIR/reviews.js` (shown on every page), `reviews.csv`, `reviews.txt` |
 | a module measured again (2nd packet, 2nd cooldown) | the command with `--dataset NAME --campaign DIR` | one report and one overview view per data set; the campaign overview uses the newest |
 | L0 traces / PSD traces | `run_superWADERs traces.txt [--l0-no-html]` | `L0/<trace>/`: `overview.png`, `viewer.html`, `summary.json` |
 | L1 images at several skip counts | `run_superWADERs l1.txt --l1-skips 1,10,100,1000 [--l1-skip-first K]` | `L1/`: one FITS per N (all through the pipeline), `noise_vs_skips.csv/.png`, `compare/`, `<image>_diagnostics/` |

@@ -6,29 +6,31 @@ CCD of it) by anyone who opens it: a name, a status (approved / concern / reject
 what it is about (target: tool, module, ext, ccd, view, page, tab), the data it refers to (data: a stamp of the
 inputs; when newer data arrive the pages mark it 'data changed since') and the main values shown at the time.
 
-Where they live:
-  <campaign>/reviews/*.json   one file per save: {format, campaign, saved, reviews: [...]}. Each save is its own file,
-                              so several people can review the same (shared) folder without overwriting each other.
-  <campaign>/reviews.js       all of them merged: loaded by every page of the campaign (written here, by
-                              run_superWADERs, by the review server, or by a page's 'Save to campaign folder')
-  <campaign>/reviews.csv      the same as a table (one row per review), reviews.txt a summary per CCD
-Merging: by id, the latest 'updated' wins; a deleted review stays as a deletion record (so a deletion in one file
-wins over the review in another).
+Where they live: one file per campaign,
+  <campaign>/reviews.js       every review of the campaign ("window.SW_REVIEWS = {format, campaign, made, reviews}"),
+                              read by every page. Each save merges into it (the review server, a page's 'Save to
+                              campaign folder', run_superWADERs --reviews FILE, reviews.py --add / --import), so
+                              several people can review the same folder without losing each other's reviews.
+  <campaign>/reviews.csv      the same as a table (one row per review), reviews.txt the latest review per CCD
+  <campaign>/reviews/*.json   (earlier versions: one file per save) still read and merged in
+Merging: by id, the latest 'updated' wins; a deleted review stays as a deletion record (so a deletion wins over an
+older copy of the review in a downloaded file).
 
 Saving from the pages. A page opened by double-click (file://) cannot write files in most browsers, so:
   review server   python3 review_server.py  in the campaign folder (a copy of this file, written by every run), or
                   run_superWADERs --campaign DIR --serve: serves the campaign's pages on http://localhost:<port>/ and
-                  every review is saved into reviews/ the moment it is added (any browser)
+                  every review is saved into reviews.js the moment it is added (any browser)
   Chrome / Edge   on a double-clicked page: 'Save to campaign folder' asks for the folder once; later reviews are
                   then saved there as they are added
-  any browser     'Download', then  run_superWADERs --campaign DIR --reviews FILE
+  any browser     'Download' gives the updated reviews.js: put it into the campaign folder (replace the old one), or
+                  run_superWADERs --campaign DIR --reviews ~/Downloads/reviews.js  (merges: safe when others review too)
 
 Standard library only (run before the analysis environment is looked for).
 
 usage:
-  python reviews.py DIR                              rebuild reviews.js / reviews.csv / reviews.txt from DIR/reviews/
+  python reviews.py DIR                              rebuild reviews.js / reviews.csv / reviews.txt
   python reviews.py DIR --serve [--port N]           the review server (also: python3 DIR/review_server.py)
-  python reviews.py DIR --import FILE [FILE ...]     add review files (downloaded from a page) and rebuild
+  python reviews.py DIR --import FILE [FILE ...]     merge review files (reviews.js downloaded from a page) in
   python reviews.py DIR --add --reviewer NAME --status concern --module M1 [--ext EXT2] [--tool images]
                     --comment "..."                  write one review from the command line
 (run_superWADERs --campaign DIR [--reviews FILE ...] does the same; no INPUT needed for that)."""
@@ -59,10 +61,17 @@ def campaign_id(root):
         return ""
 
 
+STORE = "reviews.js"
+JS_PREFIX = "window.SW_REVIEWS = "
+
+
 def read_file(path):
-    """The reviews of one file: {format, reviews: [...]} or a bare list."""
+    """The reviews of one file: reviews.js (window.SW_REVIEWS = {...};), {format, reviews: [...]} or a bare list."""
     with open(path) as fh:
-        j = json.load(fh)
+        text = fh.read().strip()
+    if text.startswith("window."):
+        text = text.split("=", 1)[1].strip().rstrip(";")
+    j = json.loads(text)
     rs = j if isinstance(j, list) else j.get("reviews", [])
     if not isinstance(rs, list):
         raise ValueError("no list of reviews")
@@ -80,9 +89,18 @@ def merge(reviews):
 
 
 def load(root, log=None):
-    """Every review of the campaign (deletion records included), merged."""
-    d = os.path.join(root, "reviews")
+    """Every review of the campaign (deletion records included), merged: reviews.js and the files of reviews/
+    (earlier versions)."""
     got = []
+    store = os.path.join(root, STORE)
+    if os.path.exists(store):
+        try:
+            got += read_file(store)
+        except (OSError, ValueError) as e:
+            if log:
+                log(f"  {STORE}: not read ({e}); kept as {STORE}.unreadable")
+            shutil.copyfile(store, store + ".unreadable")
+    d = os.path.join(root, "reviews")
     for n in sorted(os.listdir(d)) if os.path.isdir(d) else []:
         if n.endswith(".json"):
             try:
@@ -106,16 +124,23 @@ def where(t):
                                        f"tab {t['tab']}" if t.get("tab") else None) if x)
 
 
-def write(root, log=print):
-    """reviews.js, reviews.csv and reviews.txt from reviews/; returns the summary lines (also in reviews.txt)."""
+def store_text(cid, reviews):
+    """reviews.js: one review per line (readable, small diffs)."""
+    head = json.dumps(dict(format=FORMAT, campaign=cid, made=_now()))[:-1]
+    body = ",\n".join(json.dumps(r, ensure_ascii=False).replace("</", "<\\/") for r in reviews)
+    return f"{JS_PREFIX}{head}, \"reviews\": [\n{body}\n]}};\n"
+
+
+def write(root, log=print, add=()):
+    """Merge add (new or changed reviews) into reviews.js, then reviews.csv and reviews.txt; returns the summary lines
+    (also in reviews.txt)."""
     cid = campaign_id(root)
-    allr = load(root, log)
+    allr = merge(load(root, log) + list(add))
     other = sorted({r.get("campaign") for r in allr if r.get("campaign") and cid and r.get("campaign") != cid})
-    js = dict(format=FORMAT, campaign=cid, made=_now(), reviews=allr)
     tmp = os.path.join(root, ".reviews.js.tmp")
     with open(tmp, "w") as fh:
-        fh.write("window.SW_REVIEWS = " + json.dumps(js, separators=(",", ":")).replace("</", "<\\/") + ";\n")
-    os.replace(tmp, os.path.join(root, "reviews.js"))
+        fh.write(store_text(cid, allr))
+    os.replace(tmp, os.path.join(root, STORE))
     rs = live(allr)
     with open(os.path.join(root, "reviews.csv"), "w", newline="") as fh:
         w = csv.writer(fh)
@@ -162,44 +187,29 @@ def summary_lines(rs):
     return L
 
 
-def _file_name(reviewer):
-    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    who = re.sub(r"[^\w-]+", "_", reviewer or "anonymous")
-    return f"reviews_{who}_{stamp}_{uuid.uuid4().hex[:6]}.json"
-
-
 def save(root, reviews, reviewer=""):
-    """A new file in reviews/ with these reviews; returns its path."""
-    d = os.path.join(root, "reviews")
-    os.makedirs(d, exist_ok=True)
-    p = os.path.join(d, _file_name(reviewer))
-    with open(p, "w") as fh:
-        json.dump(dict(format=FORMAT, campaign=campaign_id(root), saved=_now(), reviewer=reviewer, reviews=reviews), fh, indent=1)
-    return p
+    """Merge these reviews into the campaign's reviews.js (and rebuild reviews.csv / .txt); returns its path."""
+    write(root, log=lambda *a: None, add=reviews)
+    return os.path.join(root, STORE)
 
 
 def import_files(root, files, log=print):
-    """Copy review files (downloaded from a page) into reviews/; a file already there (same content) is skipped."""
-    d = os.path.join(root, "reviews")
-    os.makedirs(d, exist_ok=True)
-    n = 0
+    """Merge review files (reviews.js downloaded from a page, or older .json files) into reviews.js. Returns the
+    number of reviews that were new or newer than the campaign's."""
+    have = {r["id"]: str(r.get("updated") or "") for r in load(root)}
+    add = []
     for f in files:
         try:
             rs = read_file(f)
         except (OSError, ValueError) as e:
             log(f"  {f}: not a review file ({e})")
             continue
-        dest = os.path.join(d, os.path.basename(f))
-        if os.path.exists(dest):
-            with open(dest, "rb") as a, open(f, "rb") as b:
-                if a.read() == b.read():
-                    log(f"  {os.path.basename(f)}: already in reviews/")
-                    continue
-            dest = os.path.join(d, _file_name(os.path.splitext(os.path.basename(f))[0]))
-        shutil.copyfile(f, dest)
-        log(f"  {os.path.basename(f)}: {len(rs)} review(s) -> reviews/{os.path.basename(dest)}")
-        n += len(rs)
-    return n
+        new = [r for r in rs if r["id"] not in have or str(r.get("updated") or "") > have[r["id"]]]
+        log(f"  {os.path.basename(f)}: {len(rs)} review(s), {len(new)} new or changed")
+        add += new
+    if add:
+        write(root, log=lambda *a: None, add=add)
+    return len(add)
 
 
 def new_review(root, reviewer, status, comment, target, data=None, values=None):
@@ -227,7 +237,7 @@ MAX_POST = 2_000_000
 
 def serve(root, host="127.0.0.1", port=8765, open_browser=True, log=print):
     """Serve the campaign folder (its pages, read only) and the reviews: GET /api/reviews (all of them), POST
-    /api/reviews {reviewer, reviews: [...]} (saved as a new file in reviews/, then reviews.js / .csv / .txt rebuilt).
+    /api/reviews {reviewer, reviews: [...]} (merged into reviews.js, reviews.csv / .txt rebuilt).
     host 127.0.0.1: this computer only; 0.0.0.0: everyone on the network can open the pages and add reviews."""
     import functools
     import http.server
@@ -273,10 +283,9 @@ def serve(root, host="127.0.0.1", port=8765, open_browser=True, log=print):
             except (ValueError, AttributeError) as e:
                 return self._json(400, dict(error=str(e)))
             with lock:
-                p = save(root, rs, str(j.get("reviewer") or rs[0].get("reviewer") or ""))
-                write(root, log=lambda *a: None)
+                save(root, rs)
                 allr = load(root)
-            log(f"  saved {len(rs)} review(s) by {j.get('reviewer') or '?'} -> reviews/{os.path.basename(p)}")
+            log(f"  saved {len(rs)} review(s) by {j.get('reviewer') or '?'} into {STORE}")
             return self._json(200, dict(format=FORMAT, campaign=campaign_id(root), server=True, reviews=allr))
 
     write(root, log=log)
@@ -290,7 +299,7 @@ def serve(root, host="127.0.0.1", port=8765, open_browser=True, log=print):
     if srv is None:
         sys.exit(f"reviews: no free port in {port}..{port + 29}")
     url = f"http://{'localhost' if host in ('127.0.0.1', 'localhost') else host}:{srv.server_address[1]}/index.html"
-    log(f"review server for {root}\n  open {url}\n  reviews added on the pages are saved into reviews/ at once"
+    log(f"review server for {root}\n  open {url}\n  reviews added on the pages are saved into {STORE} at once"
         f"{' (open to everyone on the network)' if host not in ('127.0.0.1', 'localhost') else ''}; Ctrl-C stops it")
     if open_browser:
         try:

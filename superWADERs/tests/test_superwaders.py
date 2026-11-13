@@ -246,10 +246,17 @@ class Reviews(unittest.TestCase):
             json.dump(dict(format=self.R.FORMAT, campaign="camp@x", reviews=[r2]), open(dl, "w"))
             lines = self.R.refresh(root, [dl], log=lambda *a: None)
             self.assertIn("2 (1 approved, 1 concern) by Ana, Ben", lines[0])
-            self.assertEqual(self.R.import_files(root, [dl], log=lambda *a: None), 0)   # the same file again: skipped
+            self.assertEqual(self.R.import_files(root, [dl], log=lambda *a: None), 0)   # the same file again: nothing new
+            self.assertFalse(os.path.exists(os.path.join(root, "reviews")))           # one file: reviews.js
             js = open(os.path.join(root, "reviews.js")).read()
             self.assertTrue(js.startswith("window.SW_REVIEWS = "))
-            self.assertEqual(len(json.loads(js[len("window.SW_REVIEWS = "):].rstrip().rstrip(";"))["reviews"]), 2)
+            self.assertEqual(len(self.R.read_file(os.path.join(root, "reviews.js"))), 2)
+            # a reviews.js downloaded from a page (the campaign's file + a new review) merges in; a deletion wins
+            gone = dict(r1, deleted=True, updated="zz")
+            dl2 = os.path.join(d, "reviews.js")
+            open(dl2, "w").write(self.R.store_text("camp@x", [gone, dict(r2, id="c", created="zz", updated="zz")]))
+            self.assertEqual(self.R.import_files(root, [dl2], log=lambda *a: None), 2)
+            self.assertEqual(sorted(r["id"] for r in self.R.live(self.R.load(root))), ["b", "c"])
             with open(os.path.join(root, "reviews.csv")) as fh:
                 self.assertEqual(len(fh.read().strip().splitlines()), 3)
             with self.assertRaises(ValueError):
@@ -274,6 +281,12 @@ class Reviews(unittest.TestCase):
 
 class ReviewServer(unittest.TestCase):
     """review_server.py: pages served, reviews posted by a page saved at once; other sites refused."""
+
+    @staticmethod
+    def R_read(root):
+        sys.path.insert(0, os.path.join(SW, "commissioning"))
+        import reviews
+        return reviews.read_file(os.path.join(root, "reviews.js"))
 
     def test_post(self):
         import socket
@@ -309,8 +322,11 @@ class ReviewServer(unittest.TestCase):
                                             headers={"Content-Type": "application/json", "X-SW-Reviews": "1"})
                 j = json.loads(urllib.request.urlopen(ok).read())
                 self.assertEqual([r["id"] for r in j["reviews"]], ["r1"])
-                self.assertEqual(len(os.listdir(os.path.join(root, "reviews"))), 1)
                 self.assertIn('"r1"', open(os.path.join(root, "reviews.js")).read())
+                urllib.request.urlopen(urllib.request.Request(url + "/api/reviews", data=json.dumps(dict(reviews=[dict(
+                    rev, id="r2")])).encode(), headers={"Content-Type": "application/json", "X-SW-Reviews": "1"}))
+                self.assertEqual(sorted(r["id"] for r in self.R_read(root)), ["r1", "r2"])   # both in the one file
+                self.assertFalse(os.path.exists(os.path.join(root, "reviews")))
                 j = json.loads(urllib.request.urlopen(url + "/api/reviews").read())
                 self.assertTrue(j["server"])
             finally:

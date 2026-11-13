@@ -3,16 +3,15 @@
 A review: {id, campaign, created, updated, reviewer, status: approved | concern | rejected | note, comment,
            target: {tool, module, ext, ccd, view, page, tab}, data: the data it refers to (a stamp),
            values: the main numbers shown when it was written, page}.
-Where reviews live:
-  <campaign>/reviews/*.json    one file per save, {format, campaign, saved, reviews: [...]}; several people can save
-                               into the same (shared) folder without overwriting each other
-  <campaign>/reviews.js        all of them merged (window.SW_REVIEWS), loaded by every page
+Where reviews live: one file per campaign,
+  <campaign>/reviews.js        every review (window.SW_REVIEWS), read by every page; each save merges into it
 How a review gets there, as soon as it is added:
   review server                the page was opened through review_server.py (http://localhost:...): POST /api/reviews
   Chrome / Edge, file://       'Save to campaign folder' asks for the folder once (remembered, File System Access);
-                               later reviews are written there as they are added
-  otherwise                    kept in this browser (localStorage, "not saved yet"); 'Download' gives the file for the
-                               reviews/ folder
+                               later reviews are merged into its reviews.js as they are added
+  otherwise                    kept in this browser (localStorage, "not saved yet", still shown on the page) until the
+                               campaign's reviews.js has them; 'Download' gives the updated reviews.js to put in the
+                               campaign folder
 Merging: by id, the latest 'updated' wins; a deleted review is kept as a deletion record. */
 const SWR = (() => {
   const STATUS = { approved: ["✔", "pass", "approved"], concern: ["▲", "warn", "concern"], rejected: ["✖", "fail", "rejected"],
@@ -56,7 +55,7 @@ const SWR = (() => {
     try {
       const r = await fetch(api(), { cache: "no-store" }); if (!r.ok) throw new Error(r.status);
       const j = await r.json(); if (!j.server) throw new Error("no server");
-      window.SW_REVIEWS = j; mode = "server";
+      window.SW_REVIEWS = j; mode = "server"; prune();
     } catch (e) { mode = "file"; }
     if (mode === "file" && await folderHandle()) mode = "folder";
     cfg.onChange(); persist();
@@ -123,12 +122,31 @@ const SWR = (() => {
       add(Object.assign({}, target, ch), stamp, s, c, n, values);
     };
   }
-  function fileText(list) { return JSON.stringify({ format: FORMAT, campaign: cfg.campaign, saved: new Date().toISOString(), reviewer: name(), reviews: list }, null, 1); }
-  const fname = () => `reviews_${(name() || "anonymous").replace(/[^\w-]+/g, "_")}_${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
-  function download() {
+  // the campaign's review file, reviews.js: every review, one per line ("window.SW_REVIEWS = {...};")
+  function storeText(reviews) {
+    const head = JSON.stringify({ format: FORMAT, campaign: cfg.campaign, made: new Date().toISOString() }).slice(0, -1);
+    return "window.SW_REVIEWS = " + head + ', "reviews": [\n' + reviews.map(r => JSON.stringify(r).replace(/<\//g, "<\\/")).join(",\n") + "\n]};\n";
+  }
+  function parseStore(text) { return JSON.parse(text.trim().replace(/^window\.SW_REVIEWS\s*=\s*/, "").replace(/;\s*$/, "")); }
+  // a review stays 'not saved yet' (and on the page) until the campaign's reviews.js has it
+  function prune() {
+    const s = new Map(saved().map(r => [r.id, String(r.updated || "")]));
+    const p = pending(), q = p.filter(r => !(s.has(r.id) && s.get(r.id) >= String(r.updated || "")));
+    if (q.length !== p.length) setPending(q);
+  }
+  function download() {             // the campaign's reviews.js with the new reviews merged in
     const p = pending(); if (!p.length) return;
-    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([fileText(p)], { type: "application/json" })); a.download = fname(); a.click();
-    if (confirm("Downloaded " + p.length + " review(s).\n\nPut the file into the campaign's reviews/ folder and run\n  run_superWADERs --campaign DIR\n(or: python superWADERs/commissioning/reviews.py DIR) so that every page shows them.\n\nClear them from this browser now? (Cancel keeps them here, shown as 'not saved'.)")) { setPending([]); cfg.onChange(); }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([storeText(merge(saved().concat(p)))], { type: "text/javascript" })); a.download = "reviews.js"; a.click();
+    msg = "downloaded reviews.js: put it into the campaign folder";
+    cfg.onChange();
+    alert("Downloaded reviews.js: the campaign's review file with your " + p.length + " new review(s) in it.\n\n"
+      + "Put it into the campaign folder (the one with index.html), replacing the reviews.js there, and reload the page: "
+      + "the review(s) then show as saved, on every page.\n\n"
+      + "If other people review the same campaign at the same time, merge instead of replacing:\n"
+      + "  run_superWADERs --campaign DIR --reviews ~/Downloads/reviews.js\n\n"
+      + "To save without this step: open the pages with  python3 review_server.py  (in the campaign folder).\n"
+      + "Until then the review(s) stay on this page, marked 'not saved yet'.");
   }
   async function saveToFolder(ask) {     // ask: may show the folder picker (a click on 'Save to campaign folder')
     const p = pending(); if (!p.length || busy) return;
@@ -145,16 +163,12 @@ const SWR = (() => {
         try { await dir.getFileHandle("campaign.json"); } catch (e) { alert("That is not a campaign folder (no campaign.json). Choose the folder that holds index.html and campaign.json."); dir = null; }
       }
       if (!dir) { busy = false; if (mode === "folder" && !ask) { msg = "click 'Save to campaign folder' to allow saving"; cfg.onChange(); } return; }
-      const rdir = await dir.getDirectoryHandle("reviews", { create: true });
-      const w = await (await rdir.getFileHandle(fname(), { create: true })).createWritable(); await w.write(fileText(p)); await w.close();
-      const got = [];
-      for await (const [n, h] of rdir.entries()) {
-        if (h.kind === "file" && n.endsWith(".json")) { try { const j = JSON.parse(await (await h.getFile()).text()); got.push(...(Array.isArray(j) ? j : (j.reviews || []))); } catch (e) {} }
-      }
-      const js = { format: FORMAT, campaign: cfg.campaign, made: new Date().toISOString(), reviews: merge(got) };
+      let have = [];                    // merge into the folder's reviews.js as it is now (others may have saved)
+      try { have = parseStore(await (await (await dir.getFileHandle("reviews.js")).getFile()).text()).reviews || []; } catch (e) {}
+      const all_ = merge(have.concat(saved(), p));
       const w2 = await (await dir.getFileHandle("reviews.js", { create: true })).createWritable();
-      await w2.write("window.SW_REVIEWS = " + JSON.stringify(js) + ";\n"); await w2.close();
-      window.SW_REVIEWS = js; const ids = new Set(p.map(x => x.id)); setPending(pending().filter(x => !ids.has(x.id)));
+      await w2.write(storeText(all_)); await w2.close();
+      window.SW_REVIEWS = { format: FORMAT, campaign: cfg.campaign, made: new Date().toISOString(), reviews: all_ }; const ids = new Set(p.map(x => x.id)); setPending(pending().filter(x => !ids.has(x.id)));
       await folderHandle(dir); mode = "folder"; msg = "saved into the campaign folder " + new Date().toLocaleTimeString();
     } catch (e) { if (e && e.name !== "AbortError") msg = "not saved (" + (e.message || e) + ")"; }
     busy = false; cfg.onChange();
@@ -172,7 +186,7 @@ const SWR = (() => {
     if (q(".swr-save")) q(".swr-save").onclick = () => saveToFolder(true);
     if (q(".swr-dl")) q(".swr-dl").onclick = download;
     if (q(".swr-retry")) q(".swr-retry").onclick = persist;
-    q(".swr-help").onclick = () => alert("Reviews: give your name, a status (approved / concern / rejected / note) and a comment for a CCD (overview pages) or a tab of a report (module pages).\n\nSaving into the campaign folder (reviews/), as soon as a review is added:\n  - open the pages through the review server: in the campaign folder run\n      python3 review_server.py\n    (or run_superWADERs --campaign DIR --serve) and use the address it prints; works in any browser;\n  - Chrome / Edge on a double-clicked page: 'Save to campaign folder' asks for the folder once, then saves as you go.\nOtherwise a review stays in this browser ('not saved yet'): 'Download' gives a file to put into the campaign's reviews/ folder (or run_superWADERs --campaign DIR --reviews FILE).\n\nEach save is its own file, so several people can review the same (shared) folder. A review records the data it refers to: when newer data arrive it is marked 'data changed since'.");
+    q(".swr-help").onclick = () => alert("Reviews: give your name, a status (approved / concern / rejected / note) and a comment for a CCD (overview pages) or a tab of a report (module pages).\n\nAll reviews of the campaign are in one file, reviews.js in the campaign folder; each save adds to it.\n\nSaving as soon as a review is added:\n  - open the pages through the review server: in the campaign folder run\n      python3 review_server.py\n    (or run_superWADERs --campaign DIR --serve) and use the address it prints; any browser;\n  - Chrome / Edge on a double-clicked page: 'Save to campaign folder' asks for the folder once, then saves as you go.\nOtherwise a review stays on the page, 'not saved yet': 'Download' gives the updated reviews.js; put it into the campaign folder (replacing the old one) and reload, or run  run_superWADERs --campaign DIR --reviews ~/Downloads/reviews.js  (merges).\n\nA review records the data it refers to: when newer data arrive it is marked 'data changed since'.");
   }
   function style() {
     if (document.getElementById("swr-style")) return;
@@ -190,6 +204,6 @@ const SWR = (() => {
 @media print{.swr-form,.swr-x,#swrbar button{display:none}}`;
     document.head.appendChild(s);
   }
-  function init(c) { cfg = Object.assign(cfg, c); style(); if (mode === "probing") probe(); else folderHandle().then(h => { if (h) { mode = "folder"; cfg.onChange(); } }); }
+  function init(c) { cfg = Object.assign(cfg, c); style(); prune(); if (mode === "probing") probe(); else folderHandle().then(h => { if (h) { mode = "folder"; cfg.onChange(); } }); }
   return { init, all, add, remove, form, bar, badge, statusText, latest, stale, STATUS };
 })();

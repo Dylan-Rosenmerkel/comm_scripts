@@ -262,7 +262,7 @@ output (superWADERs_<run name>/, <run name> = image or .txt name; or the --campa
   summary.txt                  verdict counts, fits per CCD, the clustering chain of every CCD and why, every run
   campaign.json, criteria.json, records/   the campaign: inputs and runs, the criteria, the kept results
   modules.csv                  the campaign's module list (the last --module-list), used by every later run
-  reviews/, reviews.js, reviews.csv, reviews.txt   the reviews written on the pages (name, status, comment per CCD
+  reviews.js, reviews.csv, reviews.txt   every review written on the pages, in one file (reviews.js) (name, status, comment per CCD
                                or report tab; commissioning/reviews.py), shown on every page
   fit_quality.csv              gain, noise, dark current per CCD with errors scaled by sqrt(chi2/ndf)
   native_summary.json          everything per image and CCD (fits, gain choice, pedestal, thresholds, decisions)
@@ -327,12 +327,13 @@ campaign (--campaign DIR): give each new packet (or list) with the same --campai
   (few-electron finder), --gain-correction curves and --composite use the images of the current run only.
 
 reviews: every page has a review box (overviews: per CCD; module reports: per tab, for the whole module or one
-  CCD): a name, a status (approved / concern / rejected / note) and a comment, saved in DIR/reviews/ and shown on every
+  CCD): a name, a status (approved / concern / rejected / note) and a comment, merged into DIR/reviews.js and shown on every
   page. To save them straight into the campaign folder, open the pages through the review server:
     python3 ~/comm/LSM2026/review_server.py        (or: run_superWADERs --campaign ~/comm/LSM2026 --serve)
   then every review is saved the moment it is added (any browser; the server prints the address). On pages opened by
   double-click: Chrome / Edge 'Save to campaign folder' (asks for the folder once, then saves as you go); other
-  browsers 'Download', then  run_superWADERs --campaign ~/comm/LSM2026 --reviews ~/Downloads/reviews_*.json.
+  browsers 'Download' gives the updated reviews.js: put it into the campaign folder (replace the old one), or merge it
+  with  run_superWADERs --campaign ~/comm/LSM2026 --reviews ~/Downloads/reviews.js.
   A review records the data it was about: when newer data arrive the pages mark it 'data changed since'.
 
 data sets (--dataset NAME): a module measured more than once (a second packet after a repair, a second cooldown's
@@ -382,11 +383,11 @@ def build_parser(full=False):
                         "uses the newest). Without it, inputs join the data set they had, or the default one")
     g.add_argument("--serve", action="store_true",
                    help="then open the campaign's pages through its review server (http://localhost:<port>/): reviews "
-                        "added on the pages are saved into DIR/reviews/ at once, in any browser. Ctrl-C stops it. Also "
+                        "added on the pages are saved into DIR/reviews.js at once, in any browser. Ctrl-C stops it. Also "
                         "without INPUT; or run  python3 DIR/review_server.py")
     g.add_argument("--port", type=int, default=8765, help="first port the review server tries (default 8765)")
     g.add_argument("--reviews", metavar="FILE", nargs="+", default=[],
-                   help="review files downloaded from the pages: copied into DIR/reviews/ (also without INPUT)")
+                   help="review files downloaded from the pages (reviews.js): merged into DIR/reviews.js (also without INPUT)")
     g.add_argument("--refresh-all", action="store_true",
                    help="rebuild every tool's pages from the kept results (default: only the tools of this run, and all "
                         "of them after --criteria / --reprocess)")

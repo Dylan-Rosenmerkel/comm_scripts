@@ -64,7 +64,7 @@ LSM2026/                        the --campaign folder (or superWADERs_<run name>
   root/, L0/, L1/, logs/        cluster files, raw-data products, logs
   campaign.json, criteria.json, records/   the campaign's ledger, limits and kept results
   modules.csv                   the campaign's module list (the last --module-list; later runs use it)
-  reviews/, reviews.js          the reviews written on the pages (one file per save) and all of them merged
+  reviews.js                    every review written on the pages, in one file (read by every page)
   review_server.py              serves the pages so that reviews are saved here at once: python3 review_server.py
   reviews.csv, reviews.txt      every review as a table; the latest review of every CCD
 ```
@@ -130,8 +130,9 @@ A review is a name, a status (approved / concern / rejected / note) and a commen
 numbers shown at the time. When newer data arrive, the review stays and is marked "data changed since", with the
 numbers it was written on.
 
-Reviews are files in the campaign folder (`reviews/`). To have every review saved there **the moment you click Add
-review**, open the pages through the campaign's review server:
+All reviews of a campaign are in one file, `reviews.js` in the campaign folder; every save merges into it (nothing
+is overwritten, and a review added by someone else in the meantime is kept). To have every review saved there **the
+moment you click Add review**, open the pages through the campaign's review server:
 ```bash
 python3 ~/comm/LSM2026/review_server.py              # or: run_superWADERs --campaign ~/comm/LSM2026 --serve
 ```
@@ -144,17 +145,16 @@ stops it.
 Pages opened by double-click (`file://`) cannot write files in most browsers:
 - **Chrome, Edge:** "Save to campaign folder" asks for the campaign folder once; it is remembered, and later reviews
   are saved there as they are added.
-- **Other browsers:** the review stays in the browser ("not saved yet"); "Download" gives a file for `DIR/reviews/`, or
+- **Other browsers:** the review stays on the page, marked "not saved yet". "Download" gives the campaign's
+  `reviews.js` with the new reviews in it: put it into the campaign folder in place of the old one and reload, and the
+  reviews show as saved on every page. When others review the same campaign at the same time, merge it instead:
   ```bash
-  run_superWADERs --campaign ~/comm/LSM2026 --reviews ~/Downloads/reviews_*.json   # no INPUT: reviews only, seconds
+  run_superWADERs --campaign ~/comm/LSM2026 --reviews ~/Downloads/reviews.js   # no INPUT: reviews only, seconds
   ```
 
-`reviews.js` (read by every page), `reviews.csv` and `reviews.txt` are rebuilt at every save, and by every run, which
-also adds the review summary to `summary.txt`.
-
-Each save is its own file (`reviews/reviews_<name>_<time>.json`), so several people can review the same shared folder,
-or send their files to one person, without overwriting each other; deleting a review keeps a deletion record so the
-deletion wins. Reviews can also be written from the command line:
+`reviews.csv` and `reviews.txt` are rebuilt at every save, and by every run, which also adds the review summary to
+`summary.txt`. Deleting a review keeps a deletion record, so the deletion wins over an older copy of the file. Reviews
+can also be written from the command line:
 `python superWADERs/commissioning/reviews.py DIR --add --reviewer NAME --status concern --module DM03 --ext EXT2 --comment "..."`.
 
 The images overview has one view per image setting (e.g. 500-skip 1×1 and 1-skip 1×1).

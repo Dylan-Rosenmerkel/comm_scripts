@@ -171,9 +171,10 @@ dark-current rate, plus each CCD's review status.
 **Reviews.** Every overview (per CCD) and every module report (per tab, for the whole module or one CCD) has a review
 box: your name, a status (approved / concern / rejected / note) and a comment. Open the pages with
 `python3 DIR/review_server.py` (written into every campaign folder; or `run_superWADERs --campaign DIR --serve`) and
-every review is saved into `DIR/reviews/` the moment it is added, in any browser. On double-clicked pages: Chrome /
-Edge **Save to campaign folder** (asks for the folder once, then saves as you go); other browsers **Download**, then
-`run_superWADERs --campaign DIR --reviews FILE` (no input). Saved reviews show on every page of the campaign and are listed in
+every review is saved into `DIR/reviews.js` (the campaign's one review file) the moment it is added, in any browser.
+On double-clicked pages: Chrome / Edge **Save to campaign folder** (asks for the folder once, then saves as you go);
+other browsers **Download**, which gives the updated `reviews.js`: put it into the campaign folder in place of the old
+one (or merge it: `run_superWADERs --campaign DIR --reviews ~/Downloads/reviews.js`). Saved reviews show on every page of the campaign and are listed in
 `DIR/reviews.csv` and `DIR/reviews.txt`. A review keeps the data and numbers it was written on; when newer data
 arrive it is marked "data changed since". Details: [superWADERs/README.md](../superWADERs/README.md), "Reviews".
 
