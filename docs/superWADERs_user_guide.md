@@ -169,8 +169,9 @@ dark current (latest image), the dark-current rate of the series (plateau, else 
 dark-current rate, plus each CCD's review status.
 
 **Reviews.** Every overview (per CCD) and every module report (per tab, for the whole module or one CCD) has a review
-box: your name, a status (approved / concern / rejected / note) and a comment. Open the pages with
-`python3 DIR/review_server.py` (written into every campaign folder; or `run_superWADERs --campaign DIR --serve`) and
+box: your name, a status (approved / concern / rejected / note) and a comment. Double-click `open_campaign` in the
+campaign folder (`open_campaign.command` on a Mac, `open_campaign.bat` on Windows; or `python3 DIR/review_server.py`,
+or `run_superWADERs --campaign DIR --serve`); while it runs, pages opened by double-click save too, and
 every review is saved into `DIR/reviews.js` (the campaign's one review file) the moment it is added, in any browser.
 On double-clicked pages: Chrome / Edge **Save to campaign folder** (asks for the folder once, then saves as you go);
 other browsers **Download**, which gives the updated `reviews.js`: put it into the campaign folder in place of the old

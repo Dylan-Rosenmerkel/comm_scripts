@@ -65,7 +65,7 @@ LSM2026/                        the --campaign folder (or superWADERs_<run name>
   campaign.json, criteria.json, records/   the campaign's ledger, limits and kept results
   modules.csv                   the campaign's module list (the last --module-list; later runs use it)
   reviews.js                    every review written on the pages, in one file (read by every page)
-  review_server.py              serves the pages so that reviews are saved here at once: python3 review_server.py
+  open_campaign.command / .bat, review_server.py   double-click: the pages with reviews saved here at once
   reviews.csv, reviews.txt      every review as a table; the latest review of every CCD
 ```
 
@@ -132,7 +132,8 @@ numbers it was written on.
 
 All reviews of a campaign are in one file, `reviews.js` in the campaign folder; every save merges into it (nothing
 is overwritten, and a review added by someone else in the meantime is kept). To have every review saved there **the
-moment you click Add review**, open the pages through the campaign's review server:
+moment you click Add review**, start the campaign's review server: **double-click `open_campaign`** in the campaign
+folder (`open_campaign.command` on a Mac, the first time right-click > Open; `open_campaign.bat` on Windows), or
 ```bash
 python3 ~/comm/LSM2026/review_server.py              # or: run_superWADERs --campaign ~/comm/LSM2026 --serve
 ```
@@ -140,9 +141,14 @@ It opens `http://localhost:8765/index.html` in the browser (any browser); the ba
 "saved straight into the campaign folder". `review_server.py` is written into every campaign folder, so it travels
 with a copied or zipped campaign and needs only Python 3 (no packages). It answers this computer only; `--host
 0.0.0.0` lets everyone on the network open the pages and add reviews (e.g. one lab machine for the group). Ctrl-C
-stops it.
+(or closing its window) stops it.
 
-Pages opened by double-click (`file://`) cannot write files in most browsers:
+While it runs, **pages opened by double-click save through it too** (it leaves `review_server_info.js` with its
+address and a token in the folder; other web sites cannot use it), so reviews already marked "not saved yet" are
+saved as soon as the page is reloaded. When it starts it also merges any `reviews*.js` of this campaign found in
+`~/Downloads` (files downloaded from the pages earlier).
+
+Without the server, pages opened by double-click (`file://`) cannot write files in most browsers:
 - **Chrome, Edge:** "Save to campaign folder" asks for the campaign folder once; it is remembered, and later reviews
   are saved there as they are added.
 - **Other browsers:** the review stays on the page, marked "not saved yet". "Download" gives the campaign's

@@ -329,9 +329,24 @@ class ReviewServer(unittest.TestCase):
                 self.assertFalse(os.path.exists(os.path.join(root, "reviews")))
                 j = json.loads(urllib.request.urlopen(url + "/api/reviews").read())
                 self.assertTrue(j["server"])
+                # a page opened by double-click (origin null): only with the token of review_server_info.js
+                info = open(os.path.join(root, "review_server_info.js")).read()
+                tok = json.loads(info.split("=", 1)[1].strip().rstrip(";"))["token"]
+                hdr = {"Content-Type": "application/json", "X-SW-Reviews": "1", "Origin": "null"}
+                body3 = json.dumps(dict(reviews=[dict(rev, id="r3")])).encode()
+                with self.assertRaises(urllib.error.HTTPError):
+                    urllib.request.urlopen(urllib.request.Request(url + "/api/reviews", data=body3, headers=hdr))
+                r = urllib.request.urlopen(urllib.request.Request(url + "/api/reviews", data=body3,
+                                                                  headers=dict(hdr, **{"X-SW-Token": tok})))
+                self.assertEqual(r.headers.get("Access-Control-Allow-Origin"), "null")
+                with self.assertRaises(urllib.error.HTTPError):      # the token file itself is not served
+                    urllib.request.urlopen(url + "/review_server_info.js")
+                for f in ("open_campaign.command", "open_campaign.bat", "review_server.py"):
+                    self.assertTrue(os.path.exists(os.path.join(root, f)), f)
             finally:
                 pr.terminate()
                 pr.communicate(timeout=10)
+            self.assertFalse(os.path.exists(os.path.join(root, "review_server_info.js")))   # removed when it stops
 
 
 if __name__ == "__main__":

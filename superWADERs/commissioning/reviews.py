@@ -165,6 +165,12 @@ def write(root, log=print, add=()):
         if not os.path.exists(server) or open(server).read() != code:
             with open(server, "w") as fh:
                 fh.write(code)
+    for name, text in LAUNCHERS.items():
+        f = os.path.join(root, name)
+        if not os.path.exists(f):
+            with open(f, "w", newline="") as fh:
+                fh.write(text)
+            os.chmod(f, 0o755)
     return lines
 
 
@@ -233,6 +239,30 @@ def refresh(root, files=(), log=print):
 # =============================================================================
 API = "/api/reviews"
 MAX_POST = 2_000_000
+INFO = "review_server_info.js"        # written while the server runs: pages opened by double-click save through it
+LAUNCHERS = {                          # double-click: the review server for this folder, the browser opens on it
+    "open_campaign.command": ("#!/bin/bash\n# macOS / Linux: double-click (macOS: the first time right-click > Open)\n"
+                              "cd \"$(dirname \"$0\")\" && exec python3 review_server.py\n"),
+    "open_campaign.bat": ("@echo off\r\nrem Windows: double-click\r\ncd /d \"%~dp0\"\r\n"
+                          "py -3 review_server.py 2>nul || python review_server.py\r\npause\r\n"),
+}
+
+
+def downloaded(root, log=print):
+    """Merge the review files a page downloaded (~/Downloads/reviews*.js, of this campaign) into reviews.js."""
+    import glob
+    cid = campaign_id(root)
+    files = []
+    for f in glob.glob(os.path.join(os.path.expanduser("~"), "Downloads", "reviews*.js")):
+        try:
+            if any(r.get("campaign") == cid for r in read_file(f)):
+                files.append(f)
+        except (OSError, ValueError):
+            continue
+    if files:
+        n = import_files(root, files, log=lambda *a: None)
+        if n:
+            log(f"  {n} review(s) from downloaded file(s) merged in: {', '.join(os.path.basename(f) for f in files)}")
 
 
 def serve(root, host="127.0.0.1", port=8765, open_browser=True, log=print):
@@ -241,8 +271,19 @@ def serve(root, host="127.0.0.1", port=8765, open_browser=True, log=print):
     host 127.0.0.1: this computer only; 0.0.0.0: everyone on the network can open the pages and add reviews."""
     import functools
     import http.server
+    import secrets
     import threading
     lock = threading.Lock()
+    token = secrets.token_hex(16)
+
+    def allowed(h):
+        """A request of a campaign page: same origin (the pages served here), or a page opened by double-click
+        (origin 'null') that read this server's token from review_server_info.js in the campaign folder (a page of
+        any other site cannot read that file: it is not served)."""
+        origin = h.headers.get("Origin")
+        if origin == "null" or h.headers.get("X-SW-Token"):
+            return h.headers.get("X-SW-Token") == token
+        return origin is None or origin.split("//")[-1] == h.headers.get("Host")
 
     class Handler(http.server.SimpleHTTPRequestHandler):
         def log_message(self, fmt, *a):                     # quiet: only the saves are printed
@@ -250,7 +291,16 @@ def serve(root, host="127.0.0.1", port=8765, open_browser=True, log=print):
 
         def end_headers(self):
             self.send_header("Cache-Control", "no-store")   # reviews.js and the pages: always the current ones
+            if self.headers.get("Origin") == "null":         # a page opened by double-click (file://)
+                self.send_header("Access-Control-Allow-Origin", "null")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type, X-SW-Reviews, X-SW-Token")
+                self.send_header("Access-Control-Allow-Methods", "GET, POST")
+                self.send_header("Access-Control-Allow-Private-Network", "true")
             super().end_headers()
+
+        def do_OPTIONS(self):                               # the browser's check before a file:// page posts
+            self.send_response(204 if self.path.split("?")[0] == API else 404)
+            self.end_headers()
 
         def _json(self, code, obj):
             body = json.dumps(obj).encode()
@@ -262,15 +312,20 @@ def serve(root, host="127.0.0.1", port=8765, open_browser=True, log=print):
 
         def do_GET(self):
             if self.path.split("?")[0] == API:
+                if not allowed(self):
+                    return self._json(403, dict(error="not from a page of this campaign"))
                 return self._json(200, dict(format=FORMAT, campaign=campaign_id(root), server=True, reviews=load(root)))
+            if os.path.basename(self.path.split("?")[0]) == INFO:   # the token stays in the folder
+                return self._json(404, dict(error="not found"))
             return super().do_GET()
 
         def do_POST(self):
             if self.path.split("?")[0] != API:
                 return self._json(404, dict(error="not found"))
             # only the pages themselves: a custom header and JSON (a page of another site cannot send these here)
-            if self.headers.get("X-SW-Reviews") != "1" or "json" not in (self.headers.get("Content-Type") or ""):
-                return self._json(403, dict(error="not from a superWADERs page"))
+            if (self.headers.get("X-SW-Reviews") != "1" or "json" not in (self.headers.get("Content-Type") or "")
+                    or not allowed(self)):
+                return self._json(403, dict(error="not from a page of this campaign"))
             n = int(self.headers.get("Content-Length") or 0)
             if not 0 < n <= MAX_POST:
                 return self._json(413, dict(error="too large"))
@@ -289,6 +344,7 @@ def serve(root, host="127.0.0.1", port=8765, open_browser=True, log=print):
             return self._json(200, dict(format=FORMAT, campaign=campaign_id(root), server=True, reviews=allr))
 
     write(root, log=log)
+    downloaded(root, log)
     srv = None
     for p in range(port, port + 30):                        # the next free port
         try:
@@ -299,6 +355,10 @@ def serve(root, host="127.0.0.1", port=8765, open_browser=True, log=print):
     if srv is None:
         sys.exit(f"reviews: no free port in {port}..{port + 29}")
     url = f"http://{'localhost' if host in ('127.0.0.1', 'localhost') else host}:{srv.server_address[1]}/index.html"
+    info = os.path.join(root, INFO)
+    with open(info, "w") as fh:
+        fh.write("window.SW_SERVER = " + json.dumps(dict(url=f"http://127.0.0.1:{srv.server_address[1]}/", token=token,
+                                                         campaign=campaign_id(root), started=_now())) + ";\n")
     log(f"review server for {root}\n  open {url}\n  reviews added on the pages are saved into {STORE} at once"
         f"{' (open to everyone on the network)' if host not in ('127.0.0.1', 'localhost') else ''}; Ctrl-C stops it")
     if open_browser:
@@ -307,12 +367,23 @@ def serve(root, host="127.0.0.1", port=8765, open_browser=True, log=print):
             webbrowser.open(url)
         except Exception:
             pass
+    import signal
+
+    def stop(*a):
+        raise KeyboardInterrupt
+    for s in ("SIGTERM", "SIGHUP"):                         # closing the terminal window stops it cleanly too
+        if hasattr(signal, s):
+            signal.signal(getattr(signal, s), stop)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         log("review server stopped")
     finally:
         srv.server_close()
+        try:
+            os.remove(info)
+        except OSError:
+            pass
 
 
 def main(argv=None):

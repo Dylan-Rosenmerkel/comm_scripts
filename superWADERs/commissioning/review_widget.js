@@ -18,7 +18,7 @@ const SWR = (() => {
                    note: ["✎", "na", "note"] };
   const FORMAT = "superWADERs-reviews-1";
   let cfg = { campaign: "", page: "", root: "", onChange: () => {}, same: () => true };   // same(r): r's stamp is comparable here
-  let mode = location.protocol.startsWith("http") ? "probing" : "file", msg = "", busy = false;   // server | folder | file
+  let mode = (location.protocol.startsWith("http") || window.SW_SERVER) ? "probing" : "file", msg = "", busy = false;   // server | folder | file
   let mem = [];
   const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
   const pkey = () => "swreviews:pending:" + (cfg.campaign || "?");
@@ -50,13 +50,20 @@ const SWR = (() => {
     cfg.onChange(); persist();
   }
   // ---- saving: through the review server, or into the remembered campaign folder (Chrome / Edge)
-  const api = () => new URL(cfg.root + "api/reviews", location.href).href;
+  // the review server: this page came from it (http), or it runs for this folder (review_server_info.js, written
+  // while it runs, gives its address and token to pages opened by double-click)
+  const srv = () => (mode !== "file" && location.protocol.startsWith("http")) ? null : window.SW_SERVER || null;
+  const api = () => srv() ? srv().url + "api/reviews" : new URL(cfg.root + "api/reviews", location.href).href;
+  const hdr = () => Object.assign({ "X-SW-Reviews": "1" }, srv() ? { "X-SW-Token": srv().token } : {});
   async function probe() {
     try {
-      const r = await fetch(api(), { cache: "no-store" }); if (!r.ok) throw new Error(r.status);
+      const r = await fetch(api(), { cache: "no-store", headers: srv() ? { "X-SW-Token": srv().token } : {} }); if (!r.ok) throw new Error(r.status);
       const j = await r.json(); if (!j.server) throw new Error("no server");
       window.SW_REVIEWS = j; mode = "server"; prune();
-    } catch (e) { mode = "file"; }
+    } catch (e) {
+      mode = "file";
+      if (window.SW_SERVER && !location.protocol.startsWith("http")) msg = "the review server is not running any more";
+    }
     if (mode === "file" && await folderHandle()) mode = "folder";
     cfg.onChange(); persist();
   }
@@ -65,7 +72,7 @@ const SWR = (() => {
     if (mode === "server") {
       busy = true;
       try {
-        const r = await fetch(api(), { method: "POST", headers: { "Content-Type": "application/json", "X-SW-Reviews": "1" },
+        const r = await fetch(api(), { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, hdr()),
                                        body: JSON.stringify({ reviewer: name(), reviews: p }) });
         if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
         window.SW_REVIEWS = await r.json(); const ids = new Set(p.map(x => x.id)); setPending(pending().filter(x => !ids.has(x.id)));
@@ -107,7 +114,9 @@ const SWR = (() => {
   function form(el, q, target, stamp, choices, values) {
     const rs = all().filter(q);
     const sel = choices && choices.length > 1 ? `<select class="swr-on">${choices.map((c, i) => `<option value="${i}">${esc(c[0])}</option>`).join("")}</select>` : "";
-    el.innerHTML = `<div class="swr-list">${listHTML(rs, stamp)}</div>
+    const warn = rs.some(r => r.unsaved) && mode !== "server" && mode !== "probing"
+      ? `<div class="swr-warnbox"><b>Not saved yet.</b> ${mode === "folder" ? "Click 'Save to campaign folder' at the top of the page." : "Double-click <b>open_campaign</b> in the campaign folder (<code>open_campaign.command</code> on a Mac, <code>open_campaign.bat</code> on Windows), then reload this page: it is saved at once." + (window.showDirectoryPicker ? " Or: 'Save to campaign folder' at the top of the page." : "")}</div>` : "";
+    el.innerHTML = `<div class="swr-list">${listHTML(rs, stamp)}</div>${warn}
       <div class="swr-form noprint"><div class="swr-row"><input class="swr-name" placeholder="your name" value="${esc(name())}">
       <select class="swr-status"><option value="approved">✔ approved</option><option value="concern">▲ concern</option><option value="rejected">✖ rejected</option><option value="note" selected>✎ note</option></select>${sel}</div>
       <textarea class="swr-comment" placeholder="comment (what you checked, what is wrong, what to do)"></textarea>
@@ -177,7 +186,7 @@ const SWR = (() => {
     const n = pending().length, canFolder = !!window.showDirectoryPicker;
     const where = mode === "server" ? `<span class="swr-ok">saved straight into the campaign folder (review server)</span>`
       : mode === "folder" ? `<span class="swr-ok">saved into the campaign folder as you add them</span>`
-      : mode === "probing" ? "" : `<span class="swr-hint">to save reviews automatically, open the pages with <code>python3 review_server.py</code> in the campaign folder${canFolder ? ", or use Save to campaign folder" : ""}</span>`;
+      : mode === "probing" ? "" : `<span class="${n ? "swr-warnbox" : "swr-hint"}">${n ? "<b>Not saved:</b> a page opened as a file cannot save by itself. Double-click" : "To save reviews, double-click"} <b>open_campaign</b> in the campaign folder (<code>open_campaign.command</code> on a Mac, <code>open_campaign.bat</code> on Windows, or run <code>python3 review_server.py</code> there)${n ? ", then reload this page: the reviews marked 'not saved yet' are saved at once" : "; reviews are then saved as you add them"}${canFolder ? ". Or: Save to campaign folder" : ""}.</span>`;
     el.innerHTML = `<span class="swr-bar-t">Reviews: ${all().length} in this campaign${n ? ` · <b class="swr-unsaved">${n} not saved yet</b>` : ""}</span>`
       + (n && mode !== "server" ? (canFolder ? `<button class="swr-save">Save to campaign folder</button>` : "") + `<button class="swr-dl">Download</button>` : "")
       + (n && mode === "server" ? `<button class="swr-retry">Save now</button>` : "")
@@ -200,7 +209,7 @@ const SWR = (() => {
 .swr-form{margin-top:8px}.swr-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:4px 0}.swr-name{flex:1;min-width:110px}
 .swr-comment{width:100%;min-height:60px;font:13px/1.4 inherit;box-sizing:border-box}
 .swr-form input,.swr-form select,.swr-form textarea,.swr-form button,#swrbar button{font:inherit;font-size:13px;padding:4px 7px;border:1px solid var(--line,#ccc);border-radius:6px;background:var(--panel,var(--bg,#fff));color:var(--fg,#111)}
-.swr-form button,#swrbar button{cursor:pointer}#swrbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px;margin:6px 0}.swr-ok{color:var(--pass,#2e9d5b)}.swr-hint{color:var(--muted,#888)}.swr-msgbar{color:var(--muted,#888)}
+.swr-form button,#swrbar button{cursor:pointer}#swrbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px;margin:6px 0}.swr-ok{color:var(--pass,#2e9d5b)}.swr-warnbox{flex-basis:100%;background:var(--warnbg,#fbf0d9);color:var(--fg,#111);border:1px solid var(--warn,#d68a00);border-radius:6px;padding:6px 9px}.swr-hint{color:var(--muted,#888)}.swr-msgbar{color:var(--muted,#888)}
 @media print{.swr-form,.swr-x,#swrbar button{display:none}}`;
     document.head.appendChild(s);
   }

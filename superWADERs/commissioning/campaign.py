@@ -319,7 +319,8 @@ def page_scripts(page, root):
     """Fill the review placeholders of a page template: the campaign's reviews.js and the review widget."""
     with open(REVIEW_JS) as fh:
         widget = fh.read()
-    return page.replace("__REVIEWS_SRC__", html.escape(root + "reviews.js")).replace("__REVIEW_WIDGET__", widget)
+    return (page.replace("__REVIEWS_SRC__", html.escape(root + "reviews.js"))
+            .replace("__REVIEW_SERVER_SRC__", html.escape(root + "review_server_info.js")).replace("__REVIEW_WIDGET__", widget))
 
 
 def write_overview(path, data):

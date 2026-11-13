@@ -328,9 +328,10 @@ campaign (--campaign DIR): give each new packet (or list) with the same --campai
 
 reviews: every page has a review box (overviews: per CCD; module reports: per tab, for the whole module or one
   CCD): a name, a status (approved / concern / rejected / note) and a comment, merged into DIR/reviews.js and shown on every
-  page. To save them straight into the campaign folder, open the pages through the review server:
+  page. To save them straight into the campaign folder, start the review server: double-click open_campaign in the
+  campaign folder (open_campaign.command on a Mac, open_campaign.bat on Windows), or
     python3 ~/comm/LSM2026/review_server.py        (or: run_superWADERs --campaign ~/comm/LSM2026 --serve)
-  then every review is saved the moment it is added (any browser; the server prints the address). On pages opened by
+  then every review is saved the moment it is added, also on pages opened by double-click. Without it, on pages opened by
   double-click: Chrome / Edge 'Save to campaign folder' (asks for the folder once, then saves as you go); other
   browsers 'Download' gives the updated reviews.js: put it into the campaign folder (replace the old one), or merge it
   with  run_superWADERs --campaign ~/comm/LSM2026 --reviews ~/Downloads/reviews.js.
@@ -1379,8 +1380,8 @@ def main(argv=None):
     review_lines = RV.refresh(out, args.reviews, log=run.say)
     summary(run, configs, rows, roots, tool_lines + [""] + review_lines + [""] + run.lines["comm"])
     print(f"\nresults: {out}   (overview: {os.path.join(out, 'index.html')})")
-    print(f"reviews: open the pages with  python3 {os.path.join(out, 'review_server.py')}  (or --serve) to save reviews "
-          f"straight into the campaign folder")
+    print(f"reviews: double-click open_campaign in {out} (or: python3 {os.path.join(out, 'review_server.py')}) to save "
+          f"reviews straight into the campaign folder")
     if args.serve:
         RV.serve(out, port=args.port)
     return 1 if run.failed else 0

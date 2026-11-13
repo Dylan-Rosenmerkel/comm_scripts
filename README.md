@@ -167,7 +167,7 @@ Without an entry the name comes from `--module ACM=NAME`, then the data folder n
 |---|---|---|
 | fits and clusters (chain per CCD) | `run_superWADERs images.txt [--gain-correction] [--composite]` | `index.html`, `images/index.html`, `root/` (+ `root_gaincorr*/`), `summary.txt`, `characterisation/` |
 | add a packet / list to a campaign | any command below with `--campaign DIR` (`--criteria FILE`, `--refresh-all`, `--reprocess`) | the same in `DIR/`, for everything the campaign holds; only new inputs are processed |
-| review the pages, saving as you go | `python3 DIR/review_server.py` (or `run_superWADERs --campaign DIR --serve`) | pages on `http://localhost:8765/`; reviews saved into `DIR/reviews.js` at once |
+| review the pages, saving as you go | double-click `DIR/open_campaign.command` (Mac) / `.bat` (Windows), or `python3 DIR/review_server.py` | pages on `http://localhost:8765/`; reviews saved into `DIR/reviews.js` at once |
 | merge a downloaded reviews.js | `run_superWADERs --campaign DIR --reviews FILE` (no input) | `DIR/reviews.js` (shown on every page), `reviews.csv`, `reviews.txt` |
 | a module measured again (2nd packet, 2nd cooldown) | the command with `--dataset NAME --campaign DIR` | one report and one overview view per data set; the campaign overview uses the newest |
 | L0 traces / PSD traces | `run_superWADERs traces.txt [--l0-no-html]` | `L0/<trace>/`: `overview.png`, `viewer.html`, `summary.json` |
