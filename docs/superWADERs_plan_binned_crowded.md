@@ -44,6 +44,41 @@ Whatever it finds is fixed before the steps below.
 
 ## 1. Binned images (priority)
 
+### 1A. The real use: ultra-low-background runs (2026-11-13, from the group)
+
+Binned images will mostly come from ultra-low-background studies: **dark current 1e-6 to 1e-4 e-/pix**, few events,
+**many images** per setting, **any binning** (no typical one: 10x10, 1x10, 1x100, 100x1, 100x100, ...), and **image
+stitching in both senses**: stacking the images of one setting, and joining consecutive images of a continuous readout.
+The Fe-55 benchmark below (0.5 e-/pix, ~1000 events per CCD) is the opposite regime; it stays as the robustness test of
+step 1.0 (high occupancy), which these runs will rarely need (10x10 at 1e-4 e-/pix is 0.01 e- per bin).
+
+So the binned work is mainly the **Bayesian few-electron regime with bins and pooling**:
+
+1A.1 **Benchmark with truth for this regime** (`wip/binned/bench_lowbg.py`): simulated unbinned frames at 1e-6, 1e-5,
+1e-4 e-/pix and read noise 0.12 e- (L2-like), sparse events (few-electron events 2-10 e- with the DAMIC diffusion law,
+X-rays, muon tracks), persistent hot pixels and a hot column, binned on chip (charge summed, read noise once per bin)
+at 1x1, 10x10, 1x10, 10x1, 1x100, 100x1, 100x100, 20 images per setting written as consecutive frames of a continuous
+readout (events crossing an image boundary are split, with their truth). Measured: efficiency per event type and
+electron number, fakes per image and per Mpix, dark charge (pooled) against the truth, energies; events split at image
+boundaries. First run on the current code (baseline), then after every step.
+
+1A.2 **Bin geometry in the few-electron finder and A_GMX:** an event is point-like in bins (diffusion sigma / b per
+axis, anisotropic for 1x100 / 100x1), the dark charge per bin, block sizes and halo in bins; strips of a few rows or
+columns as 1-D.
+
+1A.3 **Pooling over all images of a setting by default:** the dark charge per CCD, row and column; hot pixels and
+columns (persistent across images, masked); the noise model (asymmetric tails); the false-alarm rate from the
+candidates of all images (the Bayesian finder's run mode, made the default for >= 2 images).
+
+1A.4 **Stitching.** Stacking: the pooling above, and an optional summed image of a setting for faint persistent
+features. Continuous readout: consecutive images joined end to start (by image number and readout times), so an event
+read across a boundary is one cluster, and the edge rows are no longer lost.
+
+1A.5 **Gain:** at these dark currents there is no comb; the gain comes from a calibration image of the same CCD
+(LED / high dark current / unbinned run), stored per CCD and used automatically (today `--gain` / `--gain-file`).
+
+### 1B. High occupancy and the other robustness items (Fe-55 benchmark)
+
 ### What binning does to the data
 
 On-chip binning NPBIN (rows) x NSBIN (columns) sums the charge of b_y x b_x pixels before the readout. Per binned

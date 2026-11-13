@@ -98,7 +98,8 @@ AGMX_REGIME = {"sparse": 0, "crowded": 1, "unmodelled": 2, "serial": 3, "line": 
 AGMX_CLS["few-e"] = 12            # Bayesian few-electron events (agmx_switch; not in agmx_root.CLS_CODES yet)
 AGMX_REGIME["bayes"] = 5
 FINDER = {"threshold": 0, "agmx": 1, "bayes": 2}
-MIN_AGMX_ROWS = 61                # gmx.detection_bg's row window (2 x 30 + 1): smaller images are padded     # clustersRec 'finder'
+MIN_AGMX_ROWS = 0                 # no padding: gmx.detection_bg works on any number of rows (fixed 2026-11-13; the
+                                  # padding broke the Bayesian switch's run-pooled dark-charge map of short images)     # clustersRec 'finder'
 BAYES_DEFAULTS = dict(p_event=1.0, N_post=-999.0, sigma_post=-999.0)   # non-Bayes clusters (threshold, A_GMX)
 NOT_COMPUTED = -999.0
 
