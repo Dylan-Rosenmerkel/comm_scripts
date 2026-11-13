@@ -201,11 +201,12 @@ def write_pdf(series, sums, mods_of, path, limit=None):
             plt.close(fig)
 
 
-def report(records, meta_of, mods_of, out_dir, limit=None, autoconfig_args=(), fit_cards=None):
+def report(records, meta_of, mods_of, out_dir, limit=None, autoconfig_args=(), fit_cards=None, tag=""):
     """--dc-series: csv, PDF and interactive pages. fit_cards: {(image file name, ext number): fit card} already
     made (campaign records); without it the cards are made here (one more fit per image). Returns (summary lines,
-    overview rows: one per CCD with its numbers, flags and page)."""
+    overview rows: one per CCD with its numbers, flags and page). tag: the data set (in the csv / PDF names)."""
     import packet_report as PR
+    sfx = f"_{tag}" if tag else ""
     fits_of = dict(fit_cards or {})  # (image, ext) -> the dark-current fit card (histogram + model, numbers, profiles)
     for path, _ in ([] if fit_cards is not None else records):
         try:
@@ -221,9 +222,10 @@ def report(records, meta_of, mods_of, out_dir, limit=None, autoconfig_args=(), f
     if not series:
         return ["dark-current series: no fitted CCD"], []
     sums = {k: summarise(v, limit) for k, v in series.items()}
-    write_csv(series, mods_of, os.path.join(d, "dc_series.csv"))
-    write_pdf(series, sums, mods_of, os.path.join(d, "dc_report.pdf"), limit)
-    lines = [f"dark-current series (--dc-series; {d}/: dc_report.pdf, dc_series.csv, index.html):"]
+    write_csv(series, mods_of, os.path.join(d, f"dc_series{sfx}.csv"))
+    write_pdf(series, sums, mods_of, os.path.join(d, f"dc_report{sfx}.pdf"), limit)
+    lines = [f"dark-current series{' (data set ' + tag + ')' if tag else ''} (--dc-series; {d}/: dc_report{sfx}.pdf, "
+             f"dc_series{sfx}.csv, index.html):"]
     modules = {}                     # module -> [(acm, ext, ccd, tabs, numbers, flags)]: one page per module
     for (acm, ext), pts in sorted(series.items()):
         s = sums[(acm, ext)]
@@ -345,7 +347,7 @@ def overview(camp, rows, crit, path, back, limit=None):
         r["history"] = dict(head=["image", "start", "DC [e-/pix]", "rate [e-/pix/day]", "row-fit rate", "noise [e-]"],
                             rows=h) if len(h) > 1 else None
     view = dict(name="dark-current series", ccds=rows)
-    CA.write_overview(path, dict(
+    views_out = CA.write_overview(path, dict(
         title="Dark current over the series", sub=CA.sub_line(camp), back=back, criteria=sec,
         fields={k: dict(label=a, unit=b) for k, (a, b) in FIELDS.items()},
         sections=[["Dark current", ["best_rate", "rate_median", "rate_last", "plateau", "tau_h", "row_intercept_median"]],
@@ -359,4 +361,4 @@ def overview(camp, rows, crit, path, back, limit=None):
                      ("module page", "Rates, every image's fit, the dark charge per row, all numbers and the method "
                                      "(dc_series/<module>_..._dc.html); dc_report.pdf and dc_series.csv hold the same.")],
         flag_labels={"falling": "still falling", "over_limit": "above --dc-limit"}, csv_name="dc_series_overview"))
-    return view
+    return views_out

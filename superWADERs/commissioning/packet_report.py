@@ -545,7 +545,7 @@ def overview(camp, rows, crit, path, back, expect_resolved=True):
         files = r.pop("files", [])
         r["history"] = dict(head=["file"], rows=[[f] for f in files]) if files else None
     view = dict(name="commissioning packets", ccds=rows)
-    CA.write_overview(path, dict(
+    views_out = CA.write_overview(path, dict(
         title="Commissioning packets", sub=CA.sub_line(camp), back=back, criteria=sec,
         fields={k: dict(label=a, unit=b) for k, (a, b) in FIELDS.items()},
         sections=[["Noise", ["read_noise_e", "noise_single_adu", "psd_sigma_adu", "psd_sigma_cds_adu"]],
@@ -563,7 +563,7 @@ def overview(camp, rows, crit, path, back, expect_resolved=True):
                                      "(packet/<module>_ACM<id>.html). History in the panel: the files of the CCD.")],
         flag_labels={"trace": "trace quality problem", "trace_sums": "inline vs raw window sums differ",
                      "channel": "no charge seen", "unresolved": "peaks not resolved"}, csv_name="packet_overview"))
-    return view
+    return views_out
 
 
 def module_page(module, items):
@@ -597,6 +597,9 @@ def write_page(path, rid, title, ident, tabs, ccds=None, back=None, tool="packet
     (default: a hash of the tabs' data), kept with a review to mark it 'data changed since' on a newer page.
     Returns the file size."""
     import campaign as CA
+    module, dataset = CA.split_module(module) if module else (module, "")
+    if dataset:                                # a module's data set (--dataset): "<module> [<data set>]" in the title
+        title = title.replace(f"{module}{CA.DS_SEP}{dataset}", f"{module} [data set {dataset}]")
     if stamp is None:                       # before the flags: new criteria do not make the reviews' data look changed
         stamp = hashlib.sha1(json.dumps(tabs, sort_keys=True, default=str).encode()).hexdigest()[:12]
     def nums_of(d):
@@ -614,7 +617,7 @@ def write_page(path, rid, title, ident, tabs, ccds=None, back=None, tool="packet
     for c in ccds or []:
         c["flagged"] = [tb["label"] for tb in tabs if c["key"] in tb.get("flagged_ccds", [])]
     page = dict(report_id=rid, title=title, ident=ident, tabs=tabs, ccds=ccds, back=back,
-                review=CA.review_context(path, tool, module=module, stamp=stamp))
+                review=CA.review_context(path, tool, module=module, dataset=dataset or None, stamp=stamp))
     body = json.dumps(page, separators=(",", ":")).replace("</", "<\\/")
     body = re.sub(r"(?<=[:,\[])(-?Infinity|NaN)(?=[,\]}])", "null", body)     # JSON has no NaN
     with open(os.path.join(HERE, "packet_report_template.html")) as fh:

@@ -109,7 +109,8 @@ class Campaign:
     def has(self, path, tool):
         return self.current(path) and tool in self.entry(path).get("tools", [])
 
-    def add(self, path, tool, kind=None, stem=None):
+    def add(self, path, tool, kind=None, stem=None, dataset=None):
+        """dataset: the data set of this input for this tool (--dataset; None keeps the one it had, "" = default)."""
         p = os.path.abspath(path)
         e = self.data["inputs"].get(p)
         if e is None or e.get("key") != self.stat_key(p):
@@ -120,9 +121,31 @@ class Campaign:
             e["kind"] = kind
         if stem:
             e["stem"] = stem
+        if dataset is not None:
+            if dataset:
+                e.setdefault("datasets", {})[tool] = dataset
+            else:
+                e.get("datasets", {}).pop(tool, None)
 
     def inputs(self, tool):
         return [p for p, e in sorted(self.data["inputs"].items()) if tool in e.get("tools", [])]
+
+    def dataset(self, path, tool):
+        return ((self.entry(path) or {}).get("datasets") or {}).get(tool, "")
+
+    def dataset_of_stem(self, tool):
+        """{stem: data set} of the tool's image inputs."""
+        return {e["stem"]: (e.get("datasets") or {}).get(tool, "") for e in self.data["inputs"].values()
+                if tool in e.get("tools", []) and e.get("stem")}
+
+    def dataset_order(self, tool):
+        """The tool's data sets, newest first (by when their first input came in)."""
+        first = {}
+        for e in self.data["inputs"].values():
+            if tool in e.get("tools", []):
+                ds = (e.get("datasets") or {}).get(tool, "")
+                first[ds] = min(first.get(ds, e.get("added", "")), e.get("added", ""))
+        return sorted(first, key=lambda d: first[d], reverse=True)
 
     def stems(self, tool):
         return [e["stem"] for p, e in sorted(self.data["inputs"].items()) if tool in e.get("tools", []) and e.get("stem")]
@@ -242,6 +265,46 @@ SHORT = {"read_noise_e": "noise", "gain": "gain", "dc_rate_e_per_pix_day": "DC",
          "dc_rate_median": "DC rate"}
 
 
+# =============================================================================
+# data sets: several entries of the same module for one tool (two packets, two dark-current runs, ...)
+# =============================================================================
+DS_SEP = "@"                     # a module of a data set is rendered as "<module>@<data set>" (pages: DM01@packet2_...)
+
+
+def dataset_name(name):
+    return re.sub(r"[^\w.+-]+", "-", str(name or "")).strip("-")
+
+
+def ds_module(module, ds):
+    return f"{module}{DS_SEP}{ds}" if ds else module
+
+
+def split_module(module):
+    m, _, ds = str(module).rpartition(DS_SEP) if DS_SEP in str(module) else (module, "", "")
+    return m, ds
+
+
+def split_datasets(views, order):
+    """A tool's views with the data sets apart: rows of '<module>@<data set>' go to a view of their data set (newest
+    data set first, as order), the module name without the data set; a view of a data set has dataset=<name> ("" for
+    the data without --dataset). Without data sets the views are unchanged."""
+    if not any(DS_SEP in str(r.get("module", "")) for v in views for r in v["ccds"]):
+        return views
+    out = []
+    for ds in order:
+        for v in views:
+            rs = []
+            for r in v["ccds"]:
+                m, d = split_module(r["module"])
+                if d == ds:
+                    rs.append(dict(r, module=m, dataset=ds))
+            if rs:
+                name = ds or "without data set"
+                out.append(dict(v, name=f"{name} · {v['name']}" if len(views) > 1 else name, ccds=rs, dataset=ds,
+                                note=f"data set {ds}" if ds else "inputs given without --dataset"))
+    return out
+
+
 def review_context(path, tool, **extra):
     """What a page needs for its reviews: the tool, the campaign id and the relative path from the page to the
     campaign folder (where reviews.js is)."""
@@ -264,9 +327,11 @@ def write_overview(path, data):
     fields {key: {label, unit}}, sections [[name, [keys]]], cell [keys], views [{name, note, ccds: [row]}],
     columns [keys], definitions [[term, text]], matrices / matrix_title / matrix_note (optional), tools (campaign
     index), flag_labels, csv_name. row: module, acm, ext, ccd, verdict, status, reasons, levels, values, links,
-    history {head, rows}, when, tools (campaign index)."""
+    history {head, rows}, when, tools (campaign index). Returns the views as written (data sets apart)."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     data["review"] = review_context(path, (data.get("review") or {}).get("tool", "campaign"))
+    if ACTIVE is not None and data["review"]["tool"] != "campaign":      # several data sets: one view each
+        data["views"] = split_datasets(data.get("views") or [], ACTIVE.dataset_order(data["review"]["tool"]))
     for k, f in (data.get("fields") or {}).items():
         f.setdefault("short", SHORT.get(k.split(".")[-1], f.get("label", k)))
     body = json.dumps(jsonable(data), separators=(",", ":")).replace("</", "<\\/")
@@ -274,7 +339,7 @@ def write_overview(path, data):
         page = fh.read()
     page = page_scripts(page, data["review"]["root"])
     _atomic_write(path, page.replace("__TITLE__", html.escape(data.get("title", "overview"))).replace("__DATA__", body))
-    return path
+    return data["views"]
 
 
 def sub_line(camp, extra=""):
@@ -581,6 +646,10 @@ def campaign_index(camp, tool_views, path, crit):
                     if [name, h_] not in t["reports"]:
                         t["reports"].append([name, h_])
                 rank = {"fail": 3, "warn": 2, "pass": 1, "na": 0}
+                if "dataset" in v:                     # data sets: the newest one with the CCD gives the verdict
+                    if t.setdefault("dataset", v["dataset"]) != v["dataset"]:
+                        continue
+                    t["note"] = f"data set {v['dataset'] or '(none)'}; older: see the tool's overview"
                 if rank[r["verdict"]] > rank[t["verdict"]]:
                     t["verdict"] = r["verdict"]
                 for rr in r.get("reasons", []):

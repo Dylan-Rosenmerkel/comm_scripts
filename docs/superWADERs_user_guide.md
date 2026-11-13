@@ -150,7 +150,12 @@ Details, the verdicts and the criteria file are in [superWADERs/README.md](../su
 run_superWADERs packet_DM01.txt --packet --campaign ~/comm/LSM2026 --module-list modules.csv
 run_superWADERs packet_DM02.txt --packet --campaign ~/comm/LSM2026 --module-list modules.csv
 run_superWADERs series.txt --dc-series --campaign ~/comm/LSM2026
+run_superWADERs packet_DM01_retest.txt --packet --dataset retest --campaign ~/comm/LSM2026   # DM01 measured again
 ```
+
+**Several data sets per module** (`--dataset NAME`: a second packet, a second cooldown's dark-current run, ...): each
+data set gets its own report and its own view in the tool's overview (newest first); the campaign overview shows the
+newest one per CCD and links to all of them.
 
 Every tool (images, packet, dark current, defect maps, SR) has an overview page, `<tool>/index.html`:
 - a module × CCD grid with pass / warn / fail verdicts from the criteria file (`criteria.json`; the default limits
@@ -164,10 +169,11 @@ dark current (latest image), the dark-current rate of the series (plateau, else 
 dark-current rate, plus each CCD's review status.
 
 **Reviews.** Every overview (per CCD) and every module report (per tab, for the whole module or one CCD) has a review
-box: your name, a status (approved / concern / rejected / note) and a comment. A new review stays in the browser
-until it is saved: **Save to campaign folder** (Chrome, Edge) or **Download** (any browser), then
-`run_superWADERs --campaign DIR --reviews FILE` (no input; or put the file into `DIR/reviews/` and run
-`run_superWADERs --campaign DIR`). Saved reviews show on every page of the campaign and are listed in
+box: your name, a status (approved / concern / rejected / note) and a comment. Open the pages with
+`python3 DIR/review_server.py` (written into every campaign folder; or `run_superWADERs --campaign DIR --serve`) and
+every review is saved into `DIR/reviews/` the moment it is added, in any browser. On double-clicked pages: Chrome /
+Edge **Save to campaign folder** (asks for the folder once, then saves as you go); other browsers **Download**, then
+`run_superWADERs --campaign DIR --reviews FILE` (no input). Saved reviews show on every page of the campaign and are listed in
 `DIR/reviews.csv` and `DIR/reviews.txt`. A review keeps the data and numbers it was written on; when newer data
 arrive it is marked "data changed since". Details: [superWADERs/README.md](../superWADERs/README.md), "Reviews".
 

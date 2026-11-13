@@ -94,11 +94,12 @@ def run(images, summaries, out_dir, mods_of, meta_of, thr_sigma=4.0, min_len=3, 
     return render(per_ccd, out_dir, mods_of, thr_sigma, min_len)[0]
 
 
-def render(per_ccd, out_dir, mods_of, thr_sigma=4.0, min_len=3):
+def render(per_ccd, out_dir, mods_of, thr_sigma=4.0, min_len=3, tag=""):
     """sr/: sr_streaks.csv, sr_summary.csv, a PNG and a page per module, from the image parts of every CCD
     (per_ccd: {(acm, ext number, ccd name): [image_part items in time order]}). Returns (summary lines, overview
-    rows: one per CCD with its numbers and its page)."""
+    rows: one per CCD with its numbers and its page). tag: the data set (in the csv names)."""
     import csv
+    sfx = f"_{tag}" if tag else ""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -115,11 +116,11 @@ def render(per_ccd, out_dir, mods_of, thr_sigma=4.0, min_len=3):
             sum_csv.append([mods_of(acm, n, ccd), acm, n, ccd, it["image"], it["rows"], len(st),
                             f"{1000 * len(st) / max(it['rows'], 1):.3g}", f"{np.median([r[3] for r in st]) if st else 0:.3g}",
                             f"{it['dc']:.4g}", f"{it['thr']:.3g} {it['unit']}"])
-    with open(os.path.join(d, "sr_streaks.csv"), "w", newline="") as fh:
+    with open(os.path.join(d, f"sr_streaks{sfx}.csv"), "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["module", "acm", "ext", "ccd", "image", "read_row", "col_first", "col_last", "length", "sum", "peak", "unit"])
         w.writerows(rows_csv)
-    with open(os.path.join(d, "sr_summary.csv"), "w", newline="") as fh:
+    with open(os.path.join(d, f"sr_summary{sfx}.csv"), "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["module", "acm", "ext", "ccd", "image", "reads", "streaks", "streaks_per_1000_reads", "median_length",
                     "dc_fit_e_per_pix", "threshold"])
@@ -250,7 +251,7 @@ def overview(camp, rows, crit, path, back):
         r["history"] = dict(head=["image", "reads", "streaks", "per 1000 reads", "noise [e-]", "DC [e-/pix]"],
                             rows=r.pop("history")) if isinstance(r.get("history"), list) and len(r["history"]) > 1 else None
     view = dict(name="serial-register images", ccds=rows)
-    CA.write_overview(path, dict(
+    views_out = CA.write_overview(path, dict(
         title="Serial-register images", sub=CA.sub_line(camp), back=back, criteria=sec,
         fields={k: dict(label=a, unit=b) for k, (a, b) in FIELDS.items()},
         sections=[["Streaks", ["streaks", "streaks_per_1000_reads", "median_length", "reads", "images"]],
@@ -264,4 +265,4 @@ def overview(camp, rows, crit, path, back):
                      ("module page", "Per module: diagnostics per image, the dark-current fits and every image with its "
                                      "streaks marked (sr/<module>_..._sr.html).")],
         csv_name="sr_overview"))
-    return view
+    return views_out

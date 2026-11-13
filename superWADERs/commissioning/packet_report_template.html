@@ -445,15 +445,15 @@ function drawReviews() {
   const mine = SWR.all().filter(onModule);
   document.querySelector("#modrev summary").innerHTML = `Reviews of ${RV.module ? "module " + RV.module : "this report"}: ${mine.length}`
     + (mine.length ? " " + SWR.badge(mine, null) : "") + ` <span style="color:var(--muted)">(from every page of the campaign; click to see them or to review the whole report)</span>`;
-  SWR.form(document.getElementById("modrevbody"), onModule, { tool: RV.tool, module: RV.module || null, page: D.report_id }, RV.stamp, reviewChoices());
+  SWR.form(document.getElementById("modrevbody"), onModule, { tool: RV.tool, module: RV.module || null, dataset: RV.dataset || null, page: D.report_id }, RV.stamp, reviewChoices());
   REVIEW_BOXES.forEach(f => f());
 }
 function commentBox(parent, key, label) {
   const box = el("div", "comment"); box.appendChild(el("h3", "", label || "Reviews")); const body = el("div"); box.appendChild(body); parent.appendChild(box);
   const q = r => { const x = r.target || {}; return onModule(r) && x.page === D.report_id && x.tab === key; };
-  REVIEW_BOXES.push(() => SWR.form(body, q, { tool: RV.tool, module: RV.module || null, page: D.report_id, tab: key }, RV.stamp, reviewChoices()));
+  REVIEW_BOXES.push(() => SWR.form(body, q, { tool: RV.tool, module: RV.module || null, dataset: RV.dataset || null, page: D.report_id, tab: key }, RV.stamp, reviewChoices()));
 }
-SWR.init({ campaign: RV.campaign || "", page: D.title, same: r => (r.target || {}).page === D.report_id, onChange: drawReviews });
+SWR.init({ campaign: RV.campaign || "", root: RV.root || "", page: D.title, same: r => (r.target || {}).page === D.report_id, onChange: drawReviews });
 
 // The CCDs of the module (D.ccds): every tab with tb.per = {ccd key: data} shows the ticked CCDs
 const CCDS = D.ccds && D.ccds.length ? D.ccds : null;

@@ -167,7 +167,9 @@ Without an entry the name comes from `--module ACM=NAME`, then the data folder n
 |---|---|---|
 | fits and clusters (chain per CCD) | `run_superWADERs images.txt [--gain-correction] [--composite]` | `index.html`, `images/index.html`, `root/` (+ `root_gaincorr*/`), `summary.txt`, `characterisation/` |
 | add a packet / list to a campaign | any command below with `--campaign DIR` (`--criteria FILE`, `--refresh-all`, `--reprocess`) | the same in `DIR/`, for everything the campaign holds; only new inputs are processed |
-| take in reviews written on the pages | `run_superWADERs --campaign DIR [--reviews FILE ...]` (no input) | `DIR/reviews.js` (shown on every page), `reviews.csv`, `reviews.txt` |
+| review the pages, saving as you go | `python3 DIR/review_server.py` (or `run_superWADERs --campaign DIR --serve`) | pages on `http://localhost:8765/`; reviews saved into `DIR/reviews/` at once |
+| take in downloaded reviews | `run_superWADERs --campaign DIR [--reviews FILE ...]` (no input) | `DIR/reviews.js` (shown on every page), `reviews.csv`, `reviews.txt` |
+| a module measured again (2nd packet, 2nd cooldown) | the command with `--dataset NAME --campaign DIR` | one report and one overview view per data set; the campaign overview uses the newest |
 | L0 traces / PSD traces | `run_superWADERs traces.txt [--l0-no-html]` | `L0/<trace>/`: `overview.png`, `viewer.html`, `summary.json` |
 | L1 images at several skip counts | `run_superWADERs l1.txt --l1-skips 1,10,100,1000 [--l1-skip-first K]` | `L1/`: one FITS per N (all through the pipeline), `noise_vs_skips.csv/.png`, `compare/`, `<image>_diagnostics/` |
 | commissioning packet | `run_superWADERs packet.txt --packet --module-list modules.csv` | `packet/index.html` + one page per module |

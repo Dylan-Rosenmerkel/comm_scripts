@@ -69,10 +69,12 @@ let V=0;const views=D.views||[];const rows=()=>(views[V]||{ccds:[]}).ccds;
 // ---- reviews (review_widget.js): which reviews belong to a CCD on this page, and what a new one is about
 const RV=D.review||{tool:"campaign"};let SEL=null;
 // a review belongs to a CCD by module name, or by ACM (module names can come later, from a module list) and EXT
-const rq=c=>r=>{const t=r.target||{};return (t.module===c.module||(t.acm!=null&&c.acm!=null&&String(t.acm)===String(c.acm)))&&(t.ext===c.ext||!t.ext)&&(RV.tool==="campaign"||t.tool===RV.tool||t.tool==="campaign");};
+const rq=c=>r=>{const t=r.target||{};return (t.module===c.module||(t.acm!=null&&c.acm!=null&&String(t.acm)===String(c.acm)))&&(t.ext===c.ext||!t.ext)&&(RV.tool==="campaign"||t.tool===RV.tool||t.tool==="campaign")&&dsOK(t);};
+// with data sets (views of one tool), a review of one data set shows in that data set's view only
+const dsOK=t=>{const d=(views[V]||{}).dataset;return t.dataset==null||d==null||t.dataset===d;};
 const revs=c=>SWR.all().filter(rq(c));
-const rtarget=c=>({tool:RV.tool,module:c.module,acm:c.acm==null?null:c.acm,ext:c.ext,ccd:c.ccd||null,view:views.length>1?(views[V]||{}).name:null});
-SWR.init({campaign:RV.campaign||"",page:D.title,same:r=>{const t=r.target||{};return !t.page&&(t.tool||"campaign")===RV.tool;},onChange:()=>{kpis();drawGrid();table();SWR.bar($("#swrbar"));if(SEL)show(SEL,true);}});
+const rtarget=c=>({tool:RV.tool,module:c.module,acm:c.acm==null?null:c.acm,ext:c.ext,ccd:c.ccd||null,view:views.length>1?(views[V]||{}).name:null,dataset:(views[V]||{}).dataset==null?null:(views[V]||{}).dataset});
+SWR.init({campaign:RV.campaign||"",root:RV.root||"",page:D.title,same:r=>{const t=r.target||{};return !t.page&&(t.tool||"campaign")===RV.tool;},onChange:()=>{kpis();drawGrid();table();SWR.bar($("#swrbar"));if(SEL)show(SEL,true);}});
 document.title=D.title;$("#title").textContent=D.title;$("#sub").textContent=D.sub||"";
 $("#crumbs").innerHTML=(D.back||[]).map(([l,h])=>`<a href="${h}">${l}</a>`).join("");
 if(location.protocol!=="file:"&&location.protocol!=="http:"&&location.protocol!=="https:")$("#sub").textContent+=" · opened outside its folder: links to the other pages will not open";

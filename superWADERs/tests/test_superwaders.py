@@ -181,6 +181,35 @@ class Campaign(unittest.TestCase):
                 self.assertEqual((ctx["root"], ctx["campaign"]), (root, c.data["id"]))
 
 
+    def test_datasets(self):
+        """--dataset: rows of <module>@<data set> go to their data set's view, newest first."""
+        CA = self.CA
+        with tempfile.TemporaryDirectory() as d:
+            c = CA.Campaign(os.path.join(d, "camp"))
+            for name, ds, added in (("a.fits", "", "2026-01-01"), ("b.fits", "retest", "2026-02-01")):
+                f = os.path.join(d, name)
+                open(f, "w").write(name)
+                c.add(f, "packet", kind="image", stem=name[:-5], dataset=ds)
+                c.entry(f)["added"] = added
+            self.assertEqual(c.dataset_order("packet"), ["retest", ""])
+            self.assertEqual(c.dataset_of_stem("packet"), {"a": "", "b": "retest"})
+            c.add(os.path.join(d, "b.fits"), "packet")              # no --dataset: keeps its data set
+            self.assertEqual(c.dataset(os.path.join(d, "b.fits"), "packet"), "retest")
+            self.assertEqual(CA.split_module(CA.ds_module("DM01", "retest")), ("DM01", "retest"))
+            self.assertEqual(CA.dataset_name("cool down #2"), "cool-down-2")
+            rows = [dict(module="DM01", ext="EXT1"), dict(module="DM01@retest", ext="EXT1")]
+            v = CA.split_datasets([dict(name="packet", ccds=rows)], c.dataset_order("packet"))
+            self.assertEqual([(x["name"], x["dataset"], x["ccds"][0]["module"]) for x in v],
+                             [("retest", "retest", "DM01"), ("without data set", "", "DM01")])
+            plain = [dict(name="packet", ccds=rows[:1])]
+            self.assertIs(CA.split_datasets(plain, ["retest", ""]), plain)
+            # the campaign index: the newest data set gives the CCD's verdict
+            v[0]["ccds"][0].update(verdict="pass", reasons=[])
+            v[1]["ccds"][0].update(verdict="fail", reasons=[["fail", "noise", "old noise", "noise"]])
+            idx = CA.campaign_index(c, {"packet": ("packet/index.html", v)}, os.path.join(c.root, "index.html"), {})
+            self.assertEqual(idx[0]["verdict"], "pass")
+
+
 class Reviews(unittest.TestCase):
     """commissioning/reviews.py: merge, import, the files the pages read; run_superWADERs --campaign DIR (no INPUT)."""
 
@@ -237,9 +266,56 @@ class Reviews(unittest.TestCase):
             r = subprocess.run([sys.executable, CMD, "--campaign", root], capture_output=True, text=True)   # no INPUT
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertIn("1 rejected", r.stdout)
+            self.assertTrue(os.path.exists(os.path.join(root, "review_server.py")))   # travels with the folder
             r = subprocess.run([sys.executable, CMD, "--campaign", os.path.join(d, "nothing")], capture_output=True, text=True)
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("not a campaign folder", r.stderr)
+
+
+class ReviewServer(unittest.TestCase):
+    """review_server.py: pages served, reviews posted by a page saved at once; other sites refused."""
+
+    def test_post(self):
+        import socket
+        import time
+        import urllib.request
+        with tempfile.TemporaryDirectory() as d:
+            root = os.path.join(d, "camp")
+            os.makedirs(root)
+            json.dump(dict(id="camp@x", inputs={}, runs=[]), open(os.path.join(root, "campaign.json"), "w"))
+            open(os.path.join(root, "index.html"), "w").write("<html>ok</html>")
+            s = socket.socket()
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+            s.close()
+            pr = subprocess.Popen([sys.executable, os.path.join(SW, "commissioning", "reviews.py"), root, "--serve",
+                                   "--port", str(port), "--no-browser"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                url = f"http://127.0.0.1:{port}"
+                for _ in range(50):
+                    try:
+                        urllib.request.urlopen(url + "/index.html")
+                        break
+                    except OSError:
+                        time.sleep(0.1)
+                self.assertIn(b"ok", urllib.request.urlopen(url + "/index.html").read())
+                rev = dict(id="r1", campaign="camp@x", created="t", updated="t", reviewer="Ana", status="approved",
+                           comment="fine", target=dict(tool="campaign", module="DM01", ext="EXT1"))
+                body = json.dumps(dict(reviewer="Ana", reviews=[rev])).encode()
+                bad = urllib.request.Request(url + "/api/reviews", data=body, headers={"Content-Type": "text/plain"})
+                with self.assertRaises(urllib.error.HTTPError):          # not from a page (no header): refused
+                    urllib.request.urlopen(bad)
+                ok = urllib.request.Request(url + "/api/reviews", data=body,
+                                            headers={"Content-Type": "application/json", "X-SW-Reviews": "1"})
+                j = json.loads(urllib.request.urlopen(ok).read())
+                self.assertEqual([r["id"] for r in j["reviews"]], ["r1"])
+                self.assertEqual(len(os.listdir(os.path.join(root, "reviews"))), 1)
+                self.assertIn('"r1"', open(os.path.join(root, "reviews.js")).read())
+                j = json.loads(urllib.request.urlopen(url + "/api/reviews").read())
+                self.assertTrue(j["server"])
+            finally:
+                pr.terminate()
+                pr.communicate(timeout=10)
 
 
 if __name__ == "__main__":

@@ -465,7 +465,7 @@ def overview(camp, crit, path, back):
                 values=v, when=g.get("made", ""), links=[["defect map", g["page"]]],
                 stamp=f"{g['name']}: {len(g['images'])} image(s), last {max(g['images'], default='')}"))
     out = [dict(name=k, ccds=v, note=f"images of {k}") for k, v in sorted(views.items())]
-    CA.write_overview(path, dict(
+    views_out = CA.write_overview(path, dict(
         title="Defect maps", sub=CA.sub_line(camp), back=back, criteria=sec,
         fields={k: dict(label=a, unit=b) for k, (a, b) in FIELDS.items()},
         sections=[["Defects", ["bright_columns", "dark_columns", "hot_pixels", "cold_pixels"]],
@@ -480,4 +480,4 @@ def overview(camp, crit, path, back):
                      ("defect map", "The composite with the defects marked, the defect list, Image_4's figure and log "
                                     "(defects/<group>/defect_map.html); defects.csv per group.")],
         flag_labels={"not_identifiable": "hot pixels not identifiable"}, csv_name="defects_overview"))
-    return out
+    return views_out

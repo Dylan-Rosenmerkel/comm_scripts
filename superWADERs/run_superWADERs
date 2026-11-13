@@ -6,6 +6,7 @@ is in this folder (engine/, clustering/, commissioning/).
     run_superWADERs INPUT [-o PARENT] [-j N] [options]      INPUT: an image, a raw DAQ file, or a .txt list of them
     run_superWADERs INPUT --campaign DIR [options]          add INPUT to the campaign DIR (data arriving in packets)
     run_superWADERs --campaign DIR [--reviews FILE ...]     no INPUT: take in the reviews written on the pages
+    run_superWADERs --campaign DIR --serve                  the pages through the review server (reviews saved at once)
     run_superWADERs -h            the flags;      run_superWADERs -h -v      the full guide
 
 Every run is a campaign (commissioning/campaign.py): a new folder (superWADERs_<run name>/), or with --campaign DIR a
@@ -326,12 +327,21 @@ campaign (--campaign DIR): give each new packet (or list) with the same --campai
   (few-electron finder), --gain-correction curves and --composite use the images of the current run only.
 
 reviews: every page has a review box (overviews: per CCD; module reports: per tab, for the whole module or one
-  CCD): a name, a status (approved / concern / rejected / note) and a comment. A new review stays in the browser until
-  'Save to campaign folder' (Chrome / Edge) or 'Download' (any browser: put the file into DIR/reviews/, or give it
-  with --reviews FILE). Then
-    run_superWADERs --campaign ~/comm/LSM2026 [--reviews ~/Downloads/reviews_*.json]
-  (no INPUT, seconds) rebuilds reviews.js, so every page shows them, reviews.csv and reviews.txt. A review records the
-  data it was about: when newer data arrive the pages mark it 'data changed since'.
+  CCD): a name, a status (approved / concern / rejected / note) and a comment, saved in DIR/reviews/ and shown on every
+  page. To save them straight into the campaign folder, open the pages through the review server:
+    python3 ~/comm/LSM2026/review_server.py        (or: run_superWADERs --campaign ~/comm/LSM2026 --serve)
+  then every review is saved the moment it is added (any browser; the server prints the address). On pages opened by
+  double-click: Chrome / Edge 'Save to campaign folder' (asks for the folder once, then saves as you go); other
+  browsers 'Download', then  run_superWADERs --campaign ~/comm/LSM2026 --reviews ~/Downloads/reviews_*.json.
+  A review records the data it was about: when newer data arrive the pages mark it 'data changed since'.
+
+data sets (--dataset NAME): a module measured more than once (a second packet after a repair, a second cooldown's
+  dark-current run, ...): give each its name, e.g.
+    run_superWADERs packet_DM01_retest.txt --packet --dataset retest --campaign ~/comm/LSM2026
+    run_superWADERs cooldown2.txt --dc-series --dataset cooldown2 --campaign ~/comm/LSM2026
+  Each data set of a module gets its own report (<module>@<data set>_...html) and its own view in the tool's overview
+  (newest first); the campaign overview shows the newest data set of every CCD and links to all of them. Inputs
+  without --dataset form the default data set (and keep the data set they were given before).
 
 module names (--module-list FILE): one line per ACM (or per CCD), comma / tab / space separated:
   # ACM, module[, EXT<n> or CCD name]
@@ -366,6 +376,15 @@ def build_parser(full=False):
                         "(criteria.json) and used for every page; a new file re-judges everything without new fits")
     g.add_argument("--reprocess", action="store_true",
                    help="process the inputs again even if the campaign already has them")
+    g.add_argument("--dataset", metavar="NAME", default=None,
+                   help="the data set these inputs belong to (e.g. packet2, cooldown2): a module with several data sets "
+                        "gets one report per data set and one overview view each (newest first; the campaign overview "
+                        "uses the newest). Without it, inputs join the data set they had, or the default one")
+    g.add_argument("--serve", action="store_true",
+                   help="then open the campaign's pages through its review server (http://localhost:<port>/): reviews "
+                        "added on the pages are saved into DIR/reviews/ at once, in any browser. Ctrl-C stops it. Also "
+                        "without INPUT; or run  python3 DIR/review_server.py")
+    g.add_argument("--port", type=int, default=8765, help="first port the review server tries (default 8765)")
     g.add_argument("--reviews", metavar="FILE", nargs="+", default=[],
                    help="review files downloaded from the pages: copied into DIR/reviews/ (also without INPUT)")
     g.add_argument("--refresh-all", action="store_true",
@@ -462,6 +481,7 @@ class Run:
     lines: dict = field(default_factory=lambda: {k: [] for k in ("raw", "front", "gc", "comp", "comm")})
     failed: list = field(default_factory=list)
     camp: object = None
+    dataset: object = None                 # --dataset (None: inputs keep the data set they had)
 
     def stamp(self):
         return f"[{time.time() - self.t0:5.0f}s]"
@@ -481,6 +501,8 @@ def reviews_only(args):
     print(f"{PROG}: reviews of {out}")
     print("\n".join(RV.refresh(out, args.reviews)))
     print(f"\nevery page of the campaign shows them (reload an open page); table: {os.path.join(out, 'reviews.csv')}")
+    if args.serve:
+        RV.serve(out, port=args.port)
     return 0
 
 
@@ -597,7 +619,7 @@ def packet_traces(run, paths):
                 continue
             run.say(f"{kind} {os.path.basename(p)}")
             run.camp.save_record("packet", os.path.basename(p), PR.file_items(p, kind))
-            run.camp.add(p, "packet", kind=kind)
+            run.camp.add(p, "packet", kind=kind, dataset=run.dataset)
     return cls
 
 
@@ -1146,21 +1168,28 @@ def render_all(run, crit, mods_of, fresh, scope, refresh=False):
         return CA.images_overview(camp, list(cores.values()), crit, mods_of, os.path.join(out, "images", "index.html"),
                                   back("images"))
 
+    def per_dataset(tool):                       # the module names of a data set: <module>@<data set>
+        return lambda ds: (mods_of if not ds else (lambda *a, **k: CA.ds_module(mods_of(*a, **k), ds)))
+
     def packet():
         import packet_report as PR
-        items = []
+        items, ds_stem = {}, camp.dataset_of_stem("packet")
         for p in camp.inputs("packet"):
             if (camp.entry(p) or {}).get("kind") in ("trace", "psd"):
-                items += camp.load_record("packet", os.path.basename(p)) or []
+                items.setdefault(camp.dataset(p, "packet"), []).extend(camp.load_record("packet", os.path.basename(p)) or [])
         for s_ in sorted(by_tool["packet"]):
             c, part = cores.get(s_), camp.load_record("images_packet", s_)
             if c and part:
-                items += PR.image_items(c["path"], c["meta"], {int(n): tuple(v) for n, v in part.items()},
-                                        {int(n): v for n, v in (c.get("packet_numbers") or {}).items()}, c.get("char"))
-        run.say(f"packet pages ({len(items)} item(s))")
-        lines, prow = PR.render(items, out, mods_of)
-        run.lines["comm"] += lines + [""]
-        return [PR.overview(camp, prow, crit, os.path.join(out, "packet", "index.html"), back("packet"))]
+                items.setdefault(ds_stem.get(s_, ""), []).extend(PR.image_items(
+                    c["path"], c["meta"], {int(n): tuple(v) for n, v in part.items()},
+                    {int(n): v for n, v in (c.get("packet_numbers") or {}).items()}, c.get("char")))
+        prow = []
+        for ds, its in sorted(items.items()):
+            run.say(f"packet pages ({len(its)} item(s){', data set ' + ds if ds else ''})")
+            lines, pr = PR.render(its, out, per_dataset("packet")(ds))
+            run.lines["comm"] += lines + [""]
+            prow += pr
+        return PR.overview(camp, prow, crit, os.path.join(out, "packet", "index.html"), back("packet"))
 
     def dc_series():
         import dc_series as DCS
@@ -1169,11 +1198,15 @@ def render_all(run, crit, mods_of, fresh, scope, refresh=False):
         cards = {(os.path.basename(c["path"]), int(n)): v for c in recs for n, v in (c.get("fit_cards") or {}).items()}
         limit = args.dc_limit if args.dc_limit is not None else st.get("dc_limit")
         st["dc_limit"] = limit
-        run.say(f"dark-current series ({len(recs)} image(s))")
-        lines, drows = DCS.report([(c["path"], c["summary"]) for c in recs], lambda path: meta[path], mods_of, out, limit,
-                                  fit_cards=cards)
-        run.lines["comm"] += lines + [""]
-        return [DCS.overview(camp, drows, crit, os.path.join(out, "dc_series", "index.html"), back("dc_series"), limit)]
+        ds_stem, drows = camp.dataset_of_stem("dc_series"), []
+        for ds in sorted({ds_stem.get(c["stem"], "") for c in recs}):
+            sel = [c for c in recs if ds_stem.get(c["stem"], "") == ds]
+            run.say(f"dark-current series ({len(sel)} image(s){', data set ' + ds if ds else ''})")
+            lines, dr = DCS.report([(c["path"], c["summary"]) for c in sel], lambda path: meta[path],
+                                   per_dataset("dc_series")(ds), out, limit, fit_cards=cards, tag=ds)
+            run.lines["comm"] += lines + [""]
+            drows += dr
+        return DCS.overview(camp, drows, crit, os.path.join(out, "dc_series", "index.html"), back("dc_series"), limit)
 
     def defects():                               # only the groups with a new image are made again
         import defects as DF
@@ -1186,8 +1219,12 @@ def render_all(run, crit, mods_of, fresh, scope, refresh=False):
         st["defect_sigma"] = nsig
         run.say(f"defect maps ({len(paths)} image(s))")
         redo = None if args.reprocess else {p for p in paths if os.path.abspath(orig_of.get(p, p)) in fresh.get("defects", set())}
-        lines = DF.run(paths, out, mods_of, shlex.split(args.autoconfig_args), log=lambda m: run.say(m.strip()),
-                       nsig=nsig, redo=redo, write_index=False)
+        ds_of = {cores[stem_of[p]]["path"] if stem_of[p] in cores else p: camp.dataset(p, "defects") for p in ins}
+        lines = []
+        for ds in sorted({ds_of.get(p, "") for p in paths}):
+            lines += DF.run([p for p in paths if ds_of.get(p, "") == ds], out, per_dataset("defects")(ds),
+                            shlex.split(args.autoconfig_args), log=lambda m: run.say(m.strip()), nsig=nsig, redo=redo,
+                            write_index=False)
         if missing:
             lines.append(f"  images no longer on disk (left out of the composites): {', '.join(map(os.path.basename, missing))}")
         run.lines["comm"] += lines + [""]
@@ -1195,7 +1232,7 @@ def render_all(run, crit, mods_of, fresh, scope, refresh=False):
 
     def sr():
         import sr_images as SR
-        per_ccd = {}
+        per_ccd, ds_stem = {}, camp.dataset_of_stem("sr")
         recs = sorted([cores[s_] for s_ in by_tool["sr"] if s_ in cores], key=lambda c: (CA.record_time(c), c["stem"]))
         thr = ml = None
         for c in recs:
@@ -1205,11 +1242,14 @@ def render_all(run, crit, mods_of, fresh, scope, refresh=False):
             for ext, it in sorted(part.items()):
                 if it.get("resolved") and t_eff > 0:      # dark current of the SR image (exposure + half the readout)
                     it["dc_rate"] = it["dc"] / t_eff * 86400
-                per_ccd.setdefault((c.get("acm") or 0, int(ext[3:]), it["ccd"]), []).append(it)
-        run.say(f"serial-register pages ({len(recs)} image(s))")
-        lines, srows = SR.render(per_ccd, out, mods_of, thr or args.sr_threshold, ml or args.sr_min_length)
-        run.lines["comm"] += lines + [""]
-        return [SR.overview(camp, srows, crit, os.path.join(out, "sr", "index.html"), back("sr"))]
+                per_ccd.setdefault(ds_stem.get(c["stem"], ""), {}).setdefault((c.get("acm") or 0, int(ext[3:]), it["ccd"]), []).append(it)
+        srows = []
+        for ds, pc in sorted(per_ccd.items()):
+            run.say(f"serial-register pages ({sum(len(v) for v in pc.values())} CCD image(s){', data set ' + ds if ds else ''})")
+            lines, sr_ = SR.render(pc, out, per_dataset("sr")(ds), thr or args.sr_threshold, ml or args.sr_min_length, tag=ds)
+            run.lines["comm"] += lines + [""]
+            srows += sr_
+        return SR.overview(camp, srows, crit, os.path.join(out, "sr", "index.html"), back("sr"))
 
     tool_views, tool_lines = {}, []
     for t, fn in (("images", images), ("packet", packet), ("dc_series", dc_series), ("defects", defects), ("sr", sr)):
@@ -1245,6 +1285,7 @@ def main(argv=None):
     run = Run(args=args, run_name=run_name, images=files, out=out, modules=modules)
     prepare_output(run)
     run.camp = CA.Campaign(out)
+    run.dataset = None if args.dataset is None else CA.dataset_name(args.dataset)
     crit = CA.load_criteria(out, args.criteria)
     run.t0 = time.time()
     tools_now = (["packet"] if args.packet else ["images"]) + [t for t, on in (("dc_series", args.dc_series),
@@ -1302,7 +1343,7 @@ def main(argv=None):
         for p, c in final.items():
             o = orig.get(p, p)
             for t in tools_now:
-                run.camp.add(o, t, kind="image", stem=c["stem"])
+                run.camp.add(o, t, kind="image", stem=c["stem"], dataset=run.dataset)
             bconf[p] = native_record(o, c["summary"])
         if gc_dirs:
             for mode, d in gc_dirs.items():
@@ -1322,7 +1363,7 @@ def main(argv=None):
     for p in done:                                    # already processed: only the tool memberships of this run
         e = run.camp.entry(p)
         for t in tools_now:
-            run.camp.add(p, t, kind="image", stem=e.get("stem") or image_stem(p))
+            run.camp.add(p, t, kind="image", stem=e.get("stem") or image_stem(p), dataset=run.dataset)
     run.camp.add_run(sys.argv, tools_now, list(need), done,
                      [ln for k in ("raw", "front", "gc", "comp") for ln in run.lines[k]])
     run.camp.save()
@@ -1337,6 +1378,10 @@ def main(argv=None):
     review_lines = RV.refresh(out, args.reviews, log=run.say)
     summary(run, configs, rows, roots, tool_lines + [""] + review_lines + [""] + run.lines["comm"])
     print(f"\nresults: {out}   (overview: {os.path.join(out, 'index.html')})")
+    print(f"reviews: open the pages with  python3 {os.path.join(out, 'review_server.py')}  (or --serve) to save reviews "
+          f"straight into the campaign folder")
+    if args.serve:
+        RV.serve(out, port=args.port)
     return 1 if run.failed else 0
 
 

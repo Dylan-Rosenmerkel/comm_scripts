@@ -65,6 +65,7 @@ LSM2026/                        the --campaign folder (or superWADERs_<run name>
   campaign.json, criteria.json, records/   the campaign's ledger, limits and kept results
   modules.csv                   the campaign's module list (the last --module-list; later runs use it)
   reviews/, reviews.js          the reviews written on the pages (one file per save) and all of them merged
+  review_server.py              serves the pages so that reviews are saved here at once: python3 review_server.py
   reviews.csv, reviews.txt      every review as a table; the latest review of every CCD
 ```
 
@@ -97,6 +98,25 @@ Every full report links back to its overview ("← overview of all modules").
   values per CCD.
 - **Criteria and definitions.**
 
+### Data sets: a module measured more than once (`--dataset NAME`)
+
+A module can have several data entries for one tool: a second packet after a repair, a dark-current run in a second
+cooldown, and so on. Give each its name:
+```bash
+run_superWADERs packet_DM01_retest.txt --packet --dataset retest --campaign ~/comm/LSM2026
+run_superWADERs cooldown2.txt --dc-series --sr --dataset cooldown2 --campaign ~/comm/LSM2026
+```
+- Each data set of a module gets its own report: `packet/DM01@retest_ACM101.html`,
+  `dc_series/DM01@cooldown2_ACM101_dc.html`, and its own `dc_report_<data set>.pdf`, `dc_series_<data set>.csv`,
+  `sr_*_<data set>.csv`; defect maps are grouped per data set too.
+- The tool's overview has one view per data set (newest first; "without data set" for inputs given without
+  `--dataset`).
+- The campaign overview shows the newest data set of every CCD (its values and verdict), and the CCD panel links to
+  the reports of every data set.
+- Reviews record the data set they were written on; a review of one data set shows in that data set's view.
+- An input given again without `--dataset` keeps its data set; without data sets nothing changes (one report per
+  module, as before).
+
 ### Reviews: who looked at which data, and what they concluded
 
 All data can be reviewed, on the page where it is shown:
@@ -110,15 +130,27 @@ A review is a name, a status (approved / concern / rejected / note) and a commen
 numbers shown at the time. When newer data arrive, the review stays and is marked "data changed since", with the
 numbers it was written on.
 
-The pages are plain files, so reviews are files too, in the campaign folder:
-1. A new review is kept in the browser ("not saved yet" in the bar at the top of every page).
-2. **Save to campaign folder** (Chrome, Edge): choose the campaign folder; the review is written to `reviews/` and every
-   page shows it. **Download** (any browser): put the file into `DIR/reviews/`, or give it to
-   ```bash
-   run_superWADERs --campaign ~/comm/LSM2026 --reviews ~/Downloads/reviews_*.json   # no INPUT: reviews only, seconds
-   ```
-3. `reviews.js` (read by every page), `reviews.csv` and `reviews.txt` are rebuilt; every run also rebuilds them and adds
-   the review summary to `summary.txt`.
+Reviews are files in the campaign folder (`reviews/`). To have every review saved there **the moment you click Add
+review**, open the pages through the campaign's review server:
+```bash
+python3 ~/comm/LSM2026/review_server.py              # or: run_superWADERs --campaign ~/comm/LSM2026 --serve
+```
+It opens `http://localhost:8765/index.html` in the browser (any browser); the bar at the top of every page says
+"saved straight into the campaign folder". `review_server.py` is written into every campaign folder, so it travels
+with a copied or zipped campaign and needs only Python 3 (no packages). It answers this computer only; `--host
+0.0.0.0` lets everyone on the network open the pages and add reviews (e.g. one lab machine for the group). Ctrl-C
+stops it.
+
+Pages opened by double-click (`file://`) cannot write files in most browsers:
+- **Chrome, Edge:** "Save to campaign folder" asks for the campaign folder once; it is remembered, and later reviews
+  are saved there as they are added.
+- **Other browsers:** the review stays in the browser ("not saved yet"); "Download" gives a file for `DIR/reviews/`, or
+  ```bash
+  run_superWADERs --campaign ~/comm/LSM2026 --reviews ~/Downloads/reviews_*.json   # no INPUT: reviews only, seconds
+  ```
+
+`reviews.js` (read by every page), `reviews.csv` and `reviews.txt` are rebuilt at every save, and by every run, which
+also adds the review summary to `summary.txt`.
 
 Each save is its own file (`reviews/reviews_<name>_<time>.json`), so several people can review the same shared folder,
 or send their files to one person, without overwriting each other; deleting a review keeps a deletion record so the
