@@ -64,8 +64,8 @@ LSM2026/                        the --campaign folder (or superWADERs_<run name>
   root/, L0/, L1/, logs/        cluster files, raw-data products, logs
   campaign.json, criteria.json, records/   the campaign's ledger, limits and kept results
   modules.csv                   the campaign's module list (the last --module-list; later runs use it)
-  reviews.js                    every review written on the pages, in one file (read by every page)
-  open_campaign.command / .bat, review_server.py   double-click: the pages with reviews saved here at once
+  reviews.csv                   the review sheet: one line per CCD; write reviewer, status, comment there
+  reviews.js, reviews.txt       the reviews for the pages; the latest review of every CCD
   reviews.csv, reviews.txt      every review as a table; the latest review of every CCD
 ```
 
@@ -117,51 +117,24 @@ run_superWADERs cooldown2.txt --dc-series --sr --dataset cooldown2 --campaign ~/
 - An input given again without `--dataset` keeps its data set; without data sets nothing changes (one report per
   module, as before).
 
-### Reviews: who looked at which data, and what they concluded
+### Reviews: who looked at which CCD, and what they concluded
 
-All data can be reviewed, on the page where it is shown:
-- **overview pages** (campaign and per tool): one CCD, in the CCD panel; on the campaign page the review can be about
-  the CCD as a whole or about one tool;
-- **module reports** (packet, dark current, defect map, serial register): every tab ends with a review box, for the
-  whole module or one CCD; the line under the title lists every review of the module, also those from the overviews.
+Reviews are written in a spreadsheet in the campaign folder, **`reviews.csv`** (open it with Excel, Numbers or
+LibreOffice). Every run fills it with one line per CCD: module, EXT, CCD, ACM, data set, verdict and main numbers.
 
-A review is a name, a status (approved / concern / rejected / note) and a comment. It is stored with what it is about
-(tool, module, ACM, EXT, CCD, report and tab), the data it refers to (the inputs, or the report's content) and the main
-numbers shown at the time. When newer data arrive, the review stays and is marked "data changed since", with the
-numbers it was written on.
+1. Open `reviews.csv`, and on the CCD's line fill **reviewer** (your name), **status** (approved, concern, rejected or
+   note) and **comment**. Save it (keep the CSV format).
+   - A second review of the same CCD: copy the line.
+   - A review of one tool only: put the tool (`images`, `packet`, `dc_series`, `defects`, `sr`) in `tool`.
+   - A review of a whole module: leave `ext` empty.
+2. Run `run_superWADERs --campaign DIR`, the next time you add data, or right away without an input (it takes a
+   second). The reviews then show on every page: a badge in each CCD's cell (✔ approved, ▲ concern, ✖ rejected,
+   ✎ note), the reviews in the CCD panel, the module's reviews at the top of its reports, a "CCDs reviewed" count,
+   filters for unreviewed CCDs and for concerns, and a review column in the table.
 
-All reviews of a campaign are in one file, `reviews.js` in the campaign folder; every save merges into it (nothing
-is overwritten, and a review added by someone else in the meantime is kept). To have every review saved there **the
-moment you click Add review**, start the campaign's review server: **double-click `open_campaign`** in the campaign
-folder (`open_campaign.command` on a Mac, the first time right-click > Open; `open_campaign.bat` on Windows), or
-```bash
-python3 ~/comm/LSM2026/review_server.py              # or: run_superWADERs --campaign ~/comm/LSM2026 --serve
-```
-It opens `http://localhost:8765/index.html` in the browser (any browser); the bar at the top of every page says
-"saved straight into the campaign folder". `review_server.py` is written into every campaign folder, so it travels
-with a copied or zipped campaign and needs only Python 3 (no packages). It answers this computer only; `--host
-0.0.0.0` lets everyone on the network open the pages and add reviews (e.g. one lab machine for the group). Ctrl-C
-(or closing its window) stops it.
-
-While it runs, **pages opened by double-click save through it too** (it leaves `review_server_info.js` with its
-address and a token in the folder; other web sites cannot use it), so reviews already marked "not saved yet" are
-saved as soon as the page is reloaded. When it starts it also merges any `reviews*.js` of this campaign found in
-`~/Downloads` (files downloaded from the pages earlier).
-
-Without the server, pages opened by double-click (`file://`) cannot write files in most browsers:
-- **Chrome, Edge:** "Save to campaign folder" asks for the campaign folder once; it is remembered, and later reviews
-  are saved there as they are added.
-- **Other browsers:** the review stays on the page, marked "not saved yet". "Download" gives the campaign's
-  `reviews.js` with the new reviews in it: put it into the campaign folder in place of the old one and reload, and the
-  reviews show as saved on every page. When others review the same campaign at the same time, merge it instead:
-  ```bash
-  run_superWADERs --campaign ~/comm/LSM2026 --reviews ~/Downloads/reviews.js   # no INPUT: reviews only, seconds
-  ```
-
-`reviews.csv` and `reviews.txt` are rebuilt at every save, and by every run, which also adds the review summary to
-`summary.txt`. Deleting a review keeps a deletion record, so the deletion wins over an older copy of the file. Reviews
-can also be written from the command line:
-`python superWADERs/commissioning/reviews.py DIR --add --reviewer NAME --status concern --module DM03 --ext EXT2 --comment "..."`.
+Each filled line keeps the numbers it was written on. When newer data arrive for that CCD, the line is marked
+`newer_data: yes` and the pages show "newer data since". A new CCD gets its own line. `reviews.txt` lists the latest
+review of every CCD, and `summary.txt` includes it. Pages only show reviews; nothing is written from a browser.
 
 The images overview has one view per image setting (e.g. 500-skip 1×1 and 1-skip 1×1).
 

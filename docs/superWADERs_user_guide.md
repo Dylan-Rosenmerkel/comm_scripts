@@ -168,16 +168,11 @@ Module pages link back to their overview. The campaign page's cells show read no
 dark current (latest image), the dark-current rate of the series (plateau, else latest) and the serial-register
 dark-current rate, plus each CCD's review status.
 
-**Reviews.** Every overview (per CCD) and every module report (per tab, for the whole module or one CCD) has a review
-box: your name, a status (approved / concern / rejected / note) and a comment. Double-click `open_campaign` in the
-campaign folder (`open_campaign.command` on a Mac, `open_campaign.bat` on Windows; or `python3 DIR/review_server.py`,
-or `run_superWADERs --campaign DIR --serve`); while it runs, pages opened by double-click save too, and
-every review is saved into `DIR/reviews.js` (the campaign's one review file) the moment it is added, in any browser.
-On double-clicked pages: Chrome / Edge **Save to campaign folder** (asks for the folder once, then saves as you go);
-other browsers **Download**, which gives the updated `reviews.js`: put it into the campaign folder in place of the old
-one (or merge it: `run_superWADERs --campaign DIR --reviews ~/Downloads/reviews.js`). Saved reviews show on every page of the campaign and are listed in
-`DIR/reviews.csv` and `DIR/reviews.txt`. A review keeps the data and numbers it was written on; when newer data
-arrive it is marked "data changed since". Details: [superWADERs/README.md](../superWADERs/README.md), "Reviews".
+**Reviews.** Reviews are written in `DIR/reviews.csv` (Excel, Numbers, LibreOffice), which has one line per CCD with
+its verdict and main numbers: fill reviewer, status (approved / concern / rejected / note) and comment, and save. The
+next `run_superWADERs --campaign DIR` (with new data, or without input: a second) shows them on every page; the CCD
+panel says which line of the sheet is the CCD's. A review keeps the numbers it was written on; when newer data arrive
+it is marked "newer data since". Details: [superWADERs/README.md](../superWADERs/README.md), "Reviews".
 
 ## 3. Using the HTML pages
 
@@ -200,8 +195,7 @@ Every page works offline (no network) in Chrome, Safari or Firefox; open it by d
   mode and the cut (to compare the same spot); **blink** switches every second. Defect pages: tick boxes per
   defect type, "show markings", click a defect in the list to jump to it. Long lists are laid out in columns of 40
   lines, with a type filter and a sort (largest value / position).
-- **Reviews**: one box per tab (name, status, whole module or one CCD, comment); the line under the title lists every
-  review of the module. Saving: see section 2b.
+- **Reviews**: the line under the title lists the reviews of the module (written in `reviews.csv`, see section 2b).
 - **Export PDF**: every tab on its own page with the reviews; choose "Save as PDF" in the print dialog.
 - **Log**: at the bottom of each tab: files, header settings, decoder checks, fit results, warnings.
 - A **red dot** on a tab / red numbers: outside the usual range (noise > 0.3 e-, peaks not resolved, defects

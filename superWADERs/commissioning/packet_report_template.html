@@ -100,7 +100,6 @@ table.num.cmp td.same { color:var(--muted); }
 <nav id="nav"></nav>
 <main id="main"></main>
 <script id="data" type="application/json">__DATA__</script>
-<script src="__REVIEW_SERVER_SRC__"></script>
 <script src="__REVIEWS_SRC__"></script>
 <script>__REVIEW_WIDGET__</script>
 <script>
@@ -436,25 +435,14 @@ function table(rows) { const t = el("table", "num"); for (const [k, v, flag] of 
 const RV = D.review || { tool: "report" }, REVIEW_BOXES = [];
 const ACMS = new Set((D.ccds || []).map(c => String(c.acm)).filter(a => a !== "undefined"));   // by name, or by ACM
 const onModule = r => { const x = r.target || {}; return !RV.module || x.module === RV.module || (x.acm != null && ACMS.has(String(x.acm))); };
-function reviewChoices() {     // what a new review is about: the whole module or one CCD (the ticked one first)
-  const cs = (CCDS || []).slice().sort((x, y) => (SEL.length === 1 ? (y.key === SEL[0]) - (x.key === SEL[0]) : 0));
-  const one = c => [c.label, { ext: c.ext || null, ccd: c.ccd || null, acm: c.acm == null ? null : c.acm }];
-  return SEL.length === 1 && cs.length ? cs.map(one).concat([["whole module", {}]]) : [["whole module", {}]].concat(cs.map(one));
-}
-function drawReviews() {
+function drawReviews() {        // the reviews of the module (reviews.csv, through reviews.js), read only
   SWR.bar(document.getElementById("swrbar"));
   const mine = SWR.all().filter(onModule);
   document.querySelector("#modrev summary").innerHTML = `Reviews of ${RV.module ? "module " + RV.module : "this report"}: ${mine.length}`
-    + (mine.length ? " " + SWR.badge(mine, null) : "") + ` <span style="color:var(--muted)">(from every page of the campaign; click to see them or to review the whole report)</span>`;
-  SWR.form(document.getElementById("modrevbody"), onModule, { tool: RV.tool, module: RV.module || null, dataset: RV.dataset || null, page: D.report_id }, RV.stamp, reviewChoices());
-  REVIEW_BOXES.forEach(f => f());
+    + (mine.length ? " " + SWR.badge(mine, null) : "") + ` <span style="color:var(--muted)">(click to see them and how to add one)</span>`;
+  SWR.form(document.getElementById("modrevbody"), onModule, { module: RV.module || "" }, null);
 }
-function commentBox(parent, key, label) {
-  const box = el("div", "comment"); box.appendChild(el("h3", "", label || "Reviews")); const body = el("div"); box.appendChild(body); parent.appendChild(box);
-  const q = r => { const x = r.target || {}; return onModule(r) && x.page === D.report_id && x.tab === key; };
-  REVIEW_BOXES.push(() => SWR.form(body, q, { tool: RV.tool, module: RV.module || null, dataset: RV.dataset || null, page: D.report_id, tab: key }, RV.stamp, reviewChoices()));
-}
-SWR.init({ campaign: RV.campaign || "", root: RV.root || "", page: D.title, same: r => (r.target || {}).page === D.report_id, onChange: drawReviews });
+SWR.init({});
 
 // The CCDs of the module (D.ccds): every tab with tb.per = {ccd key: data} shows the ticked CCDs
 const CCDS = D.ccds && D.ccds.length ? D.ccds : null;
@@ -512,7 +500,6 @@ function addTab(tb, render) {
   const b = el("button", "", tb.label), t = el("section", "tab"); t.id = "tab_" + tb.id; nav.appendChild(b); main.appendChild(t);
   const dot = el("span", "dot"); dot.title = "a number on this tab is outside the usual range (for a ticked CCD)"; b.appendChild(dot);
   const content = el("div"), foot = el("div"); t.append(content, foot);
-  commentBox(foot, tb.id, `Reviews of this tab (${tb.label})`);
   foot.appendChild(el("h3", "", "Log")); const lg = el("div", "log"); foot.appendChild(lg);
   let fresh = false, gen = 0;
   const build = async () => {
@@ -702,7 +689,7 @@ const HELP = `<h2 style="margin-top:0">How to use this report</h2>
 <p>One page per module. <b>CCDs</b> (below the tabs): tick the CCDs to show, <b>all CCDs in the module</b> for all of them, <b>only</b> next to a CCD for that one alone. Every tab follows the choice: traces one below the other, PSD and profiles overlaid (one colour per CCD), numbers side by side, images one CCD at a time. A red dot on a tab: one of its numbers is outside the usual range for a ticked CCD; a red dot on a CCD: that CCD has such numbers.</p>
 <h3>Plots</h3><p><kbd>drag</kbd> draw a box to zoom in on a range · <kbd>shift</kbd>+<kbd>drag</kbd> move the view · <kbd>wheel</kbd> zoom the x axis (with <kbd>alt</kbd>: the y axis) · <kbd>double-click</kbd> or <b>reset</b>: everything again · <b>log y</b>: switch the y axis · <b>PNG</b>: save the plot. Move the mouse over a plot to read the values.</p>
 <h3>Images (like ds9 frames)</h3><p>The slider, <b>&#9664;</b> / <b>&#9654;</b> or the <kbd>&larr;</kbd> <kbd>&rarr;</kbd> keys switch between the ticked CCDs; zoom, pan, scale and the row / column cut stay, so the same spot can be compared. <b>blink</b> switches every second. <kbd>wheel</kbd> or <b>+</b>/<b>&minus;</b> zoom · <kbd>drag</kbd> move · <kbd>click</kbd> a pixel: its row and column are plotted below · <kbd>shift</kbd>+<kbd>drag</kbd> a box: statistics of that region · <b>scale</b>: colour range (auto: around the background level, like ds9 zscale; 99.5 %: ignores the brightest pixels; manual: type min / max) · <b>asinh</b>: brings out faint structure · <b>fit</b> / <b>1:1</b> whole image / one image pixel per screen pixel. Row 0 is at the bottom (as ds9).</p>
-<h3>Reviews</h3><p>Every tab ends with a review box: your name, a status (approved / concern / rejected / note), what it is about (the whole module or one CCD) and a comment. The line under the title lists every review of the module, also those written on the overview pages. All reviews of the campaign are in one file, <code>reviews.js</code> in the campaign folder. Open the pages with <code>python3 review_server.py</code> (in the campaign folder) and each review is saved there as soon as you add it; on a double-clicked page, <b>Save to campaign folder</b> (Chrome, Edge) does the same, and <b>Download</b> gives the updated <code>reviews.js</code> to put into the campaign folder.</p>
+<h3>Reviews</h3><p>The line under the title lists the reviews of the module. Reviews are written in a spreadsheet, <code>reviews.csv</code> in the campaign folder (Excel, Numbers, LibreOffice): one line per CCD; fill reviewer, status (approved / concern / rejected / note) and comment, and save. They show on every page after the next <code>run_superWADERs --campaign &lt;folder&gt;</code>.</p>
 <h3>PDF</h3><p><b>Export PDF</b> opens the print dialog with every tab on its own page (the ticked CCDs) and the comments included: choose "Save as PDF".</p>
 <h3>Log</h3><p>Each tab ends with the log of how its numbers were made (per ticked CCD): files, settings from the data header, checks, fit results.</p>`;
 

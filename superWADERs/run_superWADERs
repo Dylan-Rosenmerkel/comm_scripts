@@ -5,8 +5,7 @@ is in this folder (engine/, clustering/, commissioning/).
 
     run_superWADERs INPUT [-o PARENT] [-j N] [options]      INPUT: an image, a raw DAQ file, or a .txt list of them
     run_superWADERs INPUT --campaign DIR [options]          add INPUT to the campaign DIR (data arriving in packets)
-    run_superWADERs --campaign DIR [--reviews FILE ...]     no INPUT: take in the reviews written on the pages
-    run_superWADERs --campaign DIR --serve                  the pages through the review server (reviews saved at once)
+    run_superWADERs --campaign DIR                          no INPUT: show the reviews written in DIR/reviews.csv
     run_superWADERs -h            the flags;      run_superWADERs -h -v      the full guide
 
 Every run is a campaign (commissioning/campaign.py): a new folder (superWADERs_<run name>/), or with --campaign DIR a
@@ -262,8 +261,8 @@ output (superWADERs_<run name>/, <run name> = image or .txt name; or the --campa
   summary.txt                  verdict counts, fits per CCD, the clustering chain of every CCD and why, every run
   campaign.json, criteria.json, records/   the campaign: inputs and runs, the criteria, the kept results
   modules.csv                  the campaign's module list (the last --module-list), used by every later run
-  reviews.js, reviews.csv, reviews.txt   every review written on the pages, in one file (reviews.js) (name, status, comment per CCD
-                               or report tab; commissioning/reviews.py), shown on every page
+  reviews.csv                  the review sheet: one line per CCD; write reviewer, status, comment there
+  reviews.js, reviews.txt      the reviews for the pages, and the latest review of every CCD (commissioning/reviews.py)
   fit_quality.csv              gain, noise, dark current per CCD with errors scaled by sqrt(chi2/ndf)
   native_summary.json          everything per image and CCD (fits, gain choice, pedestal, thresholds, decisions)
   characterisation/<image>.json   the front end's record per image and CCD, with the result
@@ -326,16 +325,11 @@ campaign (--campaign DIR): give each new packet (or list) with the same --campai
   limits (all pages re-judged). Without --campaign, a run stands alone: a fresh folder with only its inputs and tools. Run-pooled dark charge
   (few-electron finder), --gain-correction curves and --composite use the images of the current run only.
 
-reviews: every page has a review box (overviews: per CCD; module reports: per tab, for the whole module or one
-  CCD): a name, a status (approved / concern / rejected / note) and a comment, merged into DIR/reviews.js and shown on every
-  page. To save them straight into the campaign folder, start the review server: double-click open_campaign in the
-  campaign folder (open_campaign.command on a Mac, open_campaign.bat on Windows), or
-    python3 ~/comm/LSM2026/review_server.py        (or: run_superWADERs --campaign ~/comm/LSM2026 --serve)
-  then every review is saved the moment it is added, also on pages opened by double-click. Without it, on pages opened by
-  double-click: Chrome / Edge 'Save to campaign folder' (asks for the folder once, then saves as you go); other
-  browsers 'Download' gives the updated reviews.js: put it into the campaign folder (replace the old one), or merge it
-  with  run_superWADERs --campaign ~/comm/LSM2026 --reviews ~/Downloads/reviews.js.
-  A review records the data it was about: when newer data arrive the pages mark it 'data changed since'.
+reviews: written in a spreadsheet, DIR/reviews.csv (Excel, Numbers, LibreOffice): one line per CCD with its verdict
+  and main numbers; fill reviewer, status (approved / concern / rejected / note) and comment, and save. A second
+  review: copy the line; one tool only: put it in 'tool'; a whole module: leave 'ext' empty. The next run, with new
+  data or without INPUT (run_superWADERs --campaign DIR, a second), shows them on every page (overviews and module
+  reports), keeps the numbers each review was written on and marks it 'newer data' when the data changed since.
 
 data sets (--dataset NAME): a module measured more than once (a second packet after a repair, a second cooldown's
   dark-current run, ...): give each its name, e.g.
@@ -382,13 +376,6 @@ def build_parser(full=False):
                    help="the data set these inputs belong to (e.g. packet2, cooldown2): a module with several data sets "
                         "gets one report per data set and one overview view each (newest first; the campaign overview "
                         "uses the newest). Without it, inputs join the data set they had, or the default one")
-    g.add_argument("--serve", action="store_true",
-                   help="then open the campaign's pages through its review server (http://localhost:<port>/): reviews "
-                        "added on the pages are saved into DIR/reviews.js at once, in any browser. Ctrl-C stops it. Also "
-                        "without INPUT; or run  python3 DIR/review_server.py")
-    g.add_argument("--port", type=int, default=8765, help="first port the review server tries (default 8765)")
-    g.add_argument("--reviews", metavar="FILE", nargs="+", default=[],
-                   help="review files downloaded from the pages (reviews.js): merged into DIR/reviews.js (also without INPUT)")
     g.add_argument("--refresh-all", action="store_true",
                    help="rebuild every tool's pages from the kept results (default: only the tools of this run, and all "
                         "of them after --criteria / --reprocess)")
@@ -493,18 +480,17 @@ class Run:
 
 
 def reviews_only(args):
-    """run_superWADERs --campaign DIR [--reviews FILE ...] without INPUT: take in the reviews (standard library only)."""
+    """run_superWADERs --campaign DIR without INPUT: the reviews of DIR/reviews.csv onto the pages (standard library
+    only, a second)."""
     if not args.campaign:
-        die("give an INPUT (or --campaign DIR without INPUT to take in the reviews written on its pages)")
+        die("give an INPUT (or --campaign DIR without INPUT to show the reviews written in DIR/reviews.csv)")
     out = os.path.abspath(os.path.expanduser(args.campaign))
     if not os.path.exists(os.path.join(out, "campaign.json")):
         die(f"{out} is not a campaign folder (no campaign.json)")
     import reviews as RV
     print(f"{PROG}: reviews of {out}")
-    print("\n".join(RV.refresh(out, args.reviews)))
-    print(f"\nevery page of the campaign shows them (reload an open page); table: {os.path.join(out, 'reviews.csv')}")
-    if args.serve:
-        RV.serve(out, port=args.port)
+    print("\n".join(RV.update(out)))
+    print(f"\nevery page of the campaign shows them (reload an open page). Write reviews in {os.path.join(out, 'reviews.csv')}")
     return 0
 
 
@@ -1377,13 +1363,11 @@ def main(argv=None):
     configs, rows, roots, tool_lines = render_all(run, crit, mods_of, fresh, scope, refresh)
     run.camp.save()
     import reviews as RV
-    review_lines = RV.refresh(out, args.reviews, log=run.say)
+    review_lines = RV.update(out, log=run.say)
     summary(run, configs, rows, roots, tool_lines + [""] + review_lines + [""] + run.lines["comm"])
     print(f"\nresults: {out}   (overview: {os.path.join(out, 'index.html')})")
-    print(f"reviews: double-click open_campaign in {out} (or: python3 {os.path.join(out, 'review_server.py')}) to save "
-          f"reviews straight into the campaign folder")
-    if args.serve:
-        RV.serve(out, port=args.port)
+    print(f"reviews: write them in {os.path.join(out, 'reviews.csv')} (one line per CCD), then run_superWADERs "
+          f"--campaign {out}")
     return 1 if run.failed else 0
 
 

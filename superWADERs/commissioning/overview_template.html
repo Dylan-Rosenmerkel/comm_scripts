@@ -57,7 +57,6 @@ input,select,button{font:inherit;padding:5px 8px;border:1px solid var(--line);bo
 the module pages and PDFs next to them). Open them from that folder and keep it together (copy or zip the whole folder):
 a page copied or opened on its own cannot follow its links.</p>
 </main>
-<script src="__REVIEW_SERVER_SRC__"></script>
 <script src="__REVIEWS_SRC__"></script>
 <script>__REVIEW_WIDGET__</script>
 <script>
@@ -75,7 +74,7 @@ const rq=c=>r=>{const t=r.target||{};return (t.module===c.module||(t.acm!=null&&
 const dsOK=t=>{const d=(views[V]||{}).dataset;return t.dataset==null||d==null||t.dataset===d;};
 const revs=c=>SWR.all().filter(rq(c));
 const rtarget=c=>({tool:RV.tool,module:c.module,acm:c.acm==null?null:c.acm,ext:c.ext,ccd:c.ccd||null,view:views.length>1?(views[V]||{}).name:null,dataset:(views[V]||{}).dataset==null?null:(views[V]||{}).dataset});
-SWR.init({campaign:RV.campaign||"",root:RV.root||"",page:D.title,same:r=>{const t=r.target||{};return !t.page&&(t.tool||"campaign")===RV.tool;},onChange:()=>{kpis();drawGrid();table();SWR.bar($("#swrbar"));if(SEL)show(SEL,true);}});
+SWR.init({same:r=>{const t=r.target||{};return !t.page&&(t.tool||"campaign")===RV.tool;},onChange:()=>{kpis();drawGrid();table();SWR.bar($("#swrbar"));if(SEL)show(SEL,true);}});
 document.title=D.title;$("#title").textContent=D.title;$("#sub").textContent=D.sub||"";
 $("#crumbs").innerHTML=(D.back||[]).map(([l,h])=>`<a href="${h}">${l}</a>`).join("");
 if(location.protocol!=="file:"&&location.protocol!=="http:"&&location.protocol!=="https:")$("#sub").textContent+=" · opened outside its folder: links to the other pages will not open";
@@ -139,9 +138,7 @@ function show(k,keep){const c=by[k];if(!c)return;SEL=k;document.querySelectorAll
  if(more)h+=`<details><summary class="muted" style="margin-top:10px;cursor:pointer">All values (${n})</summary>${more}</details>`;
  if(c.history&&c.history.rows&&c.history.rows.length)h+=`<details><summary class="muted" style="margin-top:6px;cursor:pointer">History (${c.history.rows.length})</summary><div class="hist"><table><tr>${c.history.head.map(x=>`<th>${x}</th>`).join("")}</tr>${c.history.rows.map(r=>`<tr>${r.map((x,i)=>`<td${i===r.length-1&&/fail|warn/.test(x)?` style="color:var(--${x})"`:""}>${fmt(x,4)}</td>`).join("")}</tr>`).join("")}</table></div></details>`;
  $("#panel").innerHTML=h;
- const choices=c.tools?[["this CCD (all tools)",{tool:"campaign"}]].concat(Object.entries(c.tools).map(([t,x])=>[`this CCD: ${t}`,{tool:x.tool}])):null;
- const snap=Object.fromEntries([["verdict",c.verdict||cls(c)]].concat(main.map(f=>[(F[f]||{}).short||lab(f),fmt(V_[f],4)+(unit(f)?" "+unit(f):"")])));
- SWR.form($("#swrform"),rq(c),rtarget(c),c.stamp,choices,snap);
+ SWR.form($("#swrform"),rq(c),rtarget(c),c.stamp);
  if(!keep&&innerWidth<900)$("#panel").scrollIntoView({behavior:"smooth"});}
 function issues(){const groups={};rows().forEach(c=>real(c).forEach(r=>{const l=r[3]||lab(r[1]);(groups[l]=groups[l]||[]).push([r[0],c,r[2]]);}));
  $("#iss").innerHTML=Object.entries(groups).sort((a,b)=>b[1].filter(x=>x[0]==="fail").length-a[1].filter(x=>x[0]==="fail").length||b[1].length-a[1].length)
