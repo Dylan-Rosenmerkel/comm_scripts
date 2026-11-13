@@ -25,6 +25,7 @@ data are gzip + base64 in the page, plots and the image viewer are drawn by its 
 """
 import base64
 import gzip
+import hashlib
 import html
 import json
 import math
@@ -64,7 +65,7 @@ def enc(a, dtype="f4"):
         raw = a.astype(np.uint8).tobytes()
     else:
         raw = a.astype("<" + dtype).tobytes()
-    return {"dtype": dtype, "b64": base64.b64encode(gzip.compress(raw, 6)).decode()}
+    return {"dtype": dtype, "b64": base64.b64encode(gzip.compress(raw, 6, mtime=0)).decode()}
 
 
 def logbin(f, a, n=4000):
@@ -469,14 +470,17 @@ def render(items, out_dir, mods_of, n_files=None, classes=None):
                 tabs.append(dict(id=f"image_{slug}", label=f"{short}: image", kind="image", data=view, log=lg))
         first = next((a for a, _, _ in s["images"] if a["numbers"][0][0] == "image"), None)
         pages.setdefault(module, []).append((acm, ext, ccd, tabs, first["numbers"][2:4] if first else [], s["files"]))
+        files = sorted({f for _, f in s["files"]})
         ov.append(dict(module=module, acm=acm, ext=f"EXT{ext}", ccd=ccd, values=_packet_values(s), flags=s["flags"],
-                       nums=s["nums"], files=sorted({f for _, f in s["files"]})))
+                       nums=s["nums"], files=files, stamp=f"{len(files)} file(s): {', '.join(files)[:300]}"))
     for module, its in sorted(pages.items()):
         rid, name, ccd_list, tabs = module_page(module, [it[:4] for it in its])
         path = os.path.join(pdir, rid + ".html")
         nfiles = len({f[1] for it in its for f in it[5]})
         write_page(path, rid, f"{name} · {len(its)} CCD(s)",
-                   f"commissioning packet report (run_superWADERs --packet), {nfiles} file(s)", tabs, ccd_list, back="index.html")
+                   f"commissioning packet report (run_superWADERs --packet), {nfiles} file(s)", tabs, ccd_list, back="index.html",
+                   tool="packet", module=module, stamp=f"{nfiles} file(s) "
+                   + hashlib.sha1("\n".join(sorted({f[1] for it in its for f in it[5]})).encode()).hexdigest()[:10])
         for r in ov:
             if r["module"] == module:
                 r["page"] = rid + ".html"
@@ -547,7 +551,7 @@ def overview(camp, rows, crit, path, back, expect_resolved=True):
         sections=[["Noise", ["read_noise_e", "noise_single_adu", "psd_sigma_adu", "psd_sigma_cds_adu"]],
                   ["Fit", ["gain", "dc_e_per_pix", "resolved_image", "resolved_skips", "single_image"]],
                   ["Files", ["traces", "psd_traces", "images"]]],
-        cell=["read_noise_e", "noise_single_adu", "psd_sigma_cds_adu", "gain"], views=[view],
+        cell=["read_noise_e", "noise_single_adu", "gain"], views=[view], review=dict(tool="packet"),
         columns=["read_noise_e", "gain", "dc_e_per_pix", "noise_single_adu", "psd_sigma_adu", "psd_sigma_cds_adu",
                  "traces", "psd_traces", "images"],
         definitions=[("read noise", "Width of the electron peaks [e-] in the packet's image with the most skips whose peaks "
@@ -567,7 +571,8 @@ def module_page(module, items):
     CCD list for the page's check boxes, tabs). A tab of the module holds the data of every CCD that has it:
     tab['per'][ccd key] (and its log in tab['logs'][ccd key])."""
     acms = sorted({a for a, *_ in items})
-    ccds = [dict(key=f"ACM{a}_EXT{e}", label=f"EXT{e} · {c}" + (f" · ACM {a}" if len(acms) > 1 else "")) for a, e, c, _ in items]
+    ccds = [dict(key=f"ACM{a}_EXT{e}", label=f"EXT{e} · {c}" + (f" · ACM {a}" if len(acms) > 1 else ""), acm=a, ext=f"EXT{e}",
+                 ccd=c) for a, e, c, _ in items]
     tabs, by = [], {}
     for a, e, _, ts in items:
         for tb in ts:
@@ -585,10 +590,15 @@ def flagged(rows):
     return any(len(r) > 2 and r[2] for r in rows or [])
 
 
-def write_page(path, rid, title, ident, tabs, ccds=None, back=None):
+def write_page(path, rid, title, ident, tabs, ccds=None, back=None, tool="packet", module=None, stamp=None):
     """One self-contained report page (packet_report_template.html) with the given tabs; a tab gets the red dot when
     one of its numbers is flagged. ccds: the CCDs of a module page (module_page), for tabs with per-CCD data.
+    tool, module: what reviews written on the page are about (each tab has a review box); stamp: the data of the page
+    (default: a hash of the tabs' data), kept with a review to mark it 'data changed since' on a newer page.
     Returns the file size."""
+    import campaign as CA
+    if stamp is None:                       # before the flags: new criteria do not make the reviews' data look changed
+        stamp = hashlib.sha1(json.dumps(tabs, sort_keys=True, default=str).encode()).hexdigest()[:12]
     def nums_of(d):
         if isinstance(d, dict):
             return list(d.get("numbers") or [])
@@ -603,13 +613,14 @@ def write_page(path, rid, title, ident, tabs, ccds=None, back=None):
             tb["flagged"] = flagged(list(tb.get("numbers") or []) + nums_of(tb.get("data")))
     for c in ccds or []:
         c["flagged"] = [tb["label"] for tb in tabs if c["key"] in tb.get("flagged_ccds", [])]
-    page = dict(report_id=rid, title=title, ident=ident, tabs=tabs, ccds=ccds, back=back)
+    page = dict(report_id=rid, title=title, ident=ident, tabs=tabs, ccds=ccds, back=back,
+                review=CA.review_context(path, tool, module=module, stamp=stamp))
     body = json.dumps(page, separators=(",", ":")).replace("</", "<\\/")
     body = re.sub(r"(?<=[:,\[])(-?Infinity|NaN)(?=[,\]}])", "null", body)     # JSON has no NaN
     with open(os.path.join(HERE, "packet_report_template.html")) as fh:
         template = fh.read()
     with open(path, "w") as fh:
-        fh.write(template.replace("__TITLE__", html.escape(title)).replace("__DATA__", body))
+        fh.write(CA.page_scripts(template, page["review"]["root"]).replace("__TITLE__", html.escape(title)).replace("__DATA__", body))
     return os.path.getsize(path)
 
 

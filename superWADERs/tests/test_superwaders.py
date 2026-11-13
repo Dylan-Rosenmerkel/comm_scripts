@@ -157,6 +157,7 @@ class Campaign(unittest.TestCase):
                 self.assertIn("metrics", crit[t])
 
     def test_overview_page(self):
+        self.CA.ACTIVE = None
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "o", "index.html")
             row = dict(module="DM01", acm=101, ext="EXT1", ccd="CCD_A", verdict="warn", values=dict(noise=0.25),
@@ -167,6 +168,78 @@ class Campaign(unittest.TestCase):
                 page = fh.read()
             self.assertIn('"module":"DM01"', page)
             self.assertNotIn("__DATA__", page)
+            self.assertNotIn("__REVIEW", page)
+            self.assertIn('<script src="reviews.js">', page)      # no campaign: next to the page
+
+    def test_review_paths(self):
+        """Every page finds the campaign's reviews.js from where it is."""
+        with tempfile.TemporaryDirectory() as d:
+            c = self.CA.Campaign(os.path.join(d, "camp"))
+            self.assertTrue(c.data["id"].startswith("camp@"))
+            for rel, root in (("index.html", ""), ("images/index.html", "../"), ("defects/G/defect_map.html", "../../")):
+                ctx = self.CA.review_context(os.path.join(c.root, rel), "images")
+                self.assertEqual((ctx["root"], ctx["campaign"]), (root, c.data["id"]))
+
+
+class Reviews(unittest.TestCase):
+    """commissioning/reviews.py: merge, import, the files the pages read; run_superWADERs --campaign DIR (no INPUT)."""
+
+    def setUp(self):
+        p = os.path.join(SW, "commissioning")
+        if p not in sys.path:
+            sys.path.insert(0, p)
+        import reviews
+        self.R = reviews
+
+    def camp(self, d):
+        root = os.path.join(d, "camp")
+        os.makedirs(root)
+        json.dump(dict(id="camp@x", inputs={}, runs=[]), open(os.path.join(root, "campaign.json"), "w"))
+        return root
+
+    def test_merge(self):
+        a = dict(id="1", created="t1", updated="t1", status="note")
+        b = dict(id="1", created="t1", updated="t2", status="concern")         # edited later: wins
+        c = dict(id="2", created="t0", updated="t0", status="approved")
+        d = dict(id="2", created="t0", updated="t3", deleted=True)             # deleted later: stays deleted
+        m = self.R.merge([b, a, c, d])
+        self.assertEqual([r["id"] for r in m], ["2", "1"])
+        self.assertEqual(m[1]["status"], "concern")
+        self.assertEqual(self.R.live(m), [b])
+
+    def test_files_and_import(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self.camp(d)
+            r1 = self.R.new_review(root, "Ana", "concern", "noise high", dict(tool="campaign", module="DM01", ext="EXT2"))
+            self.R.save(root, [r1], "Ana")
+            dl = os.path.join(d, "reviews_Ben.json")                           # as downloaded from a page
+            r2 = dict(r1, id="b", reviewer="Ben", status="approved", comment="fine", created="z", updated="z")
+            json.dump(dict(format=self.R.FORMAT, campaign="camp@x", reviews=[r2]), open(dl, "w"))
+            lines = self.R.refresh(root, [dl], log=lambda *a: None)
+            self.assertIn("2 (1 approved, 1 concern) by Ana, Ben", lines[0])
+            self.assertEqual(self.R.import_files(root, [dl], log=lambda *a: None), 0)   # the same file again: skipped
+            js = open(os.path.join(root, "reviews.js")).read()
+            self.assertTrue(js.startswith("window.SW_REVIEWS = "))
+            self.assertEqual(len(json.loads(js[len("window.SW_REVIEWS = "):].rstrip().rstrip(";"))["reviews"]), 2)
+            with open(os.path.join(root, "reviews.csv")) as fh:
+                self.assertEqual(len(fh.read().strip().splitlines()), 3)
+            with self.assertRaises(ValueError):
+                self.R.new_review(root, "Ana", "maybe", "", {})
+
+    def test_command_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = self.camp(d)
+            r = subprocess.run([sys.executable, os.path.join(SW, "commissioning", "reviews.py"), root, "--add",
+                                "--reviewer", "Cy", "--status", "rejected", "--module", "DM03", "--ext", "EXT1",
+                                "--comment", "dead amplifier"], capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("DM03", r.stdout)
+            r = subprocess.run([sys.executable, CMD, "--campaign", root], capture_output=True, text=True)   # no INPUT
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("1 rejected", r.stdout)
+            r = subprocess.run([sys.executable, CMD, "--campaign", os.path.join(d, "nothing")], capture_output=True, text=True)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("not a campaign folder", r.stderr)
 
 
 if __name__ == "__main__":

@@ -63,6 +63,9 @@ LSM2026/                        the --campaign folder (or superWADERs_<run name>
   sr/index.html                 serial-register overview;  full reports: sr/<module>_ACM<id>_sr.html
   root/, L0/, L1/, logs/        cluster files, raw-data products, logs
   campaign.json, criteria.json, records/   the campaign's ledger, limits and kept results
+  modules.csv                   the campaign's module list (the last --module-list; later runs use it)
+  reviews/, reviews.js          the reviews written on the pages (one file per save) and all of them merged
+  reviews.csv, reviews.txt      every review as a table; the latest review of every CCD
 ```
 
 Every full report links back to its overview ("← overview of all modules").
@@ -78,18 +81,49 @@ Every full report links back to its overview ("← overview of all modules").
   | dark current | last and median rate, plateau, number of images |
   | defect maps | bright / dark columns, hot / cold pixel spots |
   | serial register | streaks per 1000 reads, read noise, dark charge |
-  | campaign | every tool's main values, labelled with the tool (IM, PK, DC, DF, SR) |
+  | campaign | read noise and gain (images, else packet), dark current (latest image), the dark-current rate of the series (settling plateau, else the latest image), the serial-register dark-current rate; the tools' letters (IM, PK, DC, DF, SR) in their verdict's colour |
 
 - **"Cells show" selector:** turns the grid into a map of any one value over all modules and CCDs. Judged values are
   coloured by their limits, the others by a scale, with the min / median / max shown.
-- **CCD panel:** click a cell for every value, the reasons, the history of the CCD's images and links to the full
-  reports.
+- **Review status** in every cell (✔ approved, ▲ concern, ✖ rejected, ✎ note; a number when several, `*` when the
+  data changed after the review) and a "CCDs reviewed" count; the filter can show the CCDs not reviewed yet, or
+  those with a concern or rejection; the table and its CSV have a review column.
+- **CCD panel:** click a cell for the reasons, the reviews (and a form to add one), the links to every tool's overview
+  and full reports, and the main values; every other value and the history of the CCD's images are folded below.
 - **What needs attention:** findings grouped by type.
 - **Distributions:** every judged metric over all CCDs, with the warn / fail limits.
 - **Crosstalk matrices** (images).
 - **Full table:** every value, sortable, filterable, with CSV download. The campaign page's table has every tool's
   values per CCD.
 - **Criteria and definitions.**
+
+### Reviews: who looked at which data, and what they concluded
+
+All data can be reviewed, on the page where it is shown:
+- **overview pages** (campaign and per tool): one CCD, in the CCD panel; on the campaign page the review can be about
+  the CCD as a whole or about one tool;
+- **module reports** (packet, dark current, defect map, serial register): every tab ends with a review box, for the
+  whole module or one CCD; the line under the title lists every review of the module, also those from the overviews.
+
+A review is a name, a status (approved / concern / rejected / note) and a comment. It is stored with what it is about
+(tool, module, ACM, EXT, CCD, report and tab), the data it refers to (the inputs, or the report's content) and the main
+numbers shown at the time. When newer data arrive, the review stays and is marked "data changed since", with the
+numbers it was written on.
+
+The pages are plain files, so reviews are files too, in the campaign folder:
+1. A new review is kept in the browser ("not saved yet" in the bar at the top of every page).
+2. **Save to campaign folder** (Chrome, Edge): choose the campaign folder; the review is written to `reviews/` and every
+   page shows it. **Download** (any browser): put the file into `DIR/reviews/`, or give it to
+   ```bash
+   run_superWADERs --campaign ~/comm/LSM2026 --reviews ~/Downloads/reviews_*.json   # no INPUT: reviews only, seconds
+   ```
+3. `reviews.js` (read by every page), `reviews.csv` and `reviews.txt` are rebuilt; every run also rebuilds them and adds
+   the review summary to `summary.txt`.
+
+Each save is its own file (`reviews/reviews_<name>_<time>.json`), so several people can review the same shared folder,
+or send their files to one person, without overwriting each other; deleting a review keeps a deletion record so the
+deletion wins. Reviews can also be written from the command line:
+`python superWADERs/commissioning/reviews.py DIR --add --reviewer NAME --status concern --module DM03 --ext EXT2 --comment "..."`.
 
 The images overview has one view per image setting (e.g. 500-skip 1×1 and 1-skip 1×1).
 

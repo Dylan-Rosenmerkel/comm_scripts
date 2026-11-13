@@ -217,13 +217,16 @@ def render(per_ccd, out_dir, mods_of, thr_sigma=4.0, min_len=3):
             median_length=float(np.median([r[3] for r in allst])) if allst else None,
             read_noise_e=float(np.median([it["noise_e"] for it in res])) if res else None,
             dc_median=float(np.median([it["dc"] for it in res])) if res else None,
+            dc_rate_median=float(np.median([it["dc_rate"] for it in res if it.get("dc_rate") is not None]))
+            if any(it.get("dc_rate") is not None for it in res) else None,
             gain_median=float(np.median([it["gain"] for it in items])), last_image=items[-1]["image"]),
+            stamp=f"{len(items)} image(s), last {items[-1]['image']}",
             history=[[it["image"], it["rows"], len(it["streaks"]), 1000 * len(it["streaks"]) / max(it["rows"], 1),
                       it["noise_e"] if it["resolved"] else None, it["dc"] if it["resolved"] else None] for it in items]))
     for mod, its in sorted(modules.items()):
         rid, name, ccds, tabs = PR.module_page(mod, [it[:4] for it in its])
         PR.write_page(os.path.join(d, rid + "_sr.html"), rid + "_sr", f"{name} · serial register",
-                      "serial-register images (run_superWADERs --sr)", tabs, ccds, back="index.html")
+                      "serial-register images (run_superWADERs --sr)", tabs, ccds, back="index.html", tool="sr", module=mod)
         for r in ov:
             if r["module"] == mod:
                 r["page"] = rid + "_sr.html"
@@ -233,6 +236,7 @@ def render(per_ccd, out_dir, mods_of, thr_sigma=4.0, min_len=3):
 FIELDS = {"images": ("images", ""), "streaks": ("streaks", ""), "reads": ("reads", ""),
           "streaks_per_1000_reads": ("streaks per 1000 reads", ""), "median_length": ("median streak length", "pixels"),
           "read_noise_e": ("read noise (median)", "e-"), "dc_median": ("dark charge per image (median)", "e-/pix"),
+          "dc_rate_median": ("dark current (median; dark charge / (exposure + readout / 2))", "e-/pix/day"),
           "gain_median": ("gain (median)", "ADU/e-"), "last_image": ("last image", "")}
 
 
@@ -250,9 +254,9 @@ def overview(camp, rows, crit, path, back):
         title="Serial-register images", sub=CA.sub_line(camp), back=back, criteria=sec,
         fields={k: dict(label=a, unit=b) for k, (a, b) in FIELDS.items()},
         sections=[["Streaks", ["streaks", "streaks_per_1000_reads", "median_length", "reads", "images"]],
-                  ["Fits", ["read_noise_e", "dc_median", "gain_median", "last_image"]]],
-        cell=["streaks_per_1000_reads", "read_noise_e", "dc_median"], views=[view],
-        columns=["images", "reads", "streaks", "streaks_per_1000_reads", "median_length", "read_noise_e", "dc_median",
+                  ["Fits", ["dc_rate_median", "read_noise_e", "dc_median", "gain_median", "last_image"]]],
+        cell=["dc_rate_median", "streaks_per_1000_reads", "read_noise_e"], views=[view], review=dict(tool="sr"),
+        columns=["images", "reads", "streaks", "streaks_per_1000_reads", "median_length", "dc_rate_median", "read_noise_e", "dc_median",
                  "gain_median", "last_image"],
         definitions=[("streak", "A run of >= min-length pixels above threshold x noise along one read (row) of the "
                                 "serial register, with at most 20 % of the pixels above / below it lit: a readout "

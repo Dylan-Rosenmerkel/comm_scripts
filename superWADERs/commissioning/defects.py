@@ -378,7 +378,7 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0, redo=
                                    columns_confirmed=finfo.get("col_kept"), columns_candidates=finfo.get("col_cand")))
             shown = sorted(rows, key=lambda r: -abs(r[4]))[:1500]
             key = f"ACM{acm}_EXT{ext}"
-            ccd_list.append(dict(key=key, label=f"EXT{ext} · {ccd}"))
+            ccd_list.append(dict(key=key, label=f"EXT{ext} · {ccd}", acm=acm, ext=f"EXT{ext}", ccd=ccd))
             tabs[0]["logs"][key] = [
                 f"composite median of {len(files)} image(s) of {itype} (rows x columns _ binning); types: {', '.join(kinds)}; "
                 f"noise {noises[ch]} ADU",
@@ -417,7 +417,7 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0, redo=
             w.writerows(csv_rows)
         size = PR.write_page(os.path.join(d, "defect_map.html"), name, f"{module} · ACM {acm} · {itype} · defect map",
                              f"defect map (run_superWADERs --defect-map), {len(files)} image(s)", tabs, ccd_list,
-                             back="../index.html")
+                             back="../index.html", tool="defects", module=module)
         nums = [[f"EXT{c + 1}", ", ".join(f"{t}: {sum(1 for r in csv_rows if r[2] == c + 1 and r[5] == t)}" for t, _ in TYPES)] for c in range(nch)]
         import json
         from datetime import datetime as _dt
@@ -462,14 +462,15 @@ def overview(camp, crit, path, back):
             verdict, reasons, levels = CA.judge(v, sec, flags)
             views.setdefault(g["image_type"], []).append(dict(
                 module=g["module"], acm=g["acm"], ext=c["ext"], ccd=c["ccd"], verdict=verdict, reasons=reasons, levels=levels,
-                values=v, when=g.get("made", ""), links=[["defect map", g["page"]]]))
+                values=v, when=g.get("made", ""), links=[["defect map", g["page"]]],
+                stamp=f"{g['name']}: {len(g['images'])} image(s), last {max(g['images'], default='')}"))
     out = [dict(name=k, ccds=v, note=f"images of {k}") for k, v in sorted(views.items())]
     CA.write_overview(path, dict(
         title="Defect maps", sub=CA.sub_line(camp), back=back, criteria=sec,
         fields={k: dict(label=a, unit=b) for k, (a, b) in FIELDS.items()},
         sections=[["Defects", ["bright_columns", "dark_columns", "hot_pixels", "cold_pixels"]],
                   ["Composite", ["images", "noise_adu", "columns_candidates", "columns_confirmed", "group"]]],
-        cell=["bright_columns", "dark_columns", "hot_pixels", "cold_pixels"], views=out,
+        cell=["bright_columns", "dark_columns", "hot_pixels", "cold_pixels"], views=out, review=dict(tool="defects"),
         columns=["bright_columns", "dark_columns", "hot_pixels", "cold_pixels", "images", "noise_adu", "group"],
         definitions=[("composite", "Median of all images of one ACM with the same size and binning (any type / skips)."),
                      ("columns", "Bright / dark columns: Image_4's rule on the composite, kept when also bright / dark in "

@@ -156,9 +156,20 @@ Every tool (images, packet, dark current, defect maps, SR) has an overview page,
 - a module × CCD grid with pass / warn / fail verdicts from the criteria file (`criteria.json`; the default limits
   are placeholders);
 - what needs attention, distributions against the limits, the full table (CSV), the criteria;
-- per CCD: every number, the reasons, the history over images, and links to its module page.
+- per CCD (click a cell): the reasons, the reviews, the links to the full reports and the main numbers; every other
+  number and the history over images folded below.
 
-Module pages link back to their overview.
+Module pages link back to their overview. The campaign page's cells show read noise and gain (images, else packet),
+dark current (latest image), the dark-current rate of the series (plateau, else latest) and the serial-register
+dark-current rate, plus each CCD's review status.
+
+**Reviews.** Every overview (per CCD) and every module report (per tab, for the whole module or one CCD) has a review
+box: your name, a status (approved / concern / rejected / note) and a comment. A new review stays in the browser
+until it is saved: **Save to campaign folder** (Chrome, Edge) or **Download** (any browser), then
+`run_superWADERs --campaign DIR --reviews FILE` (no input; or put the file into `DIR/reviews/` and run
+`run_superWADERs --campaign DIR`). Saved reviews show on every page of the campaign and are listed in
+`DIR/reviews.csv` and `DIR/reviews.txt`. A review keeps the data and numbers it was written on; when newer data
+arrive it is marked "data changed since". Details: [superWADERs/README.md](../superWADERs/README.md), "Reviews".
 
 ## 3. Using the HTML pages
 
@@ -181,9 +192,9 @@ Every page works offline (no network) in Chrome, Safari or Firefox; open it by d
   mode and the cut (to compare the same spot); **blink** switches every second. Defect pages: tick boxes per
   defect type, "show markings", click a defect in the list to jump to it. Long lists are laid out in columns of 40
   lines, with a type filter and a sort (largest value / position).
-- **Comments**: one box per tab; saved in the browser as you type. **Save comments** writes all of a report's
-  comments to `<report>_comments.json` (keep it next to the report or send it), **Load comments** reads it back.
-- **Export PDF**: every tab on its own page with the comments; choose "Save as PDF" in the print dialog.
+- **Reviews**: one box per tab (name, status, whole module or one CCD, comment); the line under the title lists every
+  review of the module. Saving: see section 2b.
+- **Export PDF**: every tab on its own page with the reviews; choose "Save as PDF" in the print dialog.
 - **Log**: at the bottom of each tab: files, header settings, decoder checks, fit results, warnings.
 - A **red dot** on a tab / red numbers: outside the usual range (noise > 0.3 e-, peaks not resolved, defects
   found, DC above the limit, ...).

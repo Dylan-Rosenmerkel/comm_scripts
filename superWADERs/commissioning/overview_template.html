@@ -42,11 +42,11 @@ input,select,button{font:inherit;padding:5px 8px;border:1px solid var(--line);bo
 @media print{nav,#panel,#q,#csv,#fv,#vw{display:none}.layout{grid-template-columns:1fr}.panel{position:static;max-height:none}
  body{background:#fff;color:#000}.dist,.issue,.tbl{break-inside:avoid}h2{break-after:avoid}}
 </style></head><body>
-<header><div class="crumbs" id="crumbs"></div><h1 id="title"></h1><div class="muted" id="sub"></div><div id="banner"></div><div class="kpis" id="kpis"></div><div class="tools" id="tools"></div></header>
+<header><div class="crumbs" id="crumbs"></div><h1 id="title"></h1><div class="muted" id="sub"></div><div id="banner"></div><div class="kpis" id="kpis"></div><div id="swrbar"></div><div class="tools" id="tools"></div></header>
 <nav><div id="navl"></div></nav>
 <main>
 <h2 id="grid">Modules × CCDs</h2><p class="muted" id="gridnote"></p>
-<p><span id="vwbox"></span> <span id="showbox"></span> Filter: <select id="fv"><option value="">all modules</option><option value="fail">modules with a fail</option><option value="warn">modules with a warn or fail</option></select></p>
+<p><span id="vwbox"></span> <span id="showbox"></span> Filter: <select id="fv"><option value="">all modules</option><option value="fail">modules with a fail</option><option value="warn">modules with a warn or fail</option><option value="unrev">CCDs not reviewed yet</option><option value="rconcern">CCDs with a concern or rejection</option></select></p>
 <div class="layout"><div style="overflow-x:auto"><table class="grid" id="g"></table></div><aside class="panel" id="panel"><span class="muted">Click a CCD in the grid.</span></aside></div>
 <h2 id="issues">What needs attention</h2><p class="muted">Findings grouped by what was found; click a CCD to show it.</p><div class="issues" id="iss"></div>
 <div id="distsec"><h2 id="dists">Distributions over all CCDs</h2><p class="muted">One dot per CCD, coloured by its verdict on that metric; amber and red lines are the warn and fail limits (grey dots: no limit set). Hover for the CCD, click to show it.</p><div class="dists" id="dd"></div></div>
@@ -57,6 +57,8 @@ input,select,button{font:inherit;padding:5px 8px;border:1px solid var(--line);bo
 the module pages and PDFs next to them). Open them from that folder and keep it together (copy or zip the whole folder):
 a page copied or opened on its own cannot follow its links.</p>
 </main>
+<script src="__REVIEWS_SRC__"></script>
+<script>__REVIEW_WIDGET__</script>
 <script>
 const D=__DATA__;
 const $=s=>document.querySelector(s), C=D.criteria||{metrics:{}}, M=C.metrics||{}, F=D.fields||{};
@@ -64,6 +66,13 @@ const lab=k=>(F[k]||{}).label||(M[k]||{}).label||k.replace(/_/g," "), unit=k=>(F
 const fmt=(v,d=3)=>v==null||v===""?"–":typeof v==="boolean"?(v?"yes":"no"):typeof v==="number"?(!isFinite(v)?"–":Math.abs(v)<0.01&&v!==0||Math.abs(v)>=1e4?v.toExponential(2):(+v.toFixed(d)).toString()):Array.isArray(v)?v.join(", "):String(v);
 const key=c=>c.module+" "+c.ext, cls=c=>c.verdict||"na";
 let V=0;const views=D.views||[];const rows=()=>(views[V]||{ccds:[]}).ccds;
+// ---- reviews (review_widget.js): which reviews belong to a CCD on this page, and what a new one is about
+const RV=D.review||{tool:"campaign"};let SEL=null;
+// a review belongs to a CCD by module name, or by ACM (module names can come later, from a module list) and EXT
+const rq=c=>r=>{const t=r.target||{};return (t.module===c.module||(t.acm!=null&&c.acm!=null&&String(t.acm)===String(c.acm)))&&(t.ext===c.ext||!t.ext)&&(RV.tool==="campaign"||t.tool===RV.tool||t.tool==="campaign");};
+const revs=c=>SWR.all().filter(rq(c));
+const rtarget=c=>({tool:RV.tool,module:c.module,acm:c.acm==null?null:c.acm,ext:c.ext,ccd:c.ccd||null,view:views.length>1?(views[V]||{}).name:null});
+SWR.init({campaign:RV.campaign||"",page:D.title,same:r=>{const t=r.target||{};return !t.page&&(t.tool||"campaign")===RV.tool;},onChange:()=>{kpis();drawGrid();table();SWR.bar($("#swrbar"));if(SEL)show(SEL,true);}});
 document.title=D.title;$("#title").textContent=D.title;$("#sub").textContent=D.sub||"";
 $("#crumbs").innerHTML=(D.back||[]).map(([l,h])=>`<a href="${h}">${l}</a>`).join("");
 if(location.protocol!=="file:"&&location.protocol!=="http:"&&location.protocol!=="https:")$("#sub").textContent+=" · opened outside its folder: links to the other pages will not open";
@@ -73,8 +82,8 @@ const navs=[["grid","Modules"],["issues","What needs attention"]].concat(Object.
 $("#navl").innerHTML=navs.map(([a,b])=>`<a href="#${a}">${b}</a>`).join("");
 if(D.tools)$("#tools").innerHTML=D.tools.map(t=>`<a class="tool" href="${t.href}"><b>${t.label}</b><span style="color:var(--pass)">${t.n.pass||0} pass</span> · <span style="color:var(--warn)">${t.n.warn||0} warn</span> · <span style="color:var(--fail)">${t.n.fail||0} fail</span>${t.n.na?` · <span class="muted">${t.n.na} n/a</span>`:""}<div class="muted" style="font-size:12px;margin-top:3px">${t.note||""}</div></a>`).join("");
 if(views.length>1){$("#vwbox").innerHTML=`View: <select id="vw">${views.map((v,i)=>`<option value="${i}">${v.name} (${v.ccds.length} CCDs)</option>`).join("")}</select>`;$("#vw").onchange=e=>{V=+e.target.value;drawAll();};}
-function kpis(){const r=rows(),n=v=>r.filter(c=>cls(c)===v).length;$("#kpis").innerHTML=[["pass","CCDs pass"],["warn","CCDs warn"],["fail","CCDs fail"],["na","not processed / no data"]]
- .map(([k,l])=>`<div class="kpi ${k}"><b>${n(k)}</b>${l}</div>`).join("")+((views[V]||{}).note?`<div class="kpi" style="flex:1"><span class="muted">${views[V].note}</span></div>`:"");}
+function kpis(){const r=rows(),n=v=>r.filter(c=>cls(c)===v).length,nr=r.filter(c=>revs(c).length).length;$("#kpis").innerHTML=[["pass","CCDs pass"],["warn","CCDs warn"],["fail","CCDs fail"],["na","not processed / no data"]]
+ .map(([k,l])=>`<div class="kpi ${k}"><b>${n(k)}</b>${l}</div>`).join("")+`<div class="kpi"><b>${nr} / ${r.length}</b>CCDs reviewed</div>`+((views[V]||{}).note?`<div class="kpi" style="flex:1"><span class="muted">${views[V].note}</span></div>`:"");}
 let by={},mods=[],exts=[];
 function index(){by={};rows().forEach(c=>by[key(c)]=c);mods=[...new Set(rows().map(c=>c.module))].sort();exts=[...new Set(rows().map(c=>c.ext))].sort();}
 function modVerdict(m){const v=exts.map(e=>by[m+" "+e]).filter(Boolean).map(cls);return v.includes("fail")?"fail":v.includes("warn")?"warn":v.every(x=>x==="na")?"na":"pass";}
@@ -89,12 +98,11 @@ function showBox(){const fs=numFields();if(!fs.includes(SHOWF))SHOWF="";
  if($("#sf"))$("#sf").onchange=e=>{SHOWF=e.target.value;drawGrid();};}
 function chips(c){return Object.entries(c.tools).map(([t,x])=>`<span class="tchip ${x.verdict}" title="${t}: ${x.verdict}">${x.short||t.slice(0,2)}</span>`).join("");}
 function cellBody(c){const k=cls(c),V=c.values||{};
- if(SHOWF){const v=V[SHOWF];return typeof v==="number"&&isFinite(v)?`<div class="big">${fmt(v,3)}<span class="u">${unit(SHOWF)?" "+unit(SHOWF):""}</span></div>`:`<div class="big muted">–</div>`;}
- let h=`<div class="v">${k==="na"?"n/a":k}${c.tools?" "+chips(c):""}</div>`;
+ if(SHOWF){const v=V[SHOWF];return (typeof v==="number"&&isFinite(v)?`<div class="big">${fmt(v,3)}<span class="u">${unit(SHOWF)?" "+unit(SHOWF):""}</span>`:`<div class="big muted">–`)+SWR.badge(revs(c),c.stamp)+"</div>";}
+ let h=`<div class="v">${k==="na"?"n/a":k}${c.tools?" "+chips(c):""}${SWR.badge(revs(c),c.stamp)}</div>`;
  const main=(D.cell||[]).filter(f=>V[f]!=null&&!(Array.isArray(V[f])));
  h+=main.map(f=>{const lv=(c.levels||{})[f];return `<div class="nv"><span class="nl">${short(f)}</span> <b${lv&&lv!=="pass"?` style="color:var(--${lv})"`:""}>${fmt(V[f],3)}</b>${unit(f)?` <span class="u">${unit(f)}</span>`:""}</div>`}).join("");
  if(k==="na"&&!main.length)h+=`<div class="muted">${c.status||"no data"}</div>`;
- if(k==="warn"||k==="fail"){const w=why(c);if(w)h+=`<div class="why" style="color:var(--${k})">${w}</div>`;}
  return h;}
 function scaleColor(f){const v=rows().map(c=>(c.values||{})[f]).filter(x=>typeof x==="number"&&isFinite(x)).sort((a,b)=>a-b);
  if(!v.length)return()=>"";const lo=v[0],hi=v[v.length-1],q=x=>v.filter(y=>y<=x).length/v.length;
@@ -103,21 +111,35 @@ function scaleColor(f){const v=rows().map(c=>(c.values||{})[f]).filter(x=>typeof
 function drawGrid(){const f=$("#fv").value;const sc=SHOWF&&!M[SHOWF]?scaleColor(SHOWF):null;if(SHOWF&&M[SHOWF])scaleColor(SHOWF);if(!SHOWF&&$("#legend"))$("#legend").innerHTML="";
  let h="<tr><th>module</th>"+exts.map(e=>{const c=rows().find(x=>x.ext===e);return `<th>${e}${c&&c.ccd?" · "+c.ccd:""}</th>`}).join("")+"</tr>";
  for(const m of mods){const mv=modVerdict(m);if(f==="fail"&&mv!=="fail")continue;if(f==="warn"&&(mv==="pass"||mv==="na"))continue;
-  h+=`<tr><td class="mod"><span class="dot" style="background:var(--${mv})"></span>${m}</td>`+exts.map(e=>{const c=by[m+" "+e];if(!c)return"<td></td>";
+  const rf=c=>f==="unrev"?!revs(c).length:f==="rconcern"?revs(c).some(r=>r.status==="concern"||r.status==="rejected"):true;
+  if((f==="unrev"||f==="rconcern")&&!exts.some(e=>by[m+" "+e]&&rf(by[m+" "+e])))continue;
+  h+=`<tr><td class="mod"><span class="dot" style="background:var(--${mv})"></span>${m}</td>`+exts.map(e=>{const c=by[m+" "+e];if(!c)return"<td></td>";if(!rf(c))return"<td></td>";
    let k=cls(c),st="";if(SHOWF){const lv=(c.levels||{})[SHOWF];k=M[SHOWF]?(lv||"na"):"na";if(sc){st=sc((c.values||{})[SHOWF]);}}
    return `<td><div class="cell ${k}" style="${st}" data-k="${key(c)}" title="${real(c).map(x=>x[2]).join("\n").replace(/"/g,"&quot;")}">${cellBody(c)}</div></td>`}).join("")+"</tr>";}
  $("#g").innerHTML=h;document.querySelectorAll(".cell").forEach(el=>el.onclick=()=>show(el.dataset.k));}
 $("#fv").onchange=drawGrid;
-function show(k){const c=by[k];if(!c)return;document.querySelectorAll(".cell").forEach(e=>e.classList.toggle("sel",e.dataset.k===k));
+function vtable(c,fs){return "<table>"+fs.map(f=>{const lv=(c.levels||{})[f];return `<tr><td>${(F[f]||{}).plabel||lab(f)}</td><td${lv&&lv!=="pass"?` style="color:var(--${lv});font-weight:600"`:""}>${fmt(c.values[f],4)}${unit(f)?" "+unit(f):""}</td></tr>`}).join("")+"</table>";}
+function show(k,keep){const c=by[k];if(!c)return;SEL=k;document.querySelectorAll(".cell").forEach(e=>e.classList.toggle("sel",e.dataset.k===k));
+ const V_=c.values||{},has=f=>V_[f]!=null&&!(Array.isArray(V_[f])&&!V_[f].length);
  let h=`<h3 style="margin:0 0 4px">${c.module} · ${c.ext}${c.ccd?" · "+c.ccd:""} <span class="chip ${cls(c)}">${cls(c)==="na"?"n/a":c.verdict}</span></h3><div class="muted" style="margin-bottom:8px">${c.acm!=null?"ACM "+c.acm:""}${c.when?" · "+c.when:""}</div>`;
  if(c.links&&c.links.length)h+=`<div style="margin-bottom:6px">${c.links.map(([l,u])=>`<a href="${u}">${l}</a>`).join(" · ")}</div>`;
- h+=(c.reasons||[]).map(r=>`<div class="reason ${r[0]==="note"?"na":r[0]}">${r[0]==="fail"?"✖":r[0]==="warn"?"▲":"ℹ"} ${r[2]}</div>`).join("")||(cls(c)==="na"?`<div class="reason na">${c.status||"no data"}</div>`:`<div class="reason pass">✔ every check within the limits</div>`);
- if(c.tools){h+="<h4>Per tool: overview · full reports</h4><table>"+Object.entries(c.tools).map(([t,x])=>`<tr><td><a href="${x.href}" title="this tool's overview, opened at this CCD">${t}</a>${(x.reports||[]).length?`<div style="font-size:12px;margin-top:2px">${x.reports.map(([l,u])=>`<a href="${u}">${l}</a>`).join(" · ")}</div>`:""}</td><td><span class="chip ${x.verdict}">${x.verdict}</span></td></tr>`).join("")+"</table>";}
- for(const[sec,fs]of (D.sections||[])){const rs=fs.filter(f=>(c.values||{})[f]!=null&&!(Array.isArray(c.values[f])&&!c.values[f].length));if(!rs.length)continue;
-  h+=`<h4>${sec}</h4><table>`+rs.map(f=>{const lv=(c.levels||{})[f];return `<tr><td>${(F[f]||{}).plabel||lab(f)}</td><td${lv&&lv!=="pass"?` style="color:var(--${lv});font-weight:600"`:""}>${fmt(c.values[f],4)}${unit(f)?" "+unit(f):""}</td></tr>`}).join("")+"</table>";}
- if(D.matrices&&D.matrices[c.module])h+=`<h4>${D.matrix_title||"matrix"} · ${c.module}</h4>`+matTable(c.module);
- if(c.history&&c.history.rows&&c.history.rows.length)h+=`<h4>History (${c.history.rows.length})</h4><div class="hist"><table><tr>${c.history.head.map(x=>`<th>${x}</th>`).join("")}</tr>${c.history.rows.map(r=>`<tr>${r.map((x,i)=>`<td${i===r.length-1&&/fail|warn/.test(x)?` style="color:var(--${x})"`:""}>${fmt(x,4)}</td>`).join("")}</tr>`).join("")}</table></div>`;
- $("#panel").innerHTML=h;if(innerWidth<900)$("#panel").scrollIntoView({behavior:"smooth"});}
+ const rr=real(c),notes=(c.reasons||[]).filter(r=>r[0]==="note");
+ h+=rr.map(r=>`<div class="reason ${r[0]}">${r[0]==="fail"?"✖":"▲"} ${r[2]}</div>`).join("")||(cls(c)==="na"?`<div class="reason na">${c.status||"no data"}</div>`:`<div class="reason pass">✔ every check within the limits</div>`);
+ if(notes.length)h+=`<details><summary class="muted" style="font-size:12px">${notes.length} note(s)</summary>${notes.map(r=>`<div class="reason na">ℹ ${r[2]}</div>`).join("")}</details>`;
+ h+=`<h4>Reviews</h4><div id="swrform"></div>`;
+ if(c.tools)h+="<h4>Per tool: overview · full reports</h4><table>"+Object.entries(c.tools).map(([t,x])=>`<tr><td><a href="${x.href}" title="this tool's overview, opened at this CCD">${t}</a>${(x.reports||[]).length?`<div style="font-size:12px;margin-top:2px">${x.reports.map(([l,u])=>`<a href="${u}">${l}</a>`).join(" · ")}</div>`:""}</td><td><span class="chip ${x.verdict}">${x.verdict}</span></td></tr>`).join("")+"</table>";
+ const main=(D.cell||[]).filter(has);
+ if(main.length)h+=`<h4>Main values</h4>`+vtable(c,main);
+ let more="",n=0;
+ for(const[sec,fs]of (D.sections||[])){const rs=fs.filter(f=>has(f)&&!main.includes(f));if(!rs.length)continue;n+=rs.length;more+=`<h4>${sec}</h4>`+vtable(c,rs);}
+ if(D.matrices&&D.matrices[c.module])more+=`<h4>${D.matrix_title||"matrix"} · ${c.module}</h4>`+matTable(c.module);
+ if(more)h+=`<details><summary class="muted" style="margin-top:10px;cursor:pointer">All values (${n})</summary>${more}</details>`;
+ if(c.history&&c.history.rows&&c.history.rows.length)h+=`<details><summary class="muted" style="margin-top:6px;cursor:pointer">History (${c.history.rows.length})</summary><div class="hist"><table><tr>${c.history.head.map(x=>`<th>${x}</th>`).join("")}</tr>${c.history.rows.map(r=>`<tr>${r.map((x,i)=>`<td${i===r.length-1&&/fail|warn/.test(x)?` style="color:var(--${x})"`:""}>${fmt(x,4)}</td>`).join("")}</tr>`).join("")}</table></div></details>`;
+ $("#panel").innerHTML=h;
+ const choices=c.tools?[["this CCD (all tools)",{tool:"campaign"}]].concat(Object.entries(c.tools).map(([t,x])=>[`this CCD: ${t}`,{tool:x.tool}])):null;
+ const snap=Object.fromEntries([["verdict",c.verdict||cls(c)]].concat(main.map(f=>[(F[f]||{}).short||lab(f),fmt(V_[f],4)+(unit(f)?" "+unit(f):"")])));
+ SWR.form($("#swrform"),rq(c),rtarget(c),c.stamp,choices,snap);
+ if(!keep&&innerWidth<900)$("#panel").scrollIntoView({behavior:"smooth"});}
 function issues(){const groups={};rows().forEach(c=>real(c).forEach(r=>{const l=r[3]||lab(r[1]);(groups[l]=groups[l]||[]).push([r[0],c,r[2]]);}));
  $("#iss").innerHTML=Object.entries(groups).sort((a,b)=>b[1].filter(x=>x[0]==="fail").length-a[1].filter(x=>x[0]==="fail").length||b[1].length-a[1].length)
  .map(([l,xs])=>`<div class="issue"><h3>${l} <span class="muted">· ${xs.filter(x=>x[0]==="fail").length} fail, ${xs.filter(x=>x[0]==="warn").length} warn</span></h3>`+
@@ -141,8 +163,8 @@ function mats(){if(!D.matrices){$("#xtsec").style.display="none";return;}$("#xt"
  const all=Object.keys(D.matrices).filter(m=>mine.has(m)),sig=all.filter(m=>sigOf(m).length).sort((a,b)=>Math.max(...sigOf(b).map(v=>Math.abs(v[0])))-Math.max(...sigOf(a).map(v=>Math.abs(v[0]))));
  const rest=all.filter(m=>!sig.includes(m)),mx=Math.max(0,...rest.flatMap(m=>Object.values(D.matrices[m]).map(v=>Math.abs(v[0]))));
  $("#xtd").innerHTML=sig.map(m=>`<div class="issue"><h3>${m}</h3>${matTable(m)}</div>`).join("")+`<p class="muted" style="grid-column:1/-1">${sig.length?"":"Nothing significant. "}${rest.length} module(s) without a significant value above the warn limit (largest |value| ${mx.toExponential(1)})${rest.length?": "+rest.join(", "):""}. Click a CCD to see its module's matrix.</p>`;}
-const COLS=()=>["module","acm","ext","ccd","verdict"].concat(D.columns||[]).concat(["reasons"]);let sortK=null,up=true;
-const cv=(c,k)=>k in c&&k!=="values"?c[k]:(c.values||{})[k];
+const COLS=()=>["module","acm","ext","ccd","verdict","review"].concat(D.columns||[]).concat(["reasons"]);let sortK=null,up=true;
+const cv=(c,k)=>k==="review"?SWR.statusText(revs(c),c.stamp):k in c&&k!=="values"?c[k]:(c.values||{})[k];
 function table(){const q=$("#q").value.toLowerCase(),cols=COLS();let rs=rows().filter(c=>JSON.stringify(c.values||{}).toLowerCase().includes(q)||[c.module,c.ext,c.ccd,c.verdict].join(" ").toLowerCase().includes(q));
  if(sortK)rs.sort((a,b)=>{const x=cv(a,sortK),y=cv(b,sortK);return((typeof x==="number"&&typeof y==="number")?x-y:String(x??"").localeCompare(String(y??"")))*(up?1:-1)});
  $("#t").innerHTML="<tr>"+cols.map(k=>`<th data-k="${k}">${k==="reasons"?"why":lab(k)}${unit(k)?` <span class="muted">[${unit(k)}]</span>`:""}</th>`).join("")+"</tr>"+rs.map(c=>"<tr>"+cols.map(k=>k==="verdict"?`<td><span class="chip ${cls(c)}">${cls(c)==="na"?"n/a":c.verdict}</span></td>`:k==="reasons"?`<td>${(c.reasons||[]).map(r=>r[2]).join("; ")}</td>`:`<td>${fmt(cv(c,k),4)}</td>`).join("")+"</tr>").join("");
@@ -154,7 +176,8 @@ const lim=(c,l)=>c[l]==null?"–":`${c.direction==="below"?"<":">"} ${fmt(c[l])}
 $("#crit").innerHTML=Object.keys(M).length?`<p class="muted">${C.name||""} ${C.version?"("+C.version+")":""}</p><div class='tbl'><table><tr><th>check</th><th>warn</th><th>fail</th><th>unit</th></tr>`+Object.entries(M).map(([k,c])=>`<tr><td>${c.label}${c.abs?" (|value|)":""}</td><td>${lim(c,"warn")}</td><td>${lim(c,"fail")}</td><td>${c.unit||""}</td></tr>`).join("")+
  Object.entries(C.flag_levels||{}).map(([k,l])=>`<tr><td>${(D.flag_labels||{})[k]||k}</td><td colspan="3">${l}</td></tr>`).join("")+"</table></div>":"";
 $("#dl").innerHTML=(D.definitions||[]).map(([a,b])=>`<dt>${a}</dt><dd>${b}</dd>`).join("");
-function drawAll(){index();kpis();showBox();drawGrid();issues();dists();mats();table();$("#panel").innerHTML='<span class="muted">Click a CCD in the grid.</span>';
+function drawAll(){index();kpis();SWR.bar($("#swrbar"));showBox();drawGrid();issues();dists();mats();table();$("#panel").innerHTML='<span class="muted">Click a CCD in the grid.</span>';
  const h=decodeURIComponent(location.hash.slice(1));if(by[h])show(h);}
 drawAll();
+addEventListener("hashchange",()=>{const h=decodeURIComponent(location.hash.slice(1));if(by[h])show(h);});
 </script></body></html>

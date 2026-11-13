@@ -120,7 +120,8 @@ switch on sparse electron-counting CCDs, A_GMX crowded mode on crowded ones, A_G
 or structured ones, the threshold clusterer on flooded / unresolved ones; every choice is listed in `summary.txt`.
 Data arriving packet by packet go into one campaign folder (`--campaign DIR`): only new inputs are processed, and
 every tool (images, packet, dark current, defect maps, serial register) has an overview page (module × CCD grid
-with pass / warn / fail verdicts from a criteria file) combined in `DIR/index.html`; without `--campaign` a run
+with pass / warn / fail verdicts from a criteria file) combined in `DIR/index.html`; every page has review boxes
+(name, status, comment per CCD or report tab), kept in `DIR/reviews/`; without `--campaign` a run
 stands alone. Clustering, campaigns, layout and what has been checked: [superWADERs/README.md](superWADERs/README.md);
 efficiency notes (not applied): [docs/superWADERs_efficiency_notes.md](docs/superWADERs_efficiency_notes.md). It needs the `damic`
 conda environment (found automatically). `run_WADERs --engine native` still runs `src/`'s copy of the native engine
@@ -166,6 +167,7 @@ Without an entry the name comes from `--module ACM=NAME`, then the data folder n
 |---|---|---|
 | fits and clusters (chain per CCD) | `run_superWADERs images.txt [--gain-correction] [--composite]` | `index.html`, `images/index.html`, `root/` (+ `root_gaincorr*/`), `summary.txt`, `characterisation/` |
 | add a packet / list to a campaign | any command below with `--campaign DIR` (`--criteria FILE`, `--refresh-all`, `--reprocess`) | the same in `DIR/`, for everything the campaign holds; only new inputs are processed |
+| take in reviews written on the pages | `run_superWADERs --campaign DIR [--reviews FILE ...]` (no input) | `DIR/reviews.js` (shown on every page), `reviews.csv`, `reviews.txt` |
 | L0 traces / PSD traces | `run_superWADERs traces.txt [--l0-no-html]` | `L0/<trace>/`: `overview.png`, `viewer.html`, `summary.json` |
 | L1 images at several skip counts | `run_superWADERs l1.txt --l1-skips 1,10,100,1000 [--l1-skip-first K]` | `L1/`: one FITS per N (all through the pipeline), `noise_vs_skips.csv/.png`, `compare/`, `<image>_diagnostics/` |
 | commissioning packet | `run_superWADERs packet.txt --packet --module-list modules.csv` | `packet/index.html` + one page per module |
@@ -247,7 +249,7 @@ can be sent to others as it is.
 | `superWADERs/run_superWADERs` | the command (`bin/run_superWADERs` starts it) |
 | `superWADERs/engine/` | `native_pipeline.py` (pedestal, fits, calibration, clustering chain, cluster files), `characterise.py` (front end), and superWADERs' own copies of autoconfig, gain_dc_split, gain_vs_charge, ... |
 | `superWADERs/clustering/` | A_GMX and the Bayesian few-electron finder |
-| `superWADERs/commissioning/` (campaigns, overviews) | `campaign.py` (ledger, records, criteria, verdicts, overview pages), `worker.py` (one image -> its record), `ccd_metrics.py`, `overview_template.html`, `criteria_default.json` (placeholder limits) |
+| `superWADERs/commissioning/` (campaigns, overviews) | `campaign.py` (ledger, records, criteria, verdicts, overview pages), `worker.py` (one image -> its record), `ccd_metrics.py`, `overview_template.html`, `criteria_default.json` (placeholder limits), `reviews.py` + `review_widget.js` (reviews) |
 | `superWADERs/commissioning/` (tools) | `raw_data.py` + `raw_levels/` (L0 / L1; copies from ccd_opt_ml, `utils/sync_from_ccd_opt_ml.py`), `packet_report.py` + template, `dc_series.py`, `defects.py` + `lsm_defects/` (`utils/sync_from_lsm_analysis.py`), `sr_images.py` |
 | `superWADERs/README.md`, `docs/superWADERs_user_guide.md`, `docs/superWADERs_commissioning_next_steps.md`, `docs/superWADERs_efficiency_notes.md` | overview (incl. campaigns), user guide, plan and open items, efficiency notes (not applied) |
 

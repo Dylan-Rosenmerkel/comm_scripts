@@ -5,6 +5,7 @@ is in this folder (engine/, clustering/, commissioning/).
 
     run_superWADERs INPUT [-o PARENT] [-j N] [options]      INPUT: an image, a raw DAQ file, or a .txt list of them
     run_superWADERs INPUT --campaign DIR [options]          add INPUT to the campaign DIR (data arriving in packets)
+    run_superWADERs --campaign DIR [--reviews FILE ...]     no INPUT: take in the reviews written on the pages
     run_superWADERs -h            the flags;      run_superWADERs -h -v      the full guide
 
 Every run is a campaign (commissioning/campaign.py): a new folder (superWADERs_<run name>/), or with --campaign DIR a
@@ -209,9 +210,15 @@ def module_name(acm, src, modules):
 
 def module_resolver(run):
     """Module name of a CCD: --module-list (per ACM or per CCD), else --module, else the data folder name, else
-    ACM<id>. Returns f(acm, ext, ccd)."""
+    ACM<id>. Returns f(acm, ext, ccd). The campaign keeps the module list (modules.csv): a later run without
+    --module-list names the CCDs the same way (pages and reviews refer to the module names)."""
     import packet_report as PR
-    mods = PR.read_module_list(run.args.module_list)
+    import shutil
+    kept = os.path.join(run.out, "modules.csv")
+    if run.args.module_list:
+        if not (os.path.exists(kept) and os.path.samefile(run.args.module_list, kept)):
+            shutil.copyfile(run.args.module_list, kept)
+    mods = PR.read_module_list(run.args.module_list or (kept if os.path.exists(kept) else None))
 
     def f(acm, ext=None, ccd=None):
         m = PR.module_for(mods, acm, ext, ccd)
@@ -253,6 +260,9 @@ output (superWADERs_<run name>/, <run name> = image or .txt name; or the --campa
   packet/, dc_series/, defects/, sr/   each tool's overview (index.html) and its module pages
   summary.txt                  verdict counts, fits per CCD, the clustering chain of every CCD and why, every run
   campaign.json, criteria.json, records/   the campaign: inputs and runs, the criteria, the kept results
+  modules.csv                  the campaign's module list (the last --module-list), used by every later run
+  reviews/, reviews.js, reviews.csv, reviews.txt   the reviews written on the pages (name, status, comment per CCD
+                               or report tab; commissioning/reviews.py), shown on every page
   fit_quality.csv              gain, noise, dark current per CCD with errors scaled by sqrt(chi2/ndf)
   native_summary.json          everything per image and CCD (fits, gain choice, pedestal, thresholds, decisions)
   characterisation/<image>.json   the front end's record per image and CCD, with the result
@@ -315,6 +325,14 @@ campaign (--campaign DIR): give each new packet (or list) with the same --campai
   limits (all pages re-judged). Without --campaign, a run stands alone: a fresh folder with only its inputs and tools. Run-pooled dark charge
   (few-electron finder), --gain-correction curves and --composite use the images of the current run only.
 
+reviews: every page has a review box (overviews: per CCD; module reports: per tab, for the whole module or one
+  CCD): a name, a status (approved / concern / rejected / note) and a comment. A new review stays in the browser until
+  'Save to campaign folder' (Chrome / Edge) or 'Download' (any browser: put the file into DIR/reviews/, or give it
+  with --reviews FILE). Then
+    run_superWADERs --campaign ~/comm/LSM2026 [--reviews ~/Downloads/reviews_*.json]
+  (no INPUT, seconds) rebuilds reviews.js, so every page shows them, reviews.csv and reviews.txt. A review records the
+  data it was about: when newer data arrive the pages mark it 'data changed since'.
+
 module names (--module-list FILE): one line per ACM (or per CCD), comma / tab / space separated:
   # ACM, module[, EXT<n> or CCD name]
   101, DM24
@@ -330,7 +348,9 @@ def build_parser(full=False):
         prog=PROG, usage=f"{PROG} INPUT [options]      (-h: flags, -h -v: full guide)",
         description=(__doc__ if full else SHORT_DESCRIPTION), epilog=(HELP_EPILOG if full else SHORT_EPILOG),
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("input", metavar="INPUT", help="an image, a raw DAQ file or a .txt list (one path per line)")
+    ap.add_argument("input", metavar="INPUT", nargs="?", default=None,
+                    help="an image, a raw DAQ file or a .txt list (one path per line); without it (and with --campaign "
+                         "DIR): only take in the reviews")
     ap.add_argument("-o", "--parent", metavar="DIR", default=".",
                     help="folder in which superWADERs_<run name> is made (default: current folder)")
     ap.add_argument("-j", "--jobs", metavar="N", type=int, default=min(2, os.cpu_count() or 1),
@@ -346,6 +366,8 @@ def build_parser(full=False):
                         "(criteria.json) and used for every page; a new file re-judges everything without new fits")
     g.add_argument("--reprocess", action="store_true",
                    help="process the inputs again even if the campaign already has them")
+    g.add_argument("--reviews", metavar="FILE", nargs="+", default=[],
+                   help="review files downloaded from the pages: copied into DIR/reviews/ (also without INPUT)")
     g.add_argument("--refresh-all", action="store_true",
                    help="rebuild every tool's pages from the kept results (default: only the tools of this run, and all "
                         "of them after --criteria / --reprocess)")
@@ -391,7 +413,8 @@ def build_parser(full=False):
     g.add_argument("--image-number", metavar="N", type=int, help="image type for the macro (default: Image_<N> in the name)")
     g.add_argument("--module", metavar="ACM=NAME", action="append", default=[], help="module name of an ACM (repeat)")
     g.add_argument("--module-list", metavar="FILE",
-                   help="module names per ACM (or per CCD): lines 'ACM, module[, EXT<n> or CCD name]'")
+                   help="module names per ACM (or per CCD): lines 'ACM, module[, EXT<n> or CCD name]'; kept in the "
+                        "campaign (modules.csv) and used by later runs without it")
     g = ap.add_argument_group("raw DAQ files and commissioning tools")
     g.add_argument("--l1-skips", metavar="auto|N,N,...", default="auto",
                    help="level-1 images: one FITS image per number of skips N (auto: 1, 2, 5, 10, ... and all)")
@@ -445,6 +468,20 @@ class Run:
 
     def say(self, msg):
         print(f"  {self.stamp()} {msg}", flush=True)
+
+
+def reviews_only(args):
+    """run_superWADERs --campaign DIR [--reviews FILE ...] without INPUT: take in the reviews (standard library only)."""
+    if not args.campaign:
+        die("give an INPUT (or --campaign DIR without INPUT to take in the reviews written on its pages)")
+    out = os.path.abspath(os.path.expanduser(args.campaign))
+    if not os.path.exists(os.path.join(out, "campaign.json")):
+        die(f"{out} is not a campaign folder (no campaign.json)")
+    import reviews as RV
+    print(f"{PROG}: reviews of {out}")
+    print("\n".join(RV.refresh(out, args.reviews)))
+    print(f"\nevery page of the campaign shows them (reload an open page); table: {os.path.join(out, 'reviews.csv')}")
+    return 0
 
 
 def check_request(args):
@@ -1164,7 +1201,10 @@ def render_all(run, crit, mods_of, fresh, scope, refresh=False):
         for c in recs:
             part = camp.load_record("images_sr", c["stem"]) or {}
             thr, ml = c.get("sr_settings") or (args.sr_threshold, args.sr_min_length)
+            t_eff = float(c["meta"].get("EXPOSURE", 0) or 0) + (CA.readout_seconds(c["meta"]) or 0) / 2
             for ext, it in sorted(part.items()):
+                if it.get("resolved") and t_eff > 0:      # dark current of the SR image (exposure + half the readout)
+                    it["dc_rate"] = it["dc"] / t_eff * 86400
                 per_ccd.setdefault((c.get("acm") or 0, int(ext[3:]), it["ccd"]), []).append(it)
         run.say(f"serial-register pages ({len(recs)} image(s))")
         lines, srows = SR.render(per_ccd, out, mods_of, thr or args.sr_threshold, ml or args.sr_min_length)
@@ -1193,6 +1233,8 @@ def render_all(run, crit, mods_of, fresh, scope, refresh=False):
 
 def main(argv=None):
     args = parse_args(argv)
+    if args.input is None:
+        return reviews_only(args)
     run_name, files, out, modules = check_request(args)
     ensure_environment(args.env)                      # may re-run this script inside the conda environment and exit
     if args.temperature is not None:                  # read by pair_energy.py at import (g(n) and A_GMX energies)
@@ -1291,7 +1333,9 @@ def main(argv=None):
     refresh = bool(args.refresh_all or args.criteria or args.reprocess)
     configs, rows, roots, tool_lines = render_all(run, crit, mods_of, fresh, scope, refresh)
     run.camp.save()
-    summary(run, configs, rows, roots, tool_lines + [""] + run.lines["comm"])
+    import reviews as RV
+    review_lines = RV.refresh(out, args.reviews, log=run.say)
+    summary(run, configs, rows, roots, tool_lines + [""] + review_lines + [""] + run.lines["comm"])
     print(f"\nresults: {out}   (overview: {os.path.join(out, 'index.html')})")
     return 1 if run.failed else 0
 

@@ -36,6 +36,8 @@ table.num td.v { font-variant-numeric:tabular-nums; }
 .log { font:12px/1.4 monospace; background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:8px; white-space:pre-wrap; max-height:260px; overflow:auto; }
 .comment textarea { width:100%; min-height:90px; font:13px/1.4 inherit; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px; padding:8px; }
 .comment .saved { font-size:11px; color:var(--muted); }
+#modrev { font-size:13px; margin:2px 0 4px; } #modrev summary { cursor:pointer; color:var(--accent); }
+#modrev .swr-list, .comment .swr-list { max-width:900px; }
 .printtext { display:none; white-space:pre-wrap; border:1px solid #999; padding:6px; }
 .controls { display:flex; flex-wrap:wrap; gap:8px; align-items:center; font-size:12px; margin:4px 0 6px; }
 .controls input[type=number] { width:90px; }
@@ -92,10 +94,14 @@ table.num.cmp td.same { color:var(--muted); }
 <header>
   <h1 id="title"></h1>
   <div class="id" id="ident"></div>
+  <div id="swrbar" class="noprint"></div>
+  <details id="modrev"><summary></summary><div id="modrevbody"></div></details>
 </header>
 <nav id="nav"></nav>
 <main id="main"></main>
 <script id="data" type="application/json">__DATA__</script>
+<script src="__REVIEWS_SRC__"></script>
+<script>__REVIEW_WIDGET__</script>
 <script>
 "use strict";
 const D = JSON.parse(document.getElementById("data").textContent);
@@ -425,14 +431,29 @@ class ImageView {
 // ---------------------------------------------------------------- page: CCD selection, tabs, comments, logs
 function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html !== undefined) e.innerHTML = html; return e; }
 function table(rows) { const t = el("table", "num"); for (const [k, v, flag] of rows) { const tr = el("tr"); tr.appendChild(el("th", "", k)); tr.appendChild(el("td", "v" + (flag ? " flag" : ""), v)); t.appendChild(tr); } return t; }
-function commentBox(parent, key, label) {
-  const box = el("div", "comment"); box.appendChild(el("h3", "", label || "Comments"));
-  const ta = el("textarea"); ta.placeholder = "Notes on this page (saved in this browser; 'Save comments' writes a file)"; box.appendChild(ta);
-  const pt = el("div", "printtext"); box.appendChild(pt); const st = el("div", "saved"); box.appendChild(st);
-  const store = () => { try { const all = JSON.parse(localStorage.getItem(KEY) || "{}"); all[key] = ta.value; localStorage.setItem(KEY, JSON.stringify(all)); st.textContent = "saved in this browser " + new Date().toLocaleTimeString(); } catch (e) { st.textContent = "browser storage not available: use Save comments"; } pt.textContent = ta.value; };
-  try { ta.value = (JSON.parse(localStorage.getItem(KEY) || "{}"))[key] || ""; } catch (e) {}
-  pt.textContent = ta.value; ta.addEventListener("input", store); ta.dataset.key = key; parent.appendChild(box);
+// ---- reviews (review_widget.js): every tab has a review box; the header lists every review of the module
+const RV = D.review || { tool: "report" }, REVIEW_BOXES = [];
+const ACMS = new Set((D.ccds || []).map(c => String(c.acm)).filter(a => a !== "undefined"));   // by name, or by ACM
+const onModule = r => { const x = r.target || {}; return !RV.module || x.module === RV.module || (x.acm != null && ACMS.has(String(x.acm))); };
+function reviewChoices() {     // what a new review is about: the whole module or one CCD (the ticked one first)
+  const cs = (CCDS || []).slice().sort((x, y) => (SEL.length === 1 ? (y.key === SEL[0]) - (x.key === SEL[0]) : 0));
+  const one = c => [c.label, { ext: c.ext || null, ccd: c.ccd || null, acm: c.acm == null ? null : c.acm }];
+  return SEL.length === 1 && cs.length ? cs.map(one).concat([["whole module", {}]]) : [["whole module", {}]].concat(cs.map(one));
 }
+function drawReviews() {
+  SWR.bar(document.getElementById("swrbar"));
+  const mine = SWR.all().filter(onModule);
+  document.querySelector("#modrev summary").innerHTML = `Reviews of ${RV.module ? "module " + RV.module : "this report"}: ${mine.length}`
+    + (mine.length ? " " + SWR.badge(mine, null) : "") + ` <span style="color:var(--muted)">(from every page of the campaign; click to see them or to review the whole report)</span>`;
+  SWR.form(document.getElementById("modrevbody"), onModule, { tool: RV.tool, module: RV.module || null, page: D.report_id }, RV.stamp, reviewChoices());
+  REVIEW_BOXES.forEach(f => f());
+}
+function commentBox(parent, key, label) {
+  const box = el("div", "comment"); box.appendChild(el("h3", "", label || "Reviews")); const body = el("div"); box.appendChild(body); parent.appendChild(box);
+  const q = r => { const x = r.target || {}; return onModule(r) && x.page === D.report_id && x.tab === key; };
+  REVIEW_BOXES.push(() => SWR.form(body, q, { tool: RV.tool, module: RV.module || null, page: D.report_id, tab: key }, RV.stamp, reviewChoices()));
+}
+SWR.init({ campaign: RV.campaign || "", page: D.title, same: r => (r.target || {}).page === D.report_id, onChange: drawReviews });
 
 // The CCDs of the module (D.ccds): every tab with tb.per = {ccd key: data} shows the ticked CCDs
 const CCDS = D.ccds && D.ccds.length ? D.ccds : null;
@@ -490,7 +511,7 @@ function addTab(tb, render) {
   const b = el("button", "", tb.label), t = el("section", "tab"); t.id = "tab_" + tb.id; nav.appendChild(b); main.appendChild(t);
   const dot = el("span", "dot"); dot.title = "a number on this tab is outside the usual range (for a ticked CCD)"; b.appendChild(dot);
   const content = el("div"), foot = el("div"); t.append(content, foot);
-  commentBox(foot, tb.id, "Comments on this page");
+  commentBox(foot, tb.id, `Reviews of this tab (${tb.label})`);
   foot.appendChild(el("h3", "", "Log")); const lg = el("div", "log"); foot.appendChild(lg);
   let fresh = false, gen = 0;
   const build = async () => {
@@ -680,7 +701,7 @@ const HELP = `<h2 style="margin-top:0">How to use this report</h2>
 <p>One page per module. <b>CCDs</b> (below the tabs): tick the CCDs to show, <b>all CCDs in the module</b> for all of them, <b>only</b> next to a CCD for that one alone. Every tab follows the choice: traces one below the other, PSD and profiles overlaid (one colour per CCD), numbers side by side, images one CCD at a time. A red dot on a tab: one of its numbers is outside the usual range for a ticked CCD; a red dot on a CCD: that CCD has such numbers.</p>
 <h3>Plots</h3><p><kbd>drag</kbd> draw a box to zoom in on a range · <kbd>shift</kbd>+<kbd>drag</kbd> move the view · <kbd>wheel</kbd> zoom the x axis (with <kbd>alt</kbd>: the y axis) · <kbd>double-click</kbd> or <b>reset</b>: everything again · <b>log y</b>: switch the y axis · <b>PNG</b>: save the plot. Move the mouse over a plot to read the values.</p>
 <h3>Images (like ds9 frames)</h3><p>The slider, <b>&#9664;</b> / <b>&#9654;</b> or the <kbd>&larr;</kbd> <kbd>&rarr;</kbd> keys switch between the ticked CCDs; zoom, pan, scale and the row / column cut stay, so the same spot can be compared. <b>blink</b> switches every second. <kbd>wheel</kbd> or <b>+</b>/<b>&minus;</b> zoom · <kbd>drag</kbd> move · <kbd>click</kbd> a pixel: its row and column are plotted below · <kbd>shift</kbd>+<kbd>drag</kbd> a box: statistics of that region · <b>scale</b>: colour range (auto: around the background level, like ds9 zscale; 99.5 %: ignores the brightest pixels; manual: type min / max) · <b>asinh</b>: brings out faint structure · <b>fit</b> / <b>1:1</b> whole image / one image pixel per screen pixel. Row 0 is at the bottom (as ds9).</p>
-<h3>Comments</h3><p>Type in the box at the bottom of any tab; it is kept in this browser automatically. <b>Save comments</b> writes them to a file (keep it next to the report, send it to others); <b>Load comments</b> reads such a file back.</p>
+<h3>Reviews</h3><p>Every tab ends with a review box: your name, a status (approved / concern / rejected / note), what it is about (the whole module or one CCD) and a comment. The line under the title lists every review of the module, also those written on the overview pages. A new review is kept in this browser until it is saved: <b>Save to campaign folder</b> (Chrome, Edge) writes it into the campaign's <code>reviews/</code> folder; <b>Download</b> (any browser) gives a file to put there, then <code>run_superWADERs --campaign DIR</code>. Saved reviews show on every page of the campaign and in its <code>reviews.csv</code>.</p>
 <h3>PDF</h3><p><b>Export PDF</b> opens the print dialog with every tab on its own page (the ticked CCDs) and the comments included: choose "Save as PDF".</p>
 <h3>Log</h3><p>Each tab ends with the log of how its numbers were made (per ticked CCD): files, settings from the data header, checks, fit results.</p>`;
 
@@ -695,17 +716,16 @@ const HELP = `<h2 style="margin-top:0">How to use this report</h2>
   const R = { overview: overviewTab, trace: each(traceTab), psd: psdTab, summary: imageSummaryTab, image: imageTab, defects: defectsTab, figure: each(figureTab), plots: plotsTab };
   for (const tb of D.tabs) addTab(tb, (t, items) => R[tb.kind](t, items));
   const sp = el("span", "sp"); nav.appendChild(sp);
-  const save = el("button", "noprint", "Save comments"), load = el("button", "noprint", "Load comments"), pdf = el("button", "noprint", "Export PDF");
+  const pdf = el("button", "noprint", "Export PDF");
   const hb = el("button", "noprint", "? Help"); nav.appendChild(hb);
   const help = el("div", ""); help.id = "help"; help.innerHTML = HELP + `<p><button id="hclose">close</button></p>`; document.body.appendChild(help);
   hb.onclick = () => { help.style.display = help.style.display === "block" ? "none" : "block"; };
   help.querySelector("#hclose").onclick = () => { help.style.display = "none"; };
   document.addEventListener("keydown", e => { if (e.key === "Escape") help.style.display = "none"; });
   let seen = false; try { seen = localStorage.getItem("superWADERs:hint2") === "1"; } catch (e) {}
-  if (!seen) { const h = el("div", "hint noprint", `<span>New here? Tick the CCDs to show below the tabs (all, or one with <b>only</b>). Plots and images are interactive: drag to zoom, double-click to reset; in an image, the slider or the arrow keys switch CCD. Comments are saved as you type. Press <b>? Help</b> for everything.</span><button>got it</button>`); document.querySelector("header").after(h); h.querySelector("button").onclick = () => { h.remove(); try { localStorage.setItem("superWADERs:hint2", "1"); } catch (e) {} }; }
-  save.title = "write all comments of this report to a .json file"; load.title = "read comments from such a file"; pdf.title = "print every tab (with comments) - choose Save as PDF";
-  const file = el("input"); file.type = "file"; file.accept = ".json"; file.style.display = "none";
-  nav.append(save, load, pdf, file);
+  if (!seen) { const h = el("div", "hint noprint", `<span>New here? Tick the CCDs to show below the tabs (all, or one with <b>only</b>). Plots and images are interactive: drag to zoom, double-click to reset; in an image, the slider or the arrow keys switch CCD. Each tab ends with a review box. Press <b>? Help</b> for everything.</span><button>got it</button>`); document.querySelector("header").after(h); h.querySelector("button").onclick = () => { h.remove(); try { localStorage.setItem("superWADERs:hint2", "1"); } catch (e) {} }; }
+  pdf.title = "print every tab (with the reviews) - choose Save as PDF";
+  nav.append(pdf);
   if (CCDS) {
     const bar = el("div", "ccdbar noprint"); bar.appendChild(el("b", "", "CCDs"));
     const all = el("label", "all", `<input type="checkbox"> all CCDs in the module`); all.title = "show every CCD of the module"; bar.appendChild(all);
@@ -714,7 +734,7 @@ const HELP = `<h2 style="margin-top:0">How to use this report</h2>
       if (keys.length) { SEL = CCDS.map(c => c.key).filter(k => keys.includes(k)); try { localStorage.setItem(KEY + ":ccds", JSON.stringify(SEL)); } catch (e) {} }
       boxes.forEach(([c, i]) => { i.checked = SEL.includes(c.key); }); all.querySelector("input").checked = SEL.length === CCDS.length;
       if (!keys.length) return;                                // at least one CCD stays ticked
-      updateDots(); tabs.forEach(x => x.stale()); const cur = tabs.find(x => x.b.classList.contains("on")); if (cur) cur.show();
+      updateDots(); drawReviews(); tabs.forEach(x => x.stale()); const cur = tabs.find(x => x.b.classList.contains("on")); if (cur) cur.show();
     };
     for (const c of CCDS) {
       const l = el("label", "", `<input type="checkbox"> ${swatch(c)}${c.label}` + ((c.flagged || []).length ? ` <span class="cflag" title="numbers outside the usual range on: ${c.flagged.join(", ")}">&#9679;</span>` : ""));
@@ -726,18 +746,7 @@ const HELP = `<h2 style="margin-top:0">How to use this report</h2>
     nav.appendChild(bar);
     boxes.forEach(([c, i]) => { i.checked = SEL.includes(c.key); }); all.querySelector("input").checked = SEL.length === CCDS.length;
   }
-  updateDots();
-  save.onclick = () => {
-    const out = { report: D.report_id, saved: new Date().toISOString(), comments: {} };
-    document.querySelectorAll(".comment textarea").forEach(ta => out.comments[ta.dataset.key] = ta.value);
-    try { Object.assign(out.comments, Object.fromEntries(Object.entries(JSON.parse(localStorage.getItem(KEY) || "{}")).filter(([k]) => !(k in out.comments)))); } catch (e) {}
-    const a = el("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(out, null, 1)], { type: "application/json" })); a.download = D.report_id + "_comments.json"; a.click();
-  };
-  load.onclick = () => file.click();
-  file.onchange = async () => {
-    const j = JSON.parse(await file.files[0].text()); localStorage.setItem(KEY, JSON.stringify(j.comments || {}));
-    document.querySelectorAll(".comment textarea").forEach(ta => { ta.value = (j.comments || {})[ta.dataset.key] || ""; ta.nextElementSibling.textContent = ta.value; });
-  };
+  updateDots(); drawReviews();
   pdf.onclick = async () => { for (const x of tabs) await x.build(); tabs.forEach(x => x.t.classList.add("on")); setTimeout(() => { window.print(); tabs.forEach(x => x.t.classList.remove("on")); (tabs.find(x => x.b.classList.contains("on")) || tabs[0]).t.classList.add("on"); }, 400); };
   const want = location.hash.slice(1); (tabs.find(x => x.tb.id === want) || tabs[0]).show();
 })();
