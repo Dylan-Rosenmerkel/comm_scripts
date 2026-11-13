@@ -83,6 +83,17 @@ boundaries. First run on the current code (baseline), then after every step.
 - **Dark charge per image: up to 77x too high at 1e-6** (the fit's lower limit, few dark electrons per image):
   pooling over the images (1A.3) is needed.
 
+**Goal (2026-11-13, the group): A_GMX (+ the Bayesian finder) optimal for every image type, binned or not; threshold /
+seed clustering only as a fallback once every other way is exhausted.** A threshold run (seed 1.5 e-, pixel 0.5 e-)
+is kept as the bar to beat.
+
+**Oracle ceiling** (`wip/binned/ceiling_lowbg.py`, results in `wip/binned/results/ceiling.md`; F = 0.08 fakes / Mpix;
+noiseless counts, everything true): at 1e-6 and 1e-5 e-/pix essentially **100 % of 2-10 e- events are detectable at
+every binning** (only 100x100 at 1e-5 for 2 e-: 0.17). A_GMX today: 2 e- 0.75-0.78 unbinned, 0-0.56 binned; the
+seed-1.5 threshold 0.22-0.81. At 1e-4 the limit is physical for 2 e- (0.07-0.54 binned) and at 100x100 for 3-5 e-
+(dark-charge patterns): there only pooling and the event rate help. Target for 1A.2: ~100 % at <= 1e-5 for all
+binnings at <= 0.1 fakes / Mpix.
+
 1A.2 **Bin geometry in the few-electron finder and A_GMX:** an event is point-like in bins (diffusion sigma / b per
 axis, anisotropic for 1x100 / 100x1), the dark charge per bin, block sizes and halo in bins; strips of a few rows or
 columns as 1-D.

@@ -118,7 +118,7 @@ def make_setting(out, by, bx, dc, n_img, seed):
     print("made", name, flush=True)
 
 
-def run(out, jobs=2, parallel=1):
+def run(out, jobs=2, parallel=1, extra=()):
     """run_superWADERs on every setting not done yet (no summary.txt), `parallel` settings at a time, -j jobs each"""
     from concurrent.futures import ThreadPoolExecutor
 
@@ -128,7 +128,7 @@ def run(out, jobs=2, parallel=1):
         open(lst, "w").write("\n".join(imgs) + "\n")
         with open(os.path.join(sd, "run.log"), "w") as fh:
             rc = subprocess.run([PY, os.path.join(REPO, "superWADERs", "run_superWADERs"), lst, "-o", sd, "-j", str(jobs),
-                                 "--overwrite", "--no-review-helper", "--gain", str(G)],
+                                 "--overwrite", "--no-review-helper", "--gain", str(G)] + list(extra),
                                 stdout=fh, stderr=subprocess.STDOUT).returncode
         print(os.path.basename(sd), "rc", rc, flush=True)
     todo = [sd for sd in sorted(glob.glob(os.path.join(out, "*_dc*")))
@@ -232,6 +232,7 @@ def main():
     ap.add_argument("--n", type=int, default=20)
     ap.add_argument("-j", "--jobs", type=int, default=2, help="workers per run_superWADERs run")
     ap.add_argument("--parallel", type=int, default=1, help="settings run at the same time")
+    ap.add_argument("--extra", default="", help="more run_superWADERs arguments, e.g. '--clusterer threshold'")
     a = ap.parse_args()
     if a.what in ("make", "all"):
         for k, b in enumerate(a.bins):
@@ -239,7 +240,7 @@ def main():
             for j, dc in enumerate(a.dc):
                 make_setting(a.out, by, bx, dc, a.n, seed=1000 + 10 * k + j)
     if a.what in ("run", "all"):
-        run(a.out, a.jobs, a.parallel)
+        run(a.out, a.jobs, a.parallel, a.extra.split())
     if a.what in ("analyse", "all"):
         analyse(a.out)
 
