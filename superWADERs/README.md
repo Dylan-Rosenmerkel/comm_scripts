@@ -64,8 +64,8 @@ LSM2026/                        the --campaign folder (or superWADERs_<run name>
   root/, L0/, L1/, logs/        cluster files, raw-data products, logs
   campaign.json, criteria.json, records/   the campaign's ledger, limits and kept results
   modules.csv                   the campaign's module list (the last --module-list; later runs use it)
-  reviews.csv                   the review sheet: one line per CCD; write reviewer, status, comment there
-  reviews.js, reviews.txt       the reviews for the pages; the latest review of every CCD
+  reviews.js                    every review written on the pages, in one file (read by every page)
+  review_server.py              the review helper (started by run_superWADERs): pages save reviews through it
   reviews.csv, reviews.txt      every review as a table; the latest review of every CCD
 ```
 
@@ -117,24 +117,40 @@ run_superWADERs cooldown2.txt --dc-series --sr --dataset cooldown2 --campaign ~/
 - An input given again without `--dataset` keeps its data set; without data sets nothing changes (one report per
   module, as before).
 
-### Reviews: who looked at which CCD, and what they concluded
+### Reviews: who looked at which data, and what they concluded
 
-Reviews are written in a spreadsheet in the campaign folder, **`reviews.csv`** (open it with Excel, Numbers or
-LibreOffice). Every run fills it with one line per CCD: module, EXT, CCD, ACM, data set, verdict and main numbers.
+All data can be reviewed, on the page where it is shown:
+- **overview pages** (campaign and per tool): one CCD, in the CCD panel; on the campaign page the review can be about
+  the CCD as a whole or about one tool;
+- **module reports** (packet, dark current, defect map, serial register): every tab ends with a review box, for the
+  whole module or one CCD; the line under the title lists every review of the module, also those from the overviews.
 
-1. Open `reviews.csv`, and on the CCD's line fill **reviewer** (your name), **status** (approved, concern, rejected or
-   note) and **comment**. Save it (keep the CSV format).
-   - A second review of the same CCD: copy the line.
-   - A review of one tool only: put the tool (`images`, `packet`, `dc_series`, `defects`, `sr`) in `tool`.
-   - A review of a whole module: leave `ext` empty.
-2. Run `run_superWADERs --campaign DIR`, the next time you add data, or right away without an input (it takes a
-   second). The reviews then show on every page: a badge in each CCD's cell (✔ approved, ▲ concern, ✖ rejected,
-   ✎ note), the reviews in the CCD panel, the module's reviews at the top of its reports, a "CCDs reviewed" count,
-   filters for unreviewed CCDs and for concerns, and a review column in the table.
+A review is a name, a status (approved / concern / rejected / note) and a comment. It is stored with what it is about
+(tool, module, ACM, EXT, CCD, report and tab), the data it refers to (the inputs, or the report's content) and the main
+numbers shown at the time. When newer data arrive, the review stays and is marked "data changed since", with the
+numbers it was written on.
 
-Each filled line keeps the numbers it was written on. When newer data arrive for that CCD, the line is marked
-`newer_data: yes` and the pages show "newer data since". A new CCD gets its own line. `reviews.txt` lists the latest
-review of every CCD, and `summary.txt` includes it. Pages only show reviews; nothing is written from a browser.
+Type the review on the page and click **Add review**: it shows at once, and it is saved into the campaign folder
+(`reviews.js`, one file for the whole campaign, which every page reads) right away. Nothing to install or click:
+
+- **Any browser:** `run_superWADERs` starts a small **review helper** for the campaign folder in the background after
+  every run (a local web server, Python only, on this computer). While it runs, every page of the campaign, also
+  opened by double-click, saves through it. It stops by itself after 12 h without use, or when the folder goes away.
+  On a computer where nothing was run (e.g. a colleague opening a shared folder), `run_superWADERs --campaign DIR`
+  without input starts it and opens the campaign.
+- **Chrome, Edge:** the page can also write into the folder itself; the first review asks for the campaign folder
+  once.
+- If neither is possible at that moment, the review stays on the page (marked "not yet in the campaign folder") and
+  is written into the folder by itself as soon as the helper runs; an open page checks every 20 seconds.
+
+Every save merges into `reviews.js` (a review added by someone else in the meantime is kept), and open pages show new
+reviews of others within 20 seconds. `review_server.py` (the helper) and `review_server_info.js` (its address and a
+token, only while it runs; other web sites cannot use it) are in the campaign folder; `--no-review-helper` skips it.
+
+`reviews.csv` and `reviews.txt` are rebuilt at every save, and by every run, which also adds the review summary to
+`summary.txt`. Deleting a review keeps a deletion record, so the deletion wins over an older copy of the file. Reviews
+can also be written from the command line:
+`python superWADERs/commissioning/reviews.py DIR --add --reviewer NAME --status concern --module DM03 --ext EXT2 --comment "..."`.
 
 The images overview has one view per image setting (e.g. 500-skip 1×1 and 1-skip 1×1).
 

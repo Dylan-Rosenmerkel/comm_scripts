@@ -319,7 +319,8 @@ def page_scripts(page, root):
     """Fill the review placeholders of a page template: the campaign's reviews.js and the review widget."""
     with open(REVIEW_JS) as fh:
         widget = fh.read()
-    return page.replace("__REVIEWS_SRC__", html.escape(root + "reviews.js")).replace("__REVIEW_WIDGET__", widget)
+    return (page.replace("__REVIEWS_SRC__", html.escape(root + "reviews.js"))
+            .replace("__REVIEW_SERVER_SRC__", html.escape(root + "review_server_info.js")).replace("__REVIEW_WIDGET__", widget))
 
 
 def write_overview(path, data):
@@ -596,12 +597,6 @@ def tool_fields(tool):
     return __import__(mod).FIELDS
 
 
-def _short(stamp):
-    """A short code of a data stamp (for the review sheet): changes when the data change."""
-    import hashlib
-    return hashlib.sha1(str(stamp).encode()).hexdigest()[:10] if stamp else ""
-
-
 def campaign_index(camp, tool_views, path, crit):
     """DIR/index.html: one row per CCD with every tool's verdict (worst over the tool's views), the reasons
     (prefixed with the tool) and links to the tools' overviews. tool_views: {tool: (href, [views])}."""
@@ -703,15 +698,4 @@ def campaign_index(camp, tool_views, path, crit):
                          "rate of the series (settling plateau, else the latest image) and of the serial-register images. 'Cells show' maps any "
                          "value over all CCDs. Click a cell for the reasons, the reviews, every tool's links and values.")
     write_overview(path, data)
-    # the CCDs for the review sheet (reviews.py: reviews.csv): what they are, their verdict, their main numbers
-    sheet = []
-    for c in sorted(rows, key=lambda c: (c["module"], c["ext"])):
-        vals = [f"{fields[f]['short']} {c['values'][f]:.4g}{(' ' + fields[f]['unit']) if fields[f].get('unit') else ''}"
-                for f in cell if isinstance(c["values"].get(f), (int, float)) and math.isfinite(c["values"][f])]
-        sheet.append(dict(module=c["module"], ext=c["ext"], ccd=c.get("ccd"), acm=c.get("acm"), verdict=c["verdict"],
-                          values=", ".join(vals), stamp=_short(c["stamp"]),
-                          dataset=", ".join(sorted({t["dataset"] for t in c["tools"].values() if t.get("dataset")})),
-                          tools={t["tool"]: dict(stamp=_short(t.get("stamp")), verdict=t["verdict"]) for t in c["tools"].values()}))
-    os.makedirs(os.path.join(camp.root, "records"), exist_ok=True)
-    _atomic_write(os.path.join(camp.root, "records", "ccds.json"), json.dumps(jsonable(sheet), indent=0))
     return rows

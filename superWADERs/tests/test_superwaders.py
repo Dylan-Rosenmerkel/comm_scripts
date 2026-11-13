@@ -211,7 +211,7 @@ class Campaign(unittest.TestCase):
 
 
 class Reviews(unittest.TestCase):
-    """commissioning/reviews.py: the review sheet reviews.csv; run_superWADERs --campaign DIR (no INPUT)."""
+    """commissioning/reviews.py: merge, import, the files the pages read; run_superWADERs --campaign DIR (no INPUT)."""
 
     def setUp(self):
         p = os.path.join(SW, "commissioning")
@@ -220,65 +220,159 @@ class Reviews(unittest.TestCase):
         import reviews
         self.R = reviews
 
-    def camp(self, d, ccds):
+    def camp(self, d):
         root = os.path.join(d, "camp")
-        os.makedirs(os.path.join(root, "records"))
+        os.makedirs(root)
         json.dump(dict(id="camp@x", inputs={}, runs=[]), open(os.path.join(root, "campaign.json"), "w"))
-        json.dump(ccds, open(os.path.join(root, "records", "ccds.json"), "w"))
         return root
 
-    @staticmethod
-    def ccd(m, e, stamp, noise):
-        return dict(module=m, ext=e, ccd="CCD_A", acm=101, verdict="pass", values=f"noise {noise} e-", stamp=stamp,
-                    tools={"packet": dict(stamp="p-" + stamp, verdict="pass")})
+    def test_merge(self):
+        a = dict(id="1", created="t1", updated="t1", status="note")
+        b = dict(id="1", created="t1", updated="t2", status="concern")         # edited later: wins
+        c = dict(id="2", created="t0", updated="t0", status="approved")
+        d = dict(id="2", created="t0", updated="t3", deleted=True)             # deleted later: stays deleted
+        m = self.R.merge([b, a, c, d])
+        self.assertEqual([r["id"] for r in m], ["2", "1"])
+        self.assertEqual(m[1]["status"], "concern")
+        self.assertEqual(self.R.live(m), [b])
 
-    def test_sheet(self):
-        import csv
+    def test_files_and_import(self):
         with tempfile.TemporaryDirectory() as d:
-            root = self.camp(d, [self.ccd("DM01", "EXT1", "s1", 0.16), self.ccd("DM01", "EXT2", "s1", 0.2)])
-            self.assertIn("none yet", self.R.update(root, log=lambda *a: None)[0])
-            sheet = os.path.join(root, "reviews.csv")
-            rows = list(csv.DictReader(open(sheet, encoding="utf-8-sig")))
-            self.assertEqual([(r["module"], r["ext"], r["values"]) for r in rows],
-                             [("DM01", "EXT1", "noise 0.16 e-"), ("DM01", "EXT2", "noise 0.2 e-")])
-            # a reviewer fills a line (Excel on a European system: ';'), adds a line for the whole module
-            rows[1].update(reviewer="Ana", status="Concern", comment="noise high; recheck")
-            rows.append(dict(rows[0], ext="", reviewer="Ben", status="ok", comment="module fine", tool="packet", stamp=""))
-            with open(sheet, "w", newline="", encoding="utf-8") as fh:
-                w = csv.DictWriter(fh, fieldnames=list(rows[0]), delimiter=";")
-                w.writeheader()
-                w.writerows(rows)
-            lines = self.R.update(root, log=lambda *a: None)
+            root = self.camp(d)
+            r1 = self.R.new_review(root, "Ana", "concern", "noise high", dict(tool="campaign", module="DM01", ext="EXT2"))
+            self.R.save(root, [r1], "Ana")
+            dl = os.path.join(d, "reviews_Ben.json")                           # as downloaded from a page
+            r2 = dict(r1, id="b", reviewer="Ben", status="approved", comment="fine", created="z", updated="z")
+            json.dump(dict(format=self.R.FORMAT, campaign="camp@x", reviews=[r2]), open(dl, "w"))
+            lines = self.R.refresh(root, [dl], log=lambda *a: None)
             self.assertIn("2 (1 approved, 1 concern) by Ana, Ben", lines[0])
+            self.assertEqual(self.R.import_files(root, [dl], log=lambda *a: None), 0)   # the same file again: nothing new
+            self.assertFalse(os.path.exists(os.path.join(root, "reviews")))           # one file: reviews.js
             js = open(os.path.join(root, "reviews.js")).read()
-            j = json.loads(js.split("=", 1)[1].strip().rstrip(";"))
-            st = {(r["target"]["ext"], r["target"]["tool"]): r["status"] for r in j["reviews"]}
-            self.assertEqual(st, {("EXT2", "campaign"): "concern", (None, "packet"): "approved"})
-            self.assertEqual((j["lines"]["DM01 "], j["lines"]["DM01 EXT1"]), (2, 3))   # whole module first
-            # new data for EXT2: its review stays, with the numbers it was written on, marked 'newer data'
-            json.dump([self.ccd("DM01", "EXT1", "s1", 0.16), self.ccd("DM01", "EXT2", "s2", 0.3),
-                       self.ccd("DM02", "EXT1", "s2", 0.17)], open(os.path.join(root, "records", "ccds.json"), "w"))
-            self.R.update(root, log=lambda *a: None)
-            rows = list(csv.DictReader(open(sheet, encoding="utf-8-sig")))
-            ext2 = [r for r in rows if r["ext"] == "EXT2"]
-            self.assertEqual([(r["reviewer"], r["values"], r["newer_data"]) for r in ext2], [("Ana", "noise 0.2 e-", "yes")])
-            self.assertIn(("DM02", "EXT1"), [(r["module"], r["ext"]) for r in rows])      # a new CCD gets its line
-            self.assertTrue(all(r["date"] for r in rows if r["reviewer"]))
-
-    def test_status_words(self):
-        S = self.R.status_of
-        self.assertEqual([S(x) for x in ("approved", "OK", "Rejected", "fail", "concern", "?", "fyi")],
-                         ["approved", "approved", "rejected", "rejected", "concern", "concern", "note"])
+            self.assertTrue(js.startswith("window.SW_REVIEWS = "))
+            self.assertEqual(len(self.R.read_file(os.path.join(root, "reviews.js"))), 2)
+            # a reviews.js downloaded from a page (the campaign's file + a new review) merges in; a deletion wins
+            gone = dict(r1, deleted=True, updated="zz")
+            dl2 = os.path.join(d, "reviews.js")
+            open(dl2, "w").write(self.R.store_text("camp@x", [gone, dict(r2, id="c", created="zz", updated="zz")]))
+            self.assertEqual(self.R.import_files(root, [dl2], log=lambda *a: None), 2)
+            self.assertEqual(sorted(r["id"] for r in self.R.live(self.R.load(root))), ["b", "c"])
+            with open(os.path.join(root, "reviews.csv")) as fh:
+                self.assertEqual(len(fh.read().strip().splitlines()), 3)
+            with self.assertRaises(ValueError):
+                self.R.new_review(root, "Ana", "maybe", "", {})
 
     def test_command_line(self):
         with tempfile.TemporaryDirectory() as d:
-            root = self.camp(d, [self.ccd("DM03", "EXT1", "s", 0.2)])
-            r = subprocess.run([sys.executable, CMD, "--campaign", root], capture_output=True, text=True)   # no INPUT
+            root = self.camp(d)
+            r = subprocess.run([sys.executable, os.path.join(SW, "commissioning", "reviews.py"), root, "--add",
+                                "--reviewer", "Cy", "--status", "rejected", "--module", "DM03", "--ext", "EXT1",
+                                "--comment", "dead amplifier"], capture_output=True, text=True)
             self.assertEqual(r.returncode, 0, r.stderr)
-            self.assertTrue(os.path.exists(os.path.join(root, "reviews.csv")))
+            self.assertIn("DM03", r.stdout)
+            r = subprocess.run([sys.executable, CMD, "--campaign", root, "--no-review-helper"], capture_output=True, text=True)   # no INPUT
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertIn("1 rejected", r.stdout)
+            self.assertTrue(os.path.exists(os.path.join(root, "review_server.py")))   # travels with the folder
             r = subprocess.run([sys.executable, CMD, "--campaign", os.path.join(d, "nothing")], capture_output=True, text=True)
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("not a campaign folder", r.stderr)
+
+
+class ReviewServer(unittest.TestCase):
+    """review_server.py: pages served, reviews posted by a page saved at once; other sites refused."""
+
+    @staticmethod
+    def R_read(root):
+        sys.path.insert(0, os.path.join(SW, "commissioning"))
+        import reviews
+        return reviews.read_file(os.path.join(root, "reviews.js"))
+
+    def test_post(self):
+        import socket
+        import time
+        import urllib.request
+        with tempfile.TemporaryDirectory() as d:
+            root = os.path.join(d, "camp")
+            os.makedirs(root)
+            json.dump(dict(id="camp@x", inputs={}, runs=[]), open(os.path.join(root, "campaign.json"), "w"))
+            open(os.path.join(root, "index.html"), "w").write("<html>ok</html>")
+            s = socket.socket()
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+            s.close()
+            pr = subprocess.Popen([sys.executable, os.path.join(SW, "commissioning", "reviews.py"), root, "--serve",
+                                   "--port", str(port), "--no-browser"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                url = f"http://127.0.0.1:{port}"
+                for _ in range(50):
+                    try:
+                        urllib.request.urlopen(url + "/index.html")
+                        break
+                    except OSError:
+                        time.sleep(0.1)
+                self.assertIn(b"ok", urllib.request.urlopen(url + "/index.html").read())
+                rev = dict(id="r1", campaign="camp@x", created="t", updated="t", reviewer="Ana", status="approved",
+                           comment="fine", target=dict(tool="campaign", module="DM01", ext="EXT1"))
+                body = json.dumps(dict(reviewer="Ana", reviews=[rev])).encode()
+                bad = urllib.request.Request(url + "/api/reviews", data=body, headers={"Content-Type": "text/plain"})
+                with self.assertRaises(urllib.error.HTTPError):          # not from a page (no header): refused
+                    urllib.request.urlopen(bad)
+                ok = urllib.request.Request(url + "/api/reviews", data=body,
+                                            headers={"Content-Type": "application/json", "X-SW-Reviews": "1"})
+                j = json.loads(urllib.request.urlopen(ok).read())
+                self.assertEqual([r["id"] for r in j["reviews"]], ["r1"])
+                self.assertIn('"r1"', open(os.path.join(root, "reviews.js")).read())
+                urllib.request.urlopen(urllib.request.Request(url + "/api/reviews", data=json.dumps(dict(reviews=[dict(
+                    rev, id="r2")])).encode(), headers={"Content-Type": "application/json", "X-SW-Reviews": "1"}))
+                self.assertEqual(sorted(r["id"] for r in self.R_read(root)), ["r1", "r2"])   # both in the one file
+                self.assertFalse(os.path.exists(os.path.join(root, "reviews")))
+                j = json.loads(urllib.request.urlopen(url + "/api/reviews").read())
+                self.assertTrue(j["server"])
+                # a page opened by double-click (origin null): only with the token of review_server_info.js
+                info = open(os.path.join(root, "review_server_info.js")).read()
+                tok = json.loads(info.split("=", 1)[1].strip().rstrip(";"))["token"]
+                hdr = {"Content-Type": "application/json", "X-SW-Reviews": "1", "Origin": "null"}
+                body3 = json.dumps(dict(reviews=[dict(rev, id="r3")])).encode()
+                with self.assertRaises(urllib.error.HTTPError):
+                    urllib.request.urlopen(urllib.request.Request(url + "/api/reviews", data=body3, headers=hdr))
+                r = urllib.request.urlopen(urllib.request.Request(url + "/api/reviews", data=body3,
+                                                                  headers=dict(hdr, **{"X-SW-Token": tok})))
+                self.assertEqual(r.headers.get("Access-Control-Allow-Origin"), "null")
+                with self.assertRaises(urllib.error.HTTPError):      # the token file itself is not served
+                    urllib.request.urlopen(url + "/review_server_info.js")
+                self.assertTrue(os.path.exists(os.path.join(root, "review_server.py")))
+            finally:
+                pr.terminate()
+                pr.communicate(timeout=10)
+            self.assertFalse(os.path.exists(os.path.join(root, "review_server_info.js")))   # removed when it stops
+
+
+class ReviewHelper(unittest.TestCase):
+    """run_superWADERs starts the review helper in the background once; a second start finds it running."""
+
+    def test_helper(self):
+        import signal
+        sys.path.insert(0, os.path.join(SW, "commissioning"))
+        import reviews as R
+        with tempfile.TemporaryDirectory() as d:
+            root = os.path.join(d, "camp")
+            os.makedirs(root)
+            json.dump(dict(id="camp@h", inputs={}, runs=[]), open(os.path.join(root, "campaign.json"), "w"))
+            url = R.ensure_helper(root, port=8890, log=lambda *a: None)
+            try:
+                self.assertTrue(url and url.startswith("http://127.0.0.1:"))
+                self.assertEqual(R.ensure_helper(root, port=8890, log=lambda *a: None), url)   # reused
+                self.assertEqual(R.helper_url(root), url)
+            finally:
+                info = open(os.path.join(root, R.INFO)).read()
+                os.kill(json.loads(info.split("=", 1)[1].strip().rstrip(";"))["pid"], signal.SIGTERM)
+            import time
+            for _ in range(30):
+                if not os.path.exists(os.path.join(root, R.INFO)):
+                    break
+                time.sleep(0.1)
+            self.assertIsNone(R.helper_url(root))
 
 
 if __name__ == "__main__":
