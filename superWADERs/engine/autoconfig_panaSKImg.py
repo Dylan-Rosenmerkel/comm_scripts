@@ -1010,6 +1010,94 @@ def measure_unresolved(xg, xo, g, nrows, early):
                 ovs_charged_frac=0.0, ovs_charged_frac_fit=0.0)
 
 
+# =============================================================================
+# high occupancy (binned images, high dark charge): > LAM_HIGH e- per pixel / bin
+# =============================================================================
+LAM_HIGH = 2.0          # e- per pixel (median charge): above this the 0 / 1 e- peak methods do not apply
+R_RESOLVED = math.exp(-2 * math.pi ** 2 * 0.3 ** 2)   # comb coherence of peaks 0.3 gain wide (--max-sig-over-gain)
+
+
+def comb_phase_gain(v, g_lo, g_hi, n_max=200000, seed=0):
+    """Gain from the phase coherence of the electron comb: R(g) = |mean exp(2 pi i v / g)| over the pixels v (ADU,
+    pedestal subtracted) is largest at the peak spacing. Every pixel sits on the comb (dark charge and events alike)
+    and no zero peak is needed, so it works at any occupancy. For Gaussian peaks of width sigma,
+    R = exp(-2 pi^2 (sigma / g)^2). g_lo..g_hi must exclude g/2 and 2g (e.g. 0.6-1.6 x a prior).
+    Returns (gain, R); (None, 0.0) without pixels."""
+    v = np.asarray(v, float).ravel()
+    v = v[np.isfinite(v)]
+    if v.size < 100:
+        return None, 0.0
+    if v.size > n_max:
+        v = np.random.default_rng(seed).choice(v, n_max, replace=False)
+    R = lambda g: float(np.hypot(np.cos(2 * np.pi * v / g).mean(), np.sin(2 * np.pi * v / g).mean()))
+    gs = np.arange(g_lo, g_hi, 0.002)
+    r = np.array([R(g) for g in gs])
+    i = int(np.argmax(r))
+    a, b = gs[max(i - 1, 0)], gs[min(i + 1, len(gs) - 1)]
+    for _ in range(40):                                  # golden-section refinement of the maximum
+        c, d = b - 0.618 * (b - a), a + 0.618 * (b - a)
+        if R(c) > R(d):
+            b = d
+        else:
+            a = c
+    g = 0.5 * (a + b)
+    return g, R(g)
+
+
+def truncated_poisson_lam(k, kmax):
+    """Dark charge [e-] from integer charges k: maximum likelihood of a Poisson truncated at kmax (the event tail
+    above kmax is left out). Returns None without usable pixels."""
+    from scipy.optimize import brentq
+    from scipy.special import gammaln
+    k = k[(k >= 0) & (k <= kmax)]
+    if k.size < 50:
+        return None
+    m = float(k.mean())
+    n = np.arange(kmax + 1)
+
+    def mean_minus(lam):
+        lp = n * math.log(lam) - lam - gammaln(n + 1)
+        w = np.exp(lp - lp.max())
+        return float((n * w).sum() / w.sum()) - m
+    if m <= 0:
+        return 0.0
+    return brentq(mean_minus, 1e-6, max(10 * m + 10, 1.0))
+
+
+def high_occupancy(x, gain_prior, nrows):
+    """Gain, noise and dark charge of a CCD with > LAM_HIGH e- per pixel (bin): comb_phase_gain within 0.6-1.6 x
+    the prior, noise from the comb coherence, dark charge from the integer charges (truncated_poisson_lam), per row
+    too. x: pedestal-subtracted active region (ADU). Returns None below LAM_HIGH, else a dict with resolved."""
+    if not gain_prior:
+        return None
+    med = float(np.nanmedian(x)) / gain_prior
+    if not med >= LAM_HIGH:
+        return None
+    g, R = comb_phase_gain(x, 0.6 * gain_prior, 1.6 * gain_prior)
+    out = dict(median_e=med, R=R, gain=g, resolved=bool(g is not None and R >= R_RESOLVED))
+    if not out["resolved"]:
+        return out
+    sig_e = math.sqrt(max(-math.log(R), 0.0) / (2 * math.pi ** 2))
+    k = np.round(np.asarray(x, float) / g)
+    kmax = int(math.ceil(med + 5 * math.sqrt(med) + 3))
+    lam = truncated_poisson_lam(k[np.isfinite(k)], kmax)
+    lam_rows = [truncated_poisson_lam(k[i][np.isfinite(k[i])], kmax) for i in range(min(nrows, k.shape[0]))]
+    out.update(sigma_e=sig_e, lam=lam, kmax=kmax, lam_rows=[v if v is not None else float("nan") for v in lam_rows])
+    return out
+
+
+def high_occupancy_fit_settings(r):
+    """Dark-current fit settings of a high-occupancy CCD (its own window, not panaSKImg's shared one): the peaks
+    lambda +- 4 sqrt(lambda), gain within +-2 % of the comb phase, in the format of the native engine's settings."""
+    g, s, lam = r["gain"], r["sigma"], max(r["lam"], LAM_HIGH)
+    k0 = max(0, int(math.floor(lam - 4 * math.sqrt(lam) - 1)))
+    k1 = int(math.ceil(lam + 4 * math.sqrt(lam) + 2))
+    return dict(rows_to_mask=[], cols_to_mask=compress_ranges(r["bad_cols"]), n_peaks=k1 + 1,
+                x_min=g * (k0 - 0.5), x_max=g * (k1 + 0.5), binning_size=min(max(s / 6, 0.005), 0.05),
+                mu_min=-0.35 * g, mu_max=0.35 * g, sigma_min=s / 2, sigma_max=max(2.5 * s, s + 0.05), dc_min=0.25 * lam * g,
+                dc_max=4 * lam * g, gain_min=0.98 * g, gain_max=1.02 * g, calibration=g, do_calibration=True)
+
+
 def analyse_extension(data, ext, cfg, args, gain_prior):
     """Measure one extension (CCD) from its raw pixels.
 
@@ -1079,6 +1167,17 @@ def analyse_extension(data, ext, cfg, args, gain_prior):
         #      unresolved charge) and read noise from the overscan (no dark current there)
         g = g if gm["credible"] else gain_prior
         res.update(measure_unresolved(xg, xo, g, nrows, early))
+
+    # ---- high occupancy (binned images, high dark charge): the 0 / 1 e- methods above do not apply; gain from the
+    #      comb phase, dark charge from the integer charges. Below LAM_HIGH e- nothing changes.
+    ho = high_occupancy(xg, gain_prior or res.get("gain"), nrows)
+    if ho is not None:
+        res["high_occupancy"] = ho
+        if ho["resolved"]:
+            s = ho["sigma_e"] * ho["gain"]
+            res.update(resolved=True, gain_held=False, gain_source="fit", gain=ho["gain"], sigma=s, sigma_raw=s,
+                       lam=ho["lam"], lam01=None, row_end=nrows, k_poisson=None,
+                       lam_all_median=float(np.nanmedian(ho["lam_rows"])))
     return res
 
 
@@ -1181,7 +1280,7 @@ def choose_peaks(results, args):
     results: list of analyse_extension dicts (modified in place).
     Returns k (int, or None for 'all' / no resolved extension).
     """
-    resolved = [r for r in results if r["resolved"]]
+    resolved = [r for r in results if r["resolved"] and not (r.get("high_occupancy") or {}).get("resolved")]
     if args.peaks == "all":
         k = None
     elif args.peaks == "auto":
@@ -1191,6 +1290,8 @@ def choose_peaks(results, args):
     for r in results:
         # one peak (zero-electron peak only) also applies to unresolved extensions
         r["k_fit"] = k if (r["resolved"] or k == 1) else None
+        if (r.get("high_occupancy") or {}).get("resolved"):
+            r["k_fit"] = None                 # own window (high_occupancy_fit_settings)
     return k
 
 
@@ -1295,8 +1396,10 @@ def set_dark_current_fit(j, results):
         rows_mask[r["ext"]] = list(base_rows) + cut
         cols_mask[r["ext"]] = compress_ranges(r["bad_cols"])
 
-    # shared window; every extension needs enough peaks to cover all of it
-    use, outliers, x_lo, x_hi = shared_fit_window(results, any_res)
+    # shared window; every extension needs enough peaks to cover all of it. High-occupancy CCDs have their own
+    # window (high_occupancy_fit_settings) and do not widen the others'.
+    low = [r for r in results if not (r.get("high_occupancy") or {}).get("resolved")] or results
+    use, outliers, x_lo, x_hi = shared_fit_window(low, any(r["resolved"] for r in low))
     for r in results:
         if r.get("k_fit") == 1:            # --peaks 1: the window holds only the zero-electron peak
             continue

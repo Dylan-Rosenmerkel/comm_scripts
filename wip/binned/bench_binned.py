@@ -33,6 +33,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 PY = "/opt/homebrew/Caskroom/miniforge/base/envs/damic/bin/python"
 SRC_LIST = os.path.expanduser("~/Documents/comm_scripts_data/waders_integration_example/DM09_Image5.txt")
 PRE = 8
+NOV = 20          # overscan columns added to every binned image (read noise only, as a binned readout has)
 
 
 def images():
@@ -63,6 +64,9 @@ def binned(e, by, bx, noise, rng):
 def make(out, bins):
     from astropy.io import fits
     rng = np.random.default_rng(20261113)
+    sys.path.insert(0, os.path.join(REPO, "superWADERs", "engine"))
+    import autoconfig_panaSKImg as A
+    truth = {}
     for p in images():
         name = os.path.basename(p).split(".")[0]
         E = electrons(p)
@@ -77,14 +81,22 @@ def make(out, bins):
             hdus = []
             for n in sorted(E):
                 e, g, nz = E[n]
-                img = binned(e, by, bx, nz, rng) * g + 1000.0
+                q = binned(e, by, bx, nz, rng)
+                qt = binned(e, by, bx, 0.0, rng)            # the noise-free electron sum (truth)
+                med = float(np.median(qt))
+                lam_t = A.truncated_poisson_lam(qt.ravel(), int(np.ceil(med + 5 * np.sqrt(max(med, 0)) + 3)))
+                truth[f"{name}_bin{b}|{n}"] = dict(gain=g, dark_per_bin=lam_t, median=med)
+                q = np.hstack([q, rng.normal(0.0, nz, (q.shape[0], NOV))])     # overscan: no charge
+                img = q * g + 1000.0
                 hdr = hx[n].copy()
                 hdus.append(fits.ImageHDU(img.astype(np.float32), header=hdr))
             ny, nx = hdus[0].data.shape
-            ph.update(NPBIN=by, NSBIN=bx, NROW=ny, NCOL=nx, PRESCAN=0)
+            ph.update(NPBIN=by, NSBIN=bx, NROW=ny, NCOL=nx, PRESCAN=0,
+                      NCOLPRE=int(ph["PHYSCOL"]) - (nx - NOV) * bx)        # active = (nx - NOV) binned columns
             # same file-name pattern (image number at the end), the binning in the name for the reader
             fits.HDUList([fits.PrimaryHDU(header=ph)] + hdus).writeto(os.path.join(d, f"{name}_bin{b}.fits"), overwrite=True)
         print("made", name, flush=True)
+    json.dump(truth, open(os.path.join(out, "truth.json"), "w"), indent=1)
 
 
 def run(out):
@@ -131,6 +143,17 @@ def kalpha(E):
         return None
 
 
+def fitted(rd):
+    """{(image key, ext): (gain, noise e-, dark charge e-/bin, chain)} from native_summary.json / summary.txt"""
+    out = {}
+    for s in json.load(open(os.path.join(rd, "native_summary.json"))):
+        key = os.path.basename(s["image"]).split("Low_Temp_109_")[1].split("_bin")[0].split(".")[0]
+        for ext, c in s["ccds"].items():
+            if "gain" in c:
+                out[(key, int(ext[3:]))] = (c["gain"], c["noise_e"], c["dc_e"])
+    return out
+
+
 def analyse(out):
     from scipy.spatial import cKDTree
     runs = {os.path.basename(d): glob.glob(os.path.join(d, "superWADERs_*"))[0]
@@ -168,15 +191,26 @@ def analyse(out):
             if tt is not None:
                 dd, _ = tt.query(np.c_[b["y"][bs], b["x"][bs]], distance_upper_bound=2.0)
                 fakes += int(np.sum(~np.isfinite(dd)))
-        rep[name] = dict(kalpha=kalpha(allE), clusters_gt1keV=nb, truth_gt1keV=tot, efficiency=found / max(tot, 1),
+        F, F0 = fitted(rd), fitted(runs["unbinned"])
+        TR = json.load(open(os.path.join(out, "truth.json"))) if os.path.exists(os.path.join(out, "truth.json")) else {}
+        tdc = {(k.split("Low_Temp_109_")[1].split("_bin")[0], int(k.split("|")[1])): v["dark_per_bin"]
+               for k, v in TR.items() if k.split("_bin")[1].split("|")[0] == name}
+        cal = [(F[k][0] / F0[k][0], F[k][1], (F[k][2] / tdc[k]) if tdc.get(k) else float("nan")) for k in F if k in F0]
+        rep_cal = dict(gain_ratio=float(np.median([c[0] for c in cal])) if cal else None,
+                       noise_e=float(np.median([c[1] for c in cal])) if cal else None,
+                       dc_ratio=float(np.median([c[2] for c in cal])) if cal else None)
+        rep[name] = dict(calibration=rep_cal, kalpha=kalpha(allE), clusters_gt1keV=nb, truth_gt1keV=tot, efficiency=found / max(tot, 1),
                          fakes=fakes, e_ratio_median=float(np.median(ratio)) if ratio else None,
                          chains=open(os.path.join(rd, "summary.txt")).read().count("-> root") if os.path.exists(
                              os.path.join(rd, "summary.txt")) else None)
     json.dump(rep, open(os.path.join(out, "report.json"), "w"), indent=1)
-    L = ["| setting | K-alpha [keV] | sigma [keV] | clusters > 1 keV (truth) | efficiency | fakes | E ratio |", "|---|---|---|---|---|---|---|"]
+    L = ["| setting | gain / truth | noise [e-] | DC / truth | K-alpha [keV] | sigma [keV] | clusters > 1 keV (truth) | efficiency | fakes | E ratio |",
+         "|---|---|---|---|---|---|---|---|---|---|"]
     for k, v in rep.items():
         ka = v["kalpha"] or {}
-        L.append(f"| {k} | {ka.get('mu', float('nan')):.4f} +- {ka.get('err', float('nan')):.4f} | {ka.get('sigma', float('nan')):.3f} | "
+        cb = v["calibration"]
+        f3 = lambda x, f="{:.3f}": "-" if x is None else f.format(x)
+        L.append(f"| {k} | {f3(cb['gain_ratio'], '{:.4f}')} | {f3(cb['noise_e'])} | {f3(cb['dc_ratio'])} | {ka.get('mu', float('nan')):.4f} +- {ka.get('err', float('nan')):.4f} | {ka.get('sigma', float('nan')):.3f} | "
                  f"{v['clusters_gt1keV']} ({v['truth_gt1keV']}) | {v['efficiency']:.3f} | {v['fakes']} | {v['e_ratio_median']} |")
     open(os.path.join(out, "report.md"), "w").write("\n".join(L) + "\n")
     print("\n".join(L))
@@ -186,7 +220,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("what", choices=("make", "run", "analyse", "all"))
     ap.add_argument("out")
-    ap.add_argument("--bins", nargs="*", default=["1x1", "2x2", "5x5", "10x10", "2x1"])
+    ap.add_argument("--bins", nargs="*", default=["1x1", "2x2", "5x5", "10x10", "2x1", "1x10", "10x1", "1x100", "100x1"])
     a = ap.parse_args()
     if a.what in ("make", "all"):
         make(a.out, a.bins)

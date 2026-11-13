@@ -491,6 +491,16 @@ def gain_noise_dc(ps, active, ext, r, fs, mimic=None):
     fit with exactly those settings (a gain window narrower than 1e-4 x gain = held, fixed at its centre).
     Returns (final fit dict, notes, the fits {'gain', 'dc'}, held (gain, error) or None)."""
     start = dict(gain=r["gain"], sigma=r.get("sigma_raw", r["sigma"]), lam=r.get("lam01") or r.get("lam") or 0.1)
+    ho = r.get("high_occupancy") or {}
+    if ho.get("resolved") and mimic is None:      # > A.LAM_HIGH e-/pix: one fit in its own window around lambda
+        s = A.high_occupancy_fit_settings(r)
+        # the gain is held at the comb phase: the histogram is a mixture (the dark charge changes over the CCD), and
+        # a free gain absorbs that (benchmark: +2 % at the window edge, the comb phase within 0.1 % of the truth)
+        fit = fit_dark_current(ps, fit_mask(ps.shape, active, s), s, start, gain_fixed=ho["gain"])
+        fit["gain"] = (ho["gain"], float("nan"))
+        return fit, (f"high occupancy ({ho['median_e']:.1f} e-/pix median): gain held at the comb phase {ho['gain']:.4f} "
+                     f"ADU/e- (coherence {ho['R']:.2f}); noise and dark charge fitted with the peaks lambda +- 4 sqrt(lambda)"), \
+            {}, (ho["gain"], None)
     if mimic is not None:
         s = mimic
         held = None
@@ -1069,7 +1079,12 @@ def process_image(path, out_dir, curve=None, clusterer="threshold", thresholds="
                    pedestal_region="overscan" if use_ovs else "active", held=held, fit_settings=fit["settings"],
                    fits=dict({k: {p: v[p] for p in FIT_PARAMS + ["chi2", "ndf"]} for k, v in fits.items()},
                              final={p: fit[p] for p in FIT_PARAMS + ["chi2", "ndf"]}))
-        if r["resolved"]:                        # dark charge per row from the fraction of 0e- pixels (Poisson)
+        ho = r.get("high_occupancy") or {}
+        if ho.get("resolved"):                   # high occupancy: per row from the integer charges (truncated Poisson)
+            rec["high_occupancy"] = {k: v for k, v in ho.items() if k != "lam_rows"}
+            rec["lam_rows"] = [A.truncated_poisson_lam(np.round(e_img[k][active[k]]), ho["kmax"]) if active[k].any()
+                               else None for k in range(e_img.shape[0])]
+        elif r["resolved"]:                      # dark charge per row from the fraction of 0e- pixels (Poisson)
             with np.errstate(divide="ignore", invalid="ignore"):
                 f0 = np.array([np.mean(e_img[k][active[k]] < 0.5) if active[k].any() else np.nan
                                for k in range(e_img.shape[0])])

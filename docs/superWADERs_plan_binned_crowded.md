@@ -88,6 +88,23 @@ So step 1.0 comes first.
 at 0.15 e- noise up to tens of e- per bin), dark charge from the mean charge per bin / gain (not the 0/1 e- peak
 ratio); the existing fit only where the occupancy is low. Measured on the benchmark (gain, dark charge, then K-alpha).
 
+**Step 1.0 done (2026-11-13)** (`autoconfig_panaSKImg.high_occupancy`, `native_pipeline.gain_noise_dc`; only CCDs
+with a median charge >= 2 e- per pixel / bin and a resolved comb; unbinned DM09 clusters identical, 12/12):
+
+| setting | gain / truth | noise [e-] | K-alpha [keV] (truth 5.799) | found (before) | fakes (before) | chain now |
+|---|---|---|---|---|---|---|
+| 2x2 | 1.0002 | 0.152 | 5.803 (5.928) | 80 % (56 %) | 1028 (900) | crowded |
+| 2x1 | 1.0014 | 0.152 | 5.785 (5.780) | 79 % (54 %) | 729 (550) | |
+| 5x5 | 1.0000 | 0.151 | 5.822 (5.835) | 45 % (29 %) | 734 (234) | crowded |
+| 10x10 | 1.0000 | 0.153 | 5.806 (5.783) | 6 % (6 %) | 16 (13) | threshold |
+| 1x10 / 10x1 | 1.0000 | 0.151 | 5.795 / 5.801 | 40 % / 33 % | ~1200 | crowded |
+| 1x100 / 100x1 | 1.0000 | 0.37 | - / 5.777 | 0 % / 2 % | 2 / 17 | threshold |
+
+The gain is now right everywhere (comb phase, held) and K-alpha within 7 eV up to 10x10 (was +130 eV at 2x2). What
+remains is the clustering: crowded mode on every binned CCD (A_GMX's background at several e- per bin, the core-fill
+trigger), threshold on 10x10 and the strips; fakes ~700-1300. The fitted dark charge is 0.3-0.9 x the true one (the
+histogram is a mixture over the CCD): report the truncated-Poisson estimate instead (to do with 1.1a).
+
 1.1 **Bin geometry through the chain.** `characterise` already reads NPBIN / NSBIN; pass (b_y, b_x) to
 `adaptive_cluster`, the finder and the threshold clusterer, and express every size in micrometres (15 um pixels):
 lengths and widths scale by 1/b per axis. Anisotropic binning: separate y / x widths in the pixel-integrated model.
