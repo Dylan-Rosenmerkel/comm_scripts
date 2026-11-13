@@ -118,16 +118,23 @@ def make_setting(out, by, bx, dc, n_img, seed):
     print("made", name, flush=True)
 
 
-def run(out):
-    for sd in sorted(glob.glob(os.path.join(out, "*_dc*"))):
+def run(out, jobs=2, parallel=1):
+    """run_superWADERs on every setting not done yet (no summary.txt), `parallel` settings at a time, -j jobs each"""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(sd):
         imgs = sorted(glob.glob(os.path.join(sd, "data", "*.fits")))
         lst = os.path.join(sd, "images.txt")
         open(lst, "w").write("\n".join(imgs) + "\n")
         with open(os.path.join(sd, "run.log"), "w") as fh:
-            rc = subprocess.run([PY, os.path.join(REPO, "superWADERs", "run_superWADERs"), lst, "-o", sd, "-j", "2",
+            rc = subprocess.run([PY, os.path.join(REPO, "superWADERs", "run_superWADERs"), lst, "-o", sd, "-j", str(jobs),
                                  "--overwrite", "--no-review-helper", "--gain", str(G)],
                                 stdout=fh, stderr=subprocess.STDOUT).returncode
         print(os.path.basename(sd), "rc", rc, flush=True)
+    todo = [sd for sd in sorted(glob.glob(os.path.join(out, "*_dc*")))
+            if not glob.glob(os.path.join(sd, "superWADERs_*", "summary.txt"))]
+    with ThreadPoolExecutor(max_workers=parallel) as ex:
+        list(ex.map(one, todo))
 
 
 def read(f):
@@ -223,6 +230,8 @@ def main():
     ap.add_argument("--bins", nargs="*", default=["1x1", "10x10", "1x10", "10x1", "1x100", "100x1", "100x100"])
     ap.add_argument("--dc", nargs="*", type=float, default=[1e-6, 1e-5, 1e-4])
     ap.add_argument("--n", type=int, default=20)
+    ap.add_argument("-j", "--jobs", type=int, default=2, help="workers per run_superWADERs run")
+    ap.add_argument("--parallel", type=int, default=1, help="settings run at the same time")
     a = ap.parse_args()
     if a.what in ("make", "all"):
         for k, b in enumerate(a.bins):
@@ -230,7 +239,7 @@ def main():
             for j, dc in enumerate(a.dc):
                 make_setting(a.out, by, bx, dc, a.n, seed=1000 + 10 * k + j)
     if a.what in ("run", "all"):
-        run(a.out)
+        run(a.out, a.jobs, a.parallel)
     if a.what in ("analyse", "all"):
         analyse(a.out)
 

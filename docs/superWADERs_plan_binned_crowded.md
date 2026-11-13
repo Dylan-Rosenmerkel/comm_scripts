@@ -62,6 +62,27 @@ readout (events crossing an image boundary are split, with their truth). Measure
 electron number, fakes per image and per Mpix, dark charge (pooled) against the truth, energies; events split at image
 boundaries. First run on the current code (baseline), then after every step.
 
+**Baseline (2026-11-13, current code, `--gain 1.3`; 20 images x 2 CCDs per setting; efficiency = truth found):**
+
+| binning | 2 e- | 3 e- | 4-5 e- | 6-10 e- | X-rays | muons found / whole | fakes | DC fit / true |
+|---|---|---|---|---|---|---|---|---|
+| 1x1 (1e-6 / 1e-5 / 1e-4) | 0.78 / 0.75 / 0.08 | 0.92 / 1.00 / 0.86 | 0.93-0.96 | 0.99-1.00 | 0.95-0.99 | 0.95-1.0 / 0.72-0.87 | 0-1 | 77x / 7.7x / 1.1x |
+| 1x10 | 0.56 / 0.26 / 0.00 | 0.55-0.69 | 0.92-0.98 | 0.98 | 0.96-0.98 | 0.78-0.97 / 0.67-0.83 | 0 | 21x / 2.4x / 0.9x |
+| 10x1 | 0.43 / 0.15 / 0.00 | 0.47-0.69 | 0.80-0.88 | 0.85-0.88 | 0.83-0.85 | 0.78-0.86 / 0.41-0.58 | 0 | 22x / 2.3x / 1.0x |
+| 10x10 | 0.00 | 0.00-0.11 | 0.12-0.16 | 0.20-0.26 | 0.81-0.85 | 0.72-0.94 / 0.36-0.65 | 0-1 | 18x / 2.2x / 0.9x |
+| 1x100 | 0.00-0.15 | 0.07-0.29 | 0.31-0.42 | 0.57-0.65 | 0.76-0.83 | 0.71-0.78 / 0.59-0.67 | 0-2 | |
+| 100x1 | 0.00-0.15 | 0.00-0.42 | 0.07-0.41 | 0.06-0.33 | 0.59-0.71 | 0.55-0.71 / 0.39-0.57 | 0-2 | |
+| 100x100 | 0 | 0 | 0 | 0 | 0.48-0.52 | 0.48-0.58 / 0.43-0.50 | 0 | 54x / 5.7x / 1.3x |
+
+- Unbinned works (the 2 e- loss at 1e-4 is the known physics limit: pairs of dark electrons). **Binned, the few-electron
+  efficiency collapses** (10x10: 0-26 %; 100x100: 0) although an event's charge sits in one bin over 0.12 e- noise:
+  the finder and A_GMX expect events spread over pixels (diffusion prior 0.1-1.3 px), not single bins.
+- X-rays 50-85 % binned (95-99 % unbinned): the size rules; 100x100 (6 x 20 bins) goes to 'unmodelled'.
+- **Fakes ~0 everywhere:** the losses are conservatism / a wrong event model, not noise.
+- **Events split at an image boundary: 0 % found as such** (stitching, 1A.4).
+- **Dark charge per image: up to 77x too high at 1e-6** (the fit's lower limit, few dark electrons per image):
+  pooling over the images (1A.3) is needed.
+
 1A.2 **Bin geometry in the few-electron finder and A_GMX:** an event is point-like in bins (diffusion sigma / b per
 axis, anisotropic for 1x100 / 100x1), the dark charge per bin, block sizes and halo in bins; strips of a few rows or
 columns as 1-D.
