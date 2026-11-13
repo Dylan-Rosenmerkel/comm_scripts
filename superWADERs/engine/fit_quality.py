@@ -91,9 +91,8 @@ def quality(fit, lam_ref=None):
     k * dc_err without a reference. score: see the module docstring.
     Returns a flat dict (also the CSV columns of main()).
     """
-    g, eg = fit["gain"]
-    s, es = fit["sigma"]
-    lam, el = fit["lam"]
+    nan = float("nan")              # a parameter not fitted (e.g. flooded / unresolved CCD) has no value or error
+    (g, eg), (s, es), (lam, el) = [[nan if v is None else v for v in fit[k]] for k in ("gain", "sigma", "lam")]
     chi2ndf = fit["chi2"] / max(fit["ndf"], 1)
     k = math.sqrt(max(chi2ndf, 1.0))
     noise, dc = s / g, lam / g

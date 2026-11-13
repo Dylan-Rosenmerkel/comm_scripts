@@ -174,7 +174,7 @@ def held_quality(fit, ref, held):
     """
     q = FQ.quality(fit, ref)
     if held:
-        g, eg = held
+        g, eg = (float("nan") if v is None else v for v in held)      # a gain from the prior has no error
         q["gain_err_s"] = eg
         q["dc_err_s"] = math.hypot(q["dc_err_s"], q["dc"] * eg / g)
         q["dc_total"] = math.hypot(q["dc_err_s"], q["dc_bias"] or 0.0)
