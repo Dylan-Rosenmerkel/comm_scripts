@@ -180,6 +180,9 @@ $("#crit").innerHTML=Object.keys(M).length?`<p class="muted">${C.name||""} ${C.v
 $("#dl").innerHTML=(D.definitions||[]).map(([a,b])=>`<dt>${a}</dt><dd>${b}</dd>`).join("");
 function drawAll(){index();kpis();SWR.bar($("#swrbar"));showBox();drawGrid();issues();dists();mats();table();$("#panel").innerHTML='<span class="muted">Click a CCD in the grid.</span>';
  const h=decodeURIComponent(location.hash.slice(1));if(by[h])show(h);}
-drawAll();
-addEventListener("hashchange",()=>{const h=decodeURIComponent(location.hash.slice(1));if(by[h])show(h);});
+// a link to a CCD (#module ext) opens the first view that has it (e.g. its older data set)
+function pickView(){const h=decodeURIComponent(location.hash.slice(1));if(rows().some(c=>key(c)===h))return false;
+ const i=views.findIndex(v=>v.ccds.some(c=>key(c)===h));if(i<0)return false;V=i;if($("#vw"))$("#vw").value=i;return true;}
+pickView();drawAll();
+addEventListener("hashchange",()=>{const h=decodeURIComponent(location.hash.slice(1));if(pickView())drawAll();else if(by[h])show(h);});
 </script></body></html>
