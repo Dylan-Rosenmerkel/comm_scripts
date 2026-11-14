@@ -222,10 +222,11 @@ def _branch(adj, j, start):
 
 
 def _density(mu, A, S, pts, smooth):
-    """mixture density of the clouds at pts, smoothed with a Gaussian of `smooth` px"""
+    """mixture density of the clouds at pts, smoothed with a Gaussian of `smooth` px (or (rows, columns) per axis)"""
+    sy, sx = (smooth, smooth) if np.ndim(smooth) == 0 else smooth
     out = np.zeros(len(pts))
     for k in range(len(mu)):
-        a, c, b = S[k, 0] + 1 / 12 + smooth ** 2, S[k, 1] + 1 / 12 + smooth ** 2, S[k, 2]
+        a, c, b = S[k, 0] + 1 / 12 + sy ** 2, S[k, 1] + 1 / 12 + sx ** 2, S[k, 2]
         det = max(a * c - b * b, 1e-6); d = pts - mu[k]
         out += A[k] / (2 * np.pi * np.sqrt(det)) * np.exp(-0.5 * (c * d[:, 0] ** 2 + a * d[:, 1] ** 2 - 2 * b * d[:, 0] * d[:, 1]) / det)
     return out
@@ -301,7 +302,9 @@ def _compact(Sk, by, bx, s_max, ratio_max, s_bin=1.0):
     a, c, b = Sk
     ry, rx = by <= 2, bx <= 2
     if not (ry or rx):
-        sy = sx = 1.0; smax = s_bin
+        # both axes unresolved (bins > 2 px): an X-ray is a point; the shape of a 0.15-0.3-bin cloud is pixelisation,
+        # so only its size is tested
+        return bool(np.sqrt(max(0.5 * (a + c), 0)) <= s_bin)
     elif ry and rx:
         sy, sx, smax = by, bx, s_max
     else:
@@ -321,6 +324,8 @@ def xray_satellites(mu, A, S, sub, a_lo=None, a_hi=None, s_max=None, ratio_max=1
     a_lo = XSAT[0] if a_lo is None else a_lo; a_hi = XSAT[1] if a_hi is None else a_hi
     s_max = XSAT[2] if s_max is None else s_max
     by, bx = float(binning[0]), float(binning[1])
+    if (by, bx) != (1.0, 1.0):
+        return _xray_satellites_binned(mu, A, S, sub, a_lo, a_hi, s_max, ratio_max, dip_max, smooth, r_local, by, bx)
     sub = sub.copy(); nxt = sub.max() + 1
     for g in np.unique(sub):
         idx = np.nonzero(sub == g)[0]
@@ -346,6 +351,62 @@ def xray_satellites(mu, A, S, sub, a_lo=None, a_hi=None, s_max=None, ratio_max=1
                     ok = False; break
             if ok:
                 sub[k] = nxt; nxt += 1
+    return sub
+
+
+def _in_chain(mu, A, adj, pt, nb, cos_min=0.5, a_ratio=10.0):
+    """the point pt continues a straight chain of comparable clouds (a track across coarse bins is a row of point-like
+    clouds one bin apart, each with a dip to the next at px-scale smoothing): interior (two MST neighbours on opposite
+    sides) or an end (one neighbour that continues in the same direction), amplitudes within a_ratio of the point's"""
+    c = np.average(mu[pt], 0, weights=A[pt]); a = A[pt].sum()
+    comp = [j for j in nb if a / a_ratio <= A[j] <= a * a_ratio]
+    u = [(mu[j] - c) / max(np.linalg.norm(mu[j] - c), 1e-9) for j in comp]
+    for x in range(len(u)):
+        for y in range(x + 1, len(u)):
+            if u[x] @ u[y] < -cos_min:
+                return True
+    for j, uj in zip(comp, u):
+        for m in np.nonzero(adj[j])[0]:
+            if m in pt or not (a / a_ratio <= A[m] <= a * a_ratio): continue
+            w = mu[m] - mu[j]
+            if (w / max(np.linalg.norm(w), 1e-9)) @ uj > cos_min:
+                return True
+    return False
+
+
+def _xray_satellites_binned(mu, A, S, sub, a_lo, a_hi, s_max, ratio_max, dip_max, smooth, r_local, by, bx, r_pt=1.2):
+    """xray_satellites on a binned image (2026-11-14, DM09 5x5: X-rays inside tracks had dips of 0.0-0.25 at 0.8 px
+    of smoothing but 0.5-1.7 at 0.8 BINS). A candidate is a POINT: a compact cloud with the compact clouds within r_pt
+    bins of it (a sub-bin X-ray on a bin edge is fitted as two clouds in adjacent bins, which must never be cut apart);
+    the point's charge is in [a_lo, a_hi]; a group that is only that point, or a point that continues a straight chain
+    of comparable clouds (a track: _in_chain), is not split; the point may hold more than
+    half the group's charge (an X-ray next to a smaller track piece); it is split off when the density, smoothed by
+    `smooth` UNBINNED px per axis, dips below dip_max towards every MST neighbour outside the point."""
+    sm = (smooth / by, smooth / bx)
+    sub = sub.copy(); nxt = sub.max() + 1
+    for g in np.unique(sub):
+        idx = np.nonzero(sub == g)[0]
+        if idx.size < 2: continue
+        comp = np.array([_compact(S[k], by, bx, s_max, ratio_max) for k in idx])
+        adj, _ = _mst(mu[idx])
+        tree = cKDTree(mu[idx])
+        done = np.zeros(idx.size, bool)
+        for i in np.argsort(-A[idx]):
+            k = idx[i]
+            if done[i] or not comp[i]: continue
+            pt = [q for q in tree.query_ball_point(mu[k], r_pt) if comp[q] and not done[q]]
+            if i not in pt: pt.append(i)
+            pt = np.array(sorted(pt))
+            if len(pt) == idx.size: continue                       # the group is this point: one object
+            if not (a_lo <= A[idx[pt]].sum() <= a_hi): continue
+            nb = np.setdiff1d(np.nonzero(adj[pt].any(0))[0], pt)
+            if not nb.size: continue
+            if _in_chain(mu[idx], A[idx], adj, pt, nb): continue
+            loc = np.unique(np.r_[idx[np.r_[tree.query_ball_point(mu[k], r_local)]], idx[nb]])
+            lp = np.nonzero(np.isin(loc, idx[pt]))[0]
+            ok = all(_neck_ratio(mu[loc], A[loc], S[loc], lp, np.nonzero(loc == idx[j])[0], sm) < dip_max for j in nb)
+            if ok:
+                sub[idx[pt]] = nxt; nxt += 1; done[pt] = True
     return sub
 
 
