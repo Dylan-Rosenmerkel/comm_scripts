@@ -692,17 +692,21 @@ def threshold_clusters(e_img, region, t_pix, t_seed):
     return idx // e_img.shape[1], idx % e_img.shape[1], off
 
 
-def agmx_valid(shape, active, first_row):
+def agmx_valid(shape, active, first_row, binning=(1, 1)):
     """A_GMX's active pixels as agmx_root.valid_mask / comm_clustering: rows from first_row + 3 to the second-last-but-one,
-    columns of the active region without a 2-pixel border."""
+    columns of the active region without a 2-pixel border. The margins are unbinned pixels: with on-chip binning
+    (rows, columns) they are ceil((first_row + 3) / b_y) and ceil(2 / b_y) rows and ceil(2 / b_x) columns (a 6-row
+    100x1 image keeps rows 1-4)."""
+    by, bx = (max(int(b), 1) for b in binning)
+    r0, r1, c = math.ceil((first_row + 3) / by), math.ceil(2 / by), math.ceil(2 / bx)
     cols = np.flatnonzero(active.any(axis=0))
     v = np.zeros(shape, bool)
-    v[first_row + 3:shape[0] - 2, cols[0] + 2:cols[-1] + 1 - 2] = True
+    v[r0:shape[0] - r1, cols[0] + c:cols[-1] + 1 - c] = True
     return v & active
 
 
 def agmx_clusters(Q, valid, crowded="auto", crowded_shapes="on", fewe="off", fewe_lam=None, fewe_RN=None, bg=None,
-                  sigma=None):
+                  sigma=None, binning=(1, 1), fewe_threshold=None, fewe_nm=None):
     """A_GMX (adaptive_cluster engine 'gmx') on the image Q [e-]; returns (rows, cols, charge [e-], offsets, extras
     {agmx_*: array, finder, p_event, N_post, sigma_post}, info). Clusters without pixels or a finite energy are
     dropped (as agmx_root). fewe / fewe_lam / fewe_RN: the Bayesian few-electron switch (agmx_switch via
@@ -725,7 +729,7 @@ def agmx_clusters(Q, valid, crowded="auto", crowded_shapes="on", fewe="off", few
             bg = None
     cl, info = AD.adaptive_cluster(Qv, valid, bg, sigma=sigma, engine="gmx", return_pixels=True, return_info=True,
                                    crowded=crowded, crowded_shapes=crowded_shapes, fewe=fewe, fewe_lam=fewe_lam,
-                                   fewe_RN=fewe_RN)
+                                   fewe_RN=fewe_RN, binning=binning, fewe_threshold=fewe_threshold, fewe_nm=fewe_nm)
     if pad:
         info["padded_rows"] = int(pad)
     cl = [c for c in cl if np.isfinite(c.get("E", np.nan)) and "_pix" in c and len(c["_pix"][0])]
@@ -1139,7 +1143,8 @@ def process_image(path, out_dir, curve=None, clusterer="threshold", thresholds="
                 adu_img = e_img * g_cal if panaskimg_json else ps      # mimic: as comm_clustering (calibrated x gain)
                 Q = (GVC.electrons_with_anchor(adu_img.ravel(), model, g_cal, anchor).reshape(ps.shape)
                      if model is not None else e_img)
-                valid = agmx_valid(ps.shape, active, first_row) & clus_region
+                valid = agmx_valid(ps.shape, active, first_row,
+                                   (int(h0.get("NPBIN", 1) or 1), int(h0.get("NSBIN", 1) or 1))) & clus_region
                 if not valid.any() and active.any():
                     # strips (e.g. 4 x 6294): A_GMX's first-rows (+3) and bottom (2) cuts leave no row -> all rows from
                     # id_row_start (logged)
@@ -1185,7 +1190,10 @@ def process_image(path, out_dir, curve=None, clusterer="threshold", thresholds="
                 pool = (fewe_pool or {}).get(n) if fewe_eff != "off" else None
                 rows, cols, q, off, extras, ainfo = agmx_clusters(Q, valid, crowded_eff, crowded_shapes, fewe_eff,
                                                                   pool[0] if pool else None,
-                                                                  pool[1] if pool else None, bg_k, sig_k)
+                                                                  pool[1] if pool else None, bg_k, sig_k,
+                                                                  binning=(int(h0.get("NPBIN", 1) or 1), int(h0.get("NSBIN", 1) or 1)),
+                                                                  fewe_threshold=pool[2] if pool and len(pool) > 2 else None,
+                                                                  fewe_nm=pool[3] if pool and len(pool) > 3 else None)
                 if dec is not None:
                     if ainfo.get("padded_rows"):
                         dec["fallbacks"].append(f"image padded with {ainfo['padded_rows']} invalid rows for A_GMX "
@@ -1408,7 +1416,8 @@ def auto_tasks(imgs, out, kw, gain=None, gain_file=None, skip_start=0, log=print
                 geo = rec["geometry"]["value"]
                 act = np.zeros(c["e_img"].shape, bool)
                 act[:, geo["first_active_col"]:geo["first_overscan_col"]] = True
-                valid = agmx_valid(c["e_img"].shape, act, geo["id_row_start"])
+                valid = agmx_valid(c["e_img"].shape, act, geo["id_row_start"],
+                                   (int(geo.get("npbin", 1) or 1), int(geo.get("nsbin", 1) or 1)))
                 for col in (t[2].get("mask_cols") or {}).get(n, []):
                     valid[:, col] = False
                 imgs_q.append((np.where(valid, c["e_img"], 0.0), valid))
@@ -1418,15 +1427,19 @@ def auto_tasks(imgs, out, kw, gain=None, gain_file=None, skip_start=0, log=print
                         "run-pooled dark charge not computed (CCD missing or shapes differ) -> single-image estimate")
                 continue
             import agmx_switch as SW
+            SW.BINNING = (int(geo.get("npbin", 1) or 1), int(geo.get("nsbin", 1) or 1))
             try:
-                lam_maps, R_N = SW.prepare_run(imgs_q)
+                # the full run-pooled mode (switch_validation/VALIDATION.md): the run's P(event) cut and noise model
+                # too, not each image's own (a per-image budget / noise fit loses single-pixel / single-bin events)
+                run = SW.prepare_run(imgs_q, full=True)
+                lam_maps, R_N = run["lam_maps"], run["R_N"]
             except Exception as e:                       # noqa: BLE001  logged, single-image estimate instead
                 for t, rec in members:
                     rec["ccds"][ext].setdefault("fallbacks", []).append(
                         f"agmx_switch.prepare_run failed ({type(e).__name__}: {e}) -> single-image estimate")
                 continue
             for i, (t, rec) in enumerate(members):
-                t[2].setdefault("fewe_pool", {})[n] = (lam_maps[i], R_N)
+                t[2].setdefault("fewe_pool", {})[n] = (lam_maps[i], R_N, run["threshold"], run["nm"])
                 c = rec["ccds"][ext]
                 c["plan"]["fewe_pool"] = dict(n_images=len(members), lam_median=float(np.median(
                     np.broadcast_to(lam_maps[i], imgs_q[i][1].shape)[imgs_q[i][1]])), R=float(np.sum(R_N)),

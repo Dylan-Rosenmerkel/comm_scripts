@@ -35,6 +35,7 @@ hypothesis, scaled to sum to N_mean). Kept A_GMX clusters get finder = 'agmx'. i
 import os
 import sys
 
+import math
 import numpy as np
 from scipy import ndimage
 
@@ -60,6 +61,7 @@ BIG_PAD = 2         # px: big-deposit footprints padded by this are left out of 
 BLOCK = 100         # px, block size of the per-region decision
 F_FAKE = 0.08       # expected fakes per Mpix at the analytic operating point
 MIN_BLOCK_PIX = 2000  # blocks with fewer valid (non-deposit) pixels take the image's regime
+BINNING = (1, 1)    # on-chip binning (rows, columns) of the image being clustered: set by adaptive_cluster(binning=)
 LINK = 1            # px: an A_GMX cluster within this of a neighbourhood's candidate pixel follows that neighbourhood
 
 
@@ -96,7 +98,7 @@ def measure(Q, valid, prior=None, exclude=None, nm=None):
     """noise stage + soft candidates: dict(ns (pipeline.noise_stage), cand, s, f_c, f_c_all, block f_c and regimes).
     exclude: pixels left out of f_c (big-deposit footprints); f_c_all counts every valid pixel. nm: the run's pooled
     noise model (prepare_run) instead of this image's own fit"""
-    prior = prior or FD.Prior()
+    prior = prior or FD.Prior(binning=BINNING)
     ns = PL.noise_stage(Q, valid, gain=1.0)
     if nm is not None:
         ns["nm"] = nm
@@ -128,14 +130,25 @@ def _block_regime(m, y, x):
     return m["blk_reg"][i, j]
 
 
+def lam_2e():
+    """LAM_2E per bin: the same chance rate of dark-charge 2-e- patterns per Mpix of UNBINNED area (~ lam_bin^2 /
+    (b_y b_x)) as LAM_2E per pixel, i.e. LAM_2E x sqrt(b_y b_x); LAM_2E itself for unbinned images"""
+    return LAM_2E * math.sqrt(BINNING[0] * BINNING[1])
+
+
+def _halo_bins():
+    """the finder's halo radius in bins: HALO unbinned pixels, at least 1.5 bins"""
+    return HALO if BINNING == (1, 1) else max(HALO / max(BINNING), 1.5)
+
+
 def bayes_catalogue(m, valid, lam_map=None, R_N=None):
     """neighbourhoods of the image with posteriors; single-image dark charge and event rates when not given"""
     ns, prior = m["ns"], m["prior"]
     if lam_map is None:
-        nb, pt = FD.analyse_image(ns["v"], ns["kap"], ns["nm"], valid, 1e-5, prior, only_pix=True, big_halo=HALO)
+        nb, pt = FD.analyse_image(ns["v"], ns["kap"], ns["nm"], valid, 1e-5, prior, only_pix=True, big_halo=_halo_bins())
         lam_map = PL._init_lam(nb, pt, valid)
     cand = m["cand"]
-    nb, pt = FD.analyse_image(ns["v"], ns["kap"], ns["nm"], valid, lam_map, prior, cand=cand, big_halo=HALO)
+    nb, pt = FD.analyse_image(ns["v"], ns["kap"], ns["nm"], valid, lam_map, prior, cand=cand, big_halo=_halo_bins())
     if R_N is None:
         R_N = PL.population_em([nb], float(valid.sum()), prior.pN)
     FD.posterior(nb, R_N)
@@ -154,7 +167,8 @@ def operating_threshold(nb, area, F=F_FAKE):
     p = np.sort(np.array([d["p_ev"] for d in nb if "p_ev" in d and not d.get("big") and not d.get("halo")]))[::-1]
     if not p.size:
         return 1.0
-    k = int(np.searchsorted(np.cumsum(1.0 - p), F * area / 1e6, side="right"))
+    # the budget is per Mpix of UNBINNED area: a bin covers BINNING[0] x BINNING[1] pixels of the CCD
+    k = int(np.searchsorted(np.cumsum(1.0 - p), F * area * BINNING[0] * BINNING[1] / 1e6, side="right"))
     return float(p[k - 1]) if k > 0 else 1.0
 
 
@@ -212,14 +226,17 @@ def apply(Q, valid, clusters, info, e_per_e, mode="auto", lam_map=None, R_N=None
         return clusters, info
     nb, lam_map, R_N = bayes_catalogue(m, valid, lam_map, R_N)
     lam = float(np.median(np.broadcast_to(lam_map, valid.shape)[valid]))
-    only3 = lam >= LAM_2E
+    only3 = lam >= lam_2e()
     # Bayes region: valid pixels of non-'agmx' blocks farther than HALO from every big-deposit pixel
     for d in nb:
         if d.get("big"):
             foot[d["cand"]] = True
     H, W = valid.shape
     blk = np.repeat(np.repeat(m["blk_reg"] != "agmx", BLOCK, 0), BLOCK, 1)[:H, :W]
-    halo = ndimage.distance_transform_edt(~foot) < HALO if foot.any() else np.zeros((H, W), bool)
+    # HALO in unbinned pixels (distance with the bin size per axis), the bins next to a deposit always included
+    halo = ((ndimage.distance_transform_edt(~foot, sampling=BINNING) < HALO) | ndimage.binary_dilation(foot, np.ones((3, 3), bool))
+            if foot.any() and BINNING != (1, 1) else
+            ndimage.distance_transform_edt(~foot) < HALO if foot.any() else np.zeros((H, W), bool))
     region = valid & blk & ~halo
     area = float(region.sum())
     # neighbourhoods in B and their catalogue
@@ -271,7 +288,7 @@ def apply(Q, valid, clusters, info, e_per_e, mode="auto", lam_map=None, R_N=None
 def run_threshold(nbs, area, lam, F=F_FAKE):
     """the analytic operating point of a whole run: P(event) cut whose selection over all images (neighbourhoods not
     big / halo; with lam >= LAM_2E only P(N >= 3) >= 0.5) has summed P(no event) <= F x area [Mpix]"""
-    only3 = lam >= LAM_2E
+    only3 = lam >= lam_2e()
     elig = [d for nb in nbs for d in nb if "p_ev" in d and not d.get("big") and not d.get("halo")
             and (not only3 or p_ge3(d) >= 0.5)]
     return operating_threshold(elig, area, F)
@@ -284,7 +301,7 @@ def prepare_run(images, prior=None, full=False, **kw):
     adaptive_cluster(..., fewe='auto', fewe_lam=lam_maps[k], fewe_RN=R_N, fewe_threshold=threshold, fewe_nm=nm)
     (the recommended run-pooled mode; switch_validation/VALIDATION.md)"""
     kw.setdefault("nm_pooled", True)
-    res = PL.process_group(images, prior or FD.Prior(), gain=1.0, **kw)
+    res = PL.process_group(images, prior or FD.Prior(binning=BINNING), gain=1.0, **kw)
     if not full:
         return res["lam_maps"], res["R_N"]
     lam = float(np.median(np.concatenate([np.asarray(m)[v] for m, (_, v) in zip(res["lam_maps"], images)])))

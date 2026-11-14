@@ -116,9 +116,12 @@ def _phi(x):
 
 
 @njit(cache=True)
-def evidence_kernel(rr, cc, A, Kn, nodes, wsig):
+def evidence_kernel(rr, cc, A, Kn, nodes, wsig, by=1.0, bx=1.0):
     """sum over centre grid of h^2 N! [t^N] prod_i sum_m A[i, m] (p_i t)^m / m!  for each (N, sigma node).
     rr, cc: candidate pixel rows / cols (relative); A: (k, K+1) linear scaled g_i(m); Kn: max N.
+    by, bx: on-chip binning (rows, columns): a node's width in bins is sigma / by along the rows and sigma / bx along
+    the columns (sigma in unbinned pixels); the centre grid step is floored at H_MIN bins (very narrow widths in large
+    bins: the event is then one bin, or split at a bin edge).
     Returns S (K+1, ns), Sy, Sx (centre-weighted sums)."""
     k = rr.shape[0]
     ns = nodes.shape[0]
@@ -131,30 +134,33 @@ def evidence_kernel(rr, cc, A, Kn, nodes, wsig):
     for si in range(ns):
         if wsig[si] <= 0:
             continue
-        sg = nodes[si]
-        h = min(0.25, sg / 2.0)
-        pad = max(2.5 * sg, 0.5)
-        ny = int(math.ceil((rmax - rmin + 2 * pad) / h)); nx = int(math.ceil((cmax - cmin + 2 * pad) / h))
-        y0 = rmin - pad + 0.5 * h; x0 = cmin - pad + 0.5 * h
-        ay = np.empty((ny, k)); bx = np.empty((nx, k))
+        sgy = nodes[si] / by
+        sgx = nodes[si] / bx
+        hy = max(min(0.25, sgy / 2.0), 0.02)
+        hx = max(min(0.25, sgx / 2.0), 0.02)
+        pady = max(2.5 * sgy, 0.5)
+        padx = max(2.5 * sgx, 0.5)
+        ny = int(math.ceil((rmax - rmin + 2 * pady) / hy)); nx = int(math.ceil((cmax - cmin + 2 * padx) / hx))
+        y0 = rmin - pady + 0.5 * hy; x0 = cmin - padx + 0.5 * hx
+        ay = np.empty((ny, k)); bxv = np.empty((nx, k))
         for iy in range(ny):
-            my = y0 + iy * h
+            my = y0 + iy * hy
             for i in range(k):
-                ay[iy, i] = _phi((rr[i] + 1 - my) / sg) - _phi((rr[i] - my) / sg)
+                ay[iy, i] = _phi((rr[i] + 1 - my) / sgy) - _phi((rr[i] - my) / sgy)
         for ix in range(nx):
-            mx = x0 + ix * h
+            mx = x0 + ix * hx
             for i in range(k):
-                bx[ix, i] = _phi((cc[i] + 1 - mx) / sg) - _phi((cc[i] - mx) / sg)
+                bxv[ix, i] = _phi((cc[i] + 1 - mx) / sgx) - _phi((cc[i] - mx) / sgx)
         for iy in range(ny):
-            my = y0 + iy * h
+            my = y0 + iy * hy
             for ix in range(nx):
-                mx = x0 + ix * h
+                mx = x0 + ix * hx
                 for n in range(Kn + 1):
                     coef[n] = 0.0
                 coef[0] = 1.0
                 deg = 0
                 for i in range(k):
-                    p = ay[iy, i] * bx[ix, i]
+                    p = ay[iy, i] * bxv[ix, i]
                     # q_m = A[i, m] p^m / m!
                     pm = 1.0
                     mtop = 0
@@ -181,7 +187,7 @@ def evidence_kernel(rr, cc, A, Kn, nodes, wsig):
                     for n in range(nd + 1):
                         coef[n] = tmp[n]
                     deg = nd
-                w2 = h * h
+                w2 = hy * hx
                 for n in range(deg + 1):
                     val = w2 * fact[n] * coef[n]
                     S[n, si] += val
@@ -202,14 +208,15 @@ def group(rows, cols, r_link):
     return connected_components(g, directed=False)[1]
 
 
-def nbhd_logJ(rr, cc, LG, Kn, nodes, wsig):
+def nbhd_logJ(rr, cc, LG, Kn, nodes, wsig, binning=(1, 1)):
     """log J(N, sigma) of one event in the candidate set (rr, cc) with background-convolved log g (k, >= Kn+1).
     Returns logJ (Kn+1, ns), ybar, xbar arrays (Kn+1, ns)."""
     lg = LG[:, :Kn + 1]
     M = lg.max(1)
     A = np.exp(lg - M[:, None])
     off = float((M - LG[:, 0]).sum())
-    S, Sy, Sx = evidence_kernel(rr.astype(np.int64), cc.astype(np.int64), A, Kn, nodes, wsig)
+    S, Sy, Sx = evidence_kernel(rr.astype(np.int64), cc.astype(np.int64), A, Kn, nodes, wsig,
+                                float(binning[0]), float(binning[1]))
     with np.errstate(divide="ignore", invalid="ignore"):
         logJ = np.log(S) + off
         yb = Sy / S; xb = Sx / S
@@ -239,12 +246,12 @@ FAST_SINGLE = True
 _I1 = {}
 
 
-def _log_i1(wsig):
-    """log int d^2mu p(mu, sigma)^N for one pixel, N = 0..KCAP, every sigma node (cached per prior)"""
-    key = tuple(np.round(wsig, 12))
+def _log_i1(wsig, binning=(1, 1)):
+    """log int d^2mu p(mu, sigma)^N for one pixel (bin), N = 0..KCAP, every sigma node (cached per prior and binning)"""
+    key = tuple(np.round(wsig, 12)) + tuple(binning)
     if key not in _I1:
         S, _, _ = evidence_kernel(np.zeros(1, np.int64), np.zeros(1, np.int64), np.ones((1, KCAP + 1)), KCAP,
-                                  SIG_NODES, wsig)
+                                  SIG_NODES, wsig, float(binning[0]), float(binning[1]))
         with np.errstate(divide="ignore"):
             _I1[key] = np.log(S)
     return _I1[key]
@@ -253,7 +260,8 @@ def _log_i1(wsig):
 class Prior:
     """event-model prior: sigma grid weights, p(N), linking radius, candidate floor"""
 
-    def __init__(self, sig="physics", nk="flat20", r_link=4.0, r_min=1e-2):
+    def __init__(self, sig="physics", nk="flat20", r_link=4.0, r_min=1e-2, binning=(1, 1)):
+        self.binning = (int(binning[0]), int(binning[1]))       # on-chip binning (rows, columns) of the images
         self.sig_kind = sig
         self.wsig = sigma_prior(sig)
         self.pN = n_prior(nk)
@@ -286,7 +294,9 @@ def analyse_image(v, kap, nm, valid, lam_map, prior, keep_logbf=-6.0, big_halo=1
     Lfull = NZ.loglike_table(vals, kap[cols], nm, Kt) if vals.size else np.zeros((0, Kt + 1))
     L = Lfull - Lfull[:, :1]                         # log l(n) = log f(v - n) - log f(v)
     LG = bg_convolve(L, lamc, KCAP) if vals.size else np.zeros((0, KCAP + 1))
-    lab = group(rows, cols, prior.r_link)
+    by, bx = getattr(prior, "binning", (1, 1))
+    # linking radius per axis: r_link unbinned pixels, but adjacent bins always link (a split event)
+    lab = group(rows / max(prior.r_link / by, 1.5), cols / max(prior.r_link / bx, 1.5), 1.0)
     nb = []
     # pixel table for the background: under H0 each candidate pixel's posterior expected dark count and P(n >= 1)
     lpd = stats.poisson.logpmf(np.arange(Kt + 1)[None, :], lamc[:, None]) if vals.size else np.zeros((0, Kt + 1))
@@ -334,10 +344,11 @@ def analyse_image(v, kap, nm, valid, lam_map, prior, keep_logbf=-6.0, big_halo=1
         r0, c0 = rr.min(), cc.min()
         if idx.size == 1 and FAST_SINGLE:
             # one candidate pixel: J(N, sigma) = l-ratio g(N) / g(0) x int d^2mu p(mu, sigma)^N (location independent)
-            logJ = (lgi[0, :Kn + 1] - lgi[0, 0])[:, None] + _log_i1(prior.wsig)[:Kn + 1]
+            logJ = (lgi[0, :Kn + 1] - lgi[0, 0])[:, None] + _log_i1(prior.wsig, getattr(prior, "binning", (1, 1)))[:Kn + 1]
             yb = np.full(logJ.shape, 0.5); xb = np.full(logJ.shape, 0.5)
         else:
-            logJ, yb, xb = nbhd_logJ(rr - r0, cc - c0, lgi, Kn, SIG_NODES, prior.wsig)
+            logJ, yb, xb = nbhd_logJ(rr - r0, cc - c0, lgi, Kn, SIG_NODES, prior.wsig,
+                                     getattr(prior, "binning", (1, 1)))
         logJN = np.full(KCAP + 1, -np.inf)
         with np.errstate(divide="ignore"):
             lw = np.log(prior.wsig)
@@ -375,7 +386,8 @@ def analyse_image(v, kap, nm, valid, lam_map, prior, keep_logbf=-6.0, big_halo=1
                     lgs = lgi[sel]
                     nm_ = np.array([np.max(np.nonzero(x - x.max() > -25)[0]) for x in lgs])
                     kn = int(min(KCAP, max(2, nm_.sum())))
-                    lj, _, _ = nbhd_logJ(a_ - a_.min(), b_ - b_.min(), lgs, kn, SIG_NODES, prior.wsig)
+                    lj, _, _ = nbhd_logJ(a_ - a_.min(), b_ - b_.min(), lgs, kn, SIG_NODES, prior.wsig,
+                                              getattr(prior, "binning", (1, 1)))
                     jn_ = _lse(lj + lw[None, :], axis=1)
                     parts.append(_lse(jn_ + lpN[:kn + 1]))
                 vals2.append(parts[0] + parts[1])

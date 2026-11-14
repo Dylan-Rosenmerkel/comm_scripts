@@ -94,6 +94,36 @@ seed-1.5 threshold 0.22-0.81. At 1e-4 the limit is physical for 2 e- (0.07-0.54 
 (dark-charge patterns): there only pooling and the event rate help. Target for 1A.2: ~100 % at <= 1e-5 for all
 binnings at <= 0.1 fakes / Mpix.
 
+**Step 1A.2, first part (2026-11-13): A_GMX's Bayesian stage bin-aware, and the program's pooling fixed.**
+1. finder: the event model per axis (diffusion width / bin size; centre grid floored at 0.02 bin), linking radius per
+   axis (adjacent bins always linked), halo in unbinned pixels; adaptive_cluster(binning=), set by the engine from
+   NPBIN / NSBIN.
+2. agmx_switch: the fake budget F per Mpix of UNBINNED area (was per bin: 100x too strict at 10x10); the "only >= 3 e-
+   above LAM_2E" rule scaled to the same chance rate per unbinned Mpix (LAM_2E x sqrt(b_y b_x)).
+3. engine: A_GMX's edge margins in unbinned pixels (ceil((first_row + 3) / b_y), ceil(2 / b_y) rows, ceil(2 / b_x)
+   columns).
+4. engine: the FULL run-pooled mode of the switch (the run's P(event) cut and noise model too, as VALIDATION.md
+   recommends); before, each image's own cut and noise fit (0.997 vs 0.21 at 10x10) dropped single-pixel / single-bin
+   events. This also improves unbinned images.
+Unbinned: DM09 identical (12/12, auto = agmx = run_WADERs); injected events on L2 58 -> 59 found.
+
+| (2 / 3 / 4-5 / 6-10 e-) | ceiling | A_GMX before | A_GMX now | seed 1.5 |
+|---|---|---|---|---|
+| 1x1 1e-6 | 1.00 all | 0.78 / 0.92 / 0.93 / 0.99 | **1.00 / 1.00 / 0.95 / 0.99** | 0.22 / 0.42 / 0.74 / 0.92 |
+| 1x1 1e-4 | 0.80 / 1.00 | 0.08 / 0.86 / 0.96 / 0.99 | **0.68 / 0.91 / 0.98 / 0.99** | 0.16 / 0.50 / 0.69 / 0.96 |
+| 1x10 1e-5 | 1.00 all | 0.26 / 0.61 / 0.92 / 0.98 | **0.95 / 0.96 / 0.94 / 0.98** | 0.37 / 0.74 / 0.94 / 0.99 |
+| 10x1 1e-5 | 1.00 all | 0.15 / 0.50 / 0.80 / 0.85 | **1.00 / 0.94 / 0.94 / 0.96** | 0.52 / 0.67 / 0.91 / 0.98 |
+| 10x10 1e-6 | 1.00 all | 0.00 / 0.11 / 0.16 / 0.26 | **0.93 / 0.89 / 1.00 / 0.96** | 0.81 / 1.00 / 1.00 / 0.99 |
+| 10x10 1e-5 | 1.00 all | 0.00 / 0.00 / 0.15 / 0.20 | **0.84 / 0.93 / 0.92 / 0.88** | 0.77 / 0.93 / 0.98 / 0.98 |
+| 1x100 1e-5 | 1.00 all | 0.12 / 0.29 / 0.31 / 0.65 | 0.72 / 0.79 / 0.75 / 0.83 | 0.34 / 0.75 / 0.91 / 0.96 |
+| 100x1 1e-5 | 1.00 all | 0.00 / 0.06 / 0.07 / 0.06 | 0.48 / 0.67 / 0.64 / 0.66 | 0.52 / 0.64 / 0.98 / 0.98 |
+| 100x100 | 1.00 at 1e-6 | 0 | 0 | 0.28-0.60 |
+
+Fakes 0-4 per setting (<= 0.08 / Mpix). X-rays binned 0.92-0.98 (were 0.81-0.85) except 100x1 / 100x100 (0.4-0.7);
+muons whole 0.64-0.91 at 10x10 / 10x1 / 1x100. Full table: wip/binned/results/ceiling_after_1A2.md. Open: 100x100
+(images of 6 x 20 bins: nothing found), 100x1 and 1x100 (0.5-0.85), 4-10 e- at 1x100 / 100x1 below the threshold
+method, muons whole, the safety rule; the 2 e- limit at 1e-4 is physical.
+
 1A.2 **Bin geometry in the few-electron finder and A_GMX:** an event is point-like in bins (diffusion sigma / b per
 axis, anisotropic for 1x100 / 100x1), the dark charge per bin, block sizes and halo in bins; strips of a few rows or
 columns as 1-D.

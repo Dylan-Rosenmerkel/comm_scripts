@@ -91,7 +91,7 @@ FEWE = os.environ.get("AGMX_FEWE", "off")    # Bayesian few-electron finder swit
 
 def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.3, box=31, margin=8, excess_ratio=3.0,
                      return_info=False, engine="mhc", return_pixels=False, noise_max=1.0, crowded=None, crowd_fill=None, crowded_shapes=None,
-                     fewe=None, fewe_lam=None, fewe_RN=None, fewe_threshold=None, fewe_nm=None, **kw):
+                     fewe=None, fewe_lam=None, fewe_RN=None, fewe_threshold=None, fewe_nm=None, binning=(1, 1), **kw):
     """engine='mhc' : unmodelled -> hysteresis; else per region crowded -> hysteresis, sparse -> MHC.
     engine='gmx' : unmodelled -> hysteresis; else GMX on the whole image (GMX shares charge by model responsibility,
                    so it needs no crowded / sparse split; occupancy is still reported per cluster). A_GMX.
@@ -116,6 +116,8 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
              fewe_RN / fewe_threshold / fewe_nm: the run-pooled dark-charge map of this image, event rates, P(event) cut
              and noise model (agmx_switch.prepare_run(..., full=True): lam_maps[k], R_N, threshold, nm); without them
              single-image estimates and this image's own fake budget are used (conservative). info: fewe (decision record)
+    binning: on-chip binning (rows, columns) of the image: the Bayesian finder's event model (diffusion width per
+             axis in bins, linking radius, halo) follows it.
     Each cluster: E [keV], y, x, sxy, cls, regime ('sparse' / 'crowded' / 'unmodelled'), occ; with engine 'gmx'
     also the quality flags edge, blend, ped [e-/pix], peakfrac, chi2, sig (gmx.fill_flags for clusters that were
     not fitted by the mixture: blend 0, peakfrac 1, chi2 NaN)."""
@@ -211,6 +213,7 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
         info.update(regime="gmx", occ=occ, crowded_frac=float(((occ >= occ_thr) & valid).sum() / max(valid.sum(), 1)))
         if fmode != "off":
             import agmx_switch as SW
+            SW.BINNING = (int(binning[0]), int(binning[1]))
             out, info = SW.apply(Q, valid, out, info, AM.E_PER_E, fmode, fewe_lam, fewe_RN, return_pixels, fewe_threshold,
                                  fewe_nm)
             if not return_pixels:
