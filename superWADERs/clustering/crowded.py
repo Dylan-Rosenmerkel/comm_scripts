@@ -230,15 +230,19 @@ def _seeds(skel, tile, seed_votes, min_angle, peaks_per_tile):
     return out
 
 
-def find_hints(Q, valid, bg, min_len=40, core_e=CORE_E, max_gap=6, occ_min=0.85, rms_max=2.2, min_angle=10.0, smooth=1.0,
-               tile=160, seed_votes=40, peaks_per_tile=8, k_half=2.5, half_max=5.0, ridge=2.0, cont_low2=0.15, cont_low=0.08):
+def find_hints(Q, valid, bg, min_len=40, core_e=CORE_E, max_gap=6, occ_min=0.85, rms_max=2.2, min_angle=2.0, smooth=1.0,
+               tile=160, seed_votes=40, peaks_per_tile=8, k_half=2.5, half_max=5.0, ridge=2.0, cont_low2=0.15, cont_low=0.08,
+               flat_angle=10.0, flat_rows=3.0, low_run=3):
     """straight tracks -> [(centre, direction, t0, t1, width)] (axis in (y, x), extent along it, transverse rms).
     Seeds: Hough per tile on the skeleton of the core. Walk: a step is occupied if a core pixel within +-1 px of the
     axis is a transverse ridge (>= ridge x the smaller charge at +-3.5 px) or lies in an earlier track's band
     (crossings). Accepted: length >= min_len, occupancy >= occ_min, median transverse rms <= rms_max, axis
     continuity (fraction of steps below 0.5 / 0.3 x the median axis charge <= cont_low2 / cont_low), not a
-    duplicate. Lines < min_angle from horizontal are left to find_streaks. The band (k_half x sigma(t)) of an accepted
-    track only marks its pixels for the duplicate test and the crossings of later walks."""
+    duplicate. A walk that fails continuity because it ran on past the track's ends through neighbouring charge is
+    trimmed to its longest stretch between runs of >= low_run low steps and tested again. Lines < min_angle from
+    horizontal are left to find_streaks; lines < flat_angle must span >= flat_rows rows (a serial streak is one row).
+    The band (k_half x sigma(t)) of an accepted track only marks its pixels for the duplicate test and the crossings
+    of later walks."""
     from skimage.morphology import skeletonize
     H, W = Q.shape
     R, Rs, nz = _smoothed(Q, valid, bg, smooth)
@@ -286,11 +290,22 @@ def find_hints(Q, valid, bg, min_len=40, core_e=CORE_E, max_gap=6, occ_min=0.85,
             ends.append(last)
         t0, t1 = ends; L = t1 - t0
         if L < min_len: continue
-        if np.mean([bool(occ(c, u, t)) for t in np.arange(t0, t1 + 1)]) < occ_min: continue
         n = np.array([-u[1], u[0]])
         ax = np.array([max(at(Rs, *(c + t * u + k * n)) for k in (-1, 0, 1)) for t in np.arange(t0, t1 + 1)])
         med = max(np.median(ax), 1e-9)
-        if np.mean(ax < 0.5 * med) > cont_low2 or np.mean(ax < 0.3 * med) > cont_low: continue
+        if np.mean(ax < 0.5 * med) > cont_low2 or np.mean(ax < 0.3 * med) > cont_low:
+            # trim: the longest stretch between runs of >= low_run steps below 0.5 x the median axis charge
+            low = np.r_[False, ax < 0.5 * med, False].astype(int)
+            st, en = np.nonzero(np.diff(low) == 1)[0], np.nonzero(np.diff(low) == -1)[0]
+            cuts = [(a, b) for a, b in zip(st, en) if b - a >= low_run]
+            bounds = [0] + [v for a, b in cuts for v in (a, b)] + [ax.size]
+            i0, i1 = max(zip(bounds[::2], bounds[1::2]), key=lambda p: p[1] - p[0])
+            if i1 - i0 - 1 < min_len: continue
+            ax = ax[i0:i1]; t0, t1 = t0 + i0, t0 + i1 - 1
+            med = max(np.median(ax), 1e-9)
+            if np.mean(ax < 0.5 * med) > cont_low2 or np.mean(ax < 0.3 * med) > cont_low: continue
+        if np.mean([bool(occ(c, u, t)) for t in np.arange(t0, t1 + 1)]) < occ_min: continue
+        if np.degrees(np.arcsin(min(abs(u[0]), 1))) < flat_angle and (t1 - t0) * abs(u[0]) < flat_rows: continue
         pts = c + np.outer([t0 - 2, t1 + 2], u)
         by0, by1 = int(max(pts[:, 0].min() - 8, 0)), int(min(pts[:, 0].max() + 9, H))
         bx0, bx1 = int(max(pts[:, 1].min() - 8, 0)), int(min(pts[:, 1].max() + 9, W))

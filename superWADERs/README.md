@@ -208,7 +208,18 @@ its cluster count (and how many came from the Bayesian finder), and every fallba
 **Cluster file branches:** besides panaSKImg's branches and the `agmx_*` ones, each cluster has:
 - `finder`: 0 threshold, 1 A_GMX, 2 Bayes;
 - `p_event`, `N_post`, `sigma_post`: the Bayesian posterior; -999 for other clusters;
-- `agmx_cls` 12 ('few-e') and `agmx_regime` 5 ('bayes') for Bayesian events.
+- `agmx_cls` 12 ('few-e') and `agmx_regime` 5 ('bayes') for Bayesian events;
+- `agmx_sxy_px`: the cluster width in UNBINNED pixels (the sigma branches are in bins on binned images), from the
+  axes whose bins are <= 2 px (1x10 / 10x1: the unbinned axis); -999 where no axis is
+  resolved (e.g. 5x5, 10x10) or for clusters without a measured width. Use it, not the sigma branches, for depth /
+  front-side cuts on binned images.
+
+Physics audit 2026-11-14 (injections with truth into every image type, scratch probe, `wip/crowded_bench`): energies are unbiased to
+<= 0.1 % for 1-60 keV at every depth on electron-counting images (unbinned and binned); the 'unmodelled' chain now
+measures energies and widths above the mean dark charge (+2.4-4.6 % -> +0.7-1.3 % at 0.3-6 keV, lam 1.8 e-/pix);
+X-rays touching tracks are split off between 1 and 94 keV (was 1-22 keV) and in A_GMX's standard mode too
+(`AGMX_XSAT=narrow`, `AGMX_XSAT_STD=off` restore the earlier rules); the Bayesian finder's single-image dark charge
+on binned images uses a prior per bin (100x100 blanks: 0.97 -> 0.05 fakes per unbinned Mpix).
 
 `--clusterer agmx` or `--clusterer threshold` puts one clusterer on every CCD instead (with A_GMX's own crowded mode;
 the Bayesian switch only runs in `auto`).

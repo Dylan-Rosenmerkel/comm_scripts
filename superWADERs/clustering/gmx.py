@@ -830,6 +830,16 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
         cy = np.bincount(pL, w * py_, nc) / sw; cx = np.bincount(pL, w * px_, nc) / sw
         vy = np.bincount(pL, w * (py_ - cy[pL]) ** 2, nc) / sw; vx = np.bincount(pL, w * (px_ - cx[pL]) ** 2, nc) / sw
         sxy_m = np.sqrt(np.clip(0.5 * (vy + vx) - PIX, 0.0, None))
+        # width in UNBINNED pixels (sxy is in bins): per axis b x sqrt(var - 1/12), the mean of the variances of the axes
+        # whose bins are <= 2 px (a diffusion sigma of 0.3-1.6 px is not measurable across 5- or 10-px bins: 1.5-3x too
+        # high in the 2026-11-14 probe); no such axis (e.g. 5x5, 10x10): NaN. Unbinned it is sxy itself
+        by_, bx_ = BINNING
+        syp2 = by_ * by_ * np.clip(vy - PIX, 0.0, None); sxp2 = bx_ * bx_ * np.clip(vx - PIX, 0.0, None)
+        ax_ok = (by_ <= 2, bx_ <= 2)
+
+        def _px(v_y, v_x):
+            vs = [v for v, ok in zip((v_y, v_x), ax_ok) if ok]
+            return float(np.sqrt(np.mean(vs))) if vs else float("nan")
         varE = np.bincount(pL, rc ** 2 * V.ravel()[pI], nc)
         # blend: charge of the other clusters under this cluster's profile, relative to its own (0 = isolated)
         Mc = M[pI] * rc; Mo = M[pI] - Mc
@@ -882,8 +892,14 @@ def general_cluster(Q, valid, bg=None, scales=(0.5, 1.0, 1.5, 2.5), nsig=5.0, ns
             # 0.2-px X-ray) while the exact-pixel EM width is unbiased to a few % -> sharp single clouds report the fit
             if PIX_EXACT and ncomp[k] == 1 and sx_fit < SHARP_FIT:
                 sx = sx_fit
+            if BINNING == (1, 1):
+                sx_px = sx
+            elif PIX_EXACT and ncomp[k] == 1 and sx_fit < SHARP_FIT:
+                sx_px = _px(by_ * by_ * max(syy, 0.0), bx_ * bx_ * max(sxx, 0.0))
+            else:
+                sx_px = _px(syp2[k], sxp2[k])
             e = float(E[k])
-            c = dict(E=e * E_PER_E, y=float(cy[k]), x=float(cx[k]), sxy=sx, sxy_fit=sx_fit, sxy_mom=float(sxy_m[k]), n_comp=int(ncomp[k]),
+            c = dict(E=e * E_PER_E, y=float(cy[k]), x=float(cx[k]), sxy=sx, sxy_px=sx_px, sxy_fit=sx_fit, sxy_mom=float(sxy_m[k]), n_comp=int(ncomp[k]),
                      sig=float(e / np.sqrt(max(varE[k], 1e-9))), edge=bool(edge[k]), blend=float(blend[k]),
                      ped=float(ped[k]), peakfrac=float(peakfrac[k]), chi2=float(chi2[k]))
             if counting and e < count_E_max:
@@ -993,7 +1009,8 @@ def _classify(out, mix, lab, R, Rp, pI, pL, rc, W):
         c.update(length=sh["length"], width=sh["width"])
         ext = max(ys.max() - ys.min(), xs.max() - xs.min()) + 1
         if c["n_comp"] == 1 and sh["ratio"] > 0.5 or ext < 6:
-            c["cls"] = "alpha" if E > 1000 else ("x-ray diffuse" if c["sxy"] >= 1.0 else "x-ray")
+            c["cls"] = "alpha" if E > 1000 else ("x-ray diffuse" if (c["sxy_px"] if np.isfinite(c.get("sxy_px", np.nan)) else c["sxy"]) >= 1.0
+                                                         else "x-ray")
             continue
         # streak test on the cluster's own pixels
         y0, x0 = ys.min(), xs.min()

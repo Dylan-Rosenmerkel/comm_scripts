@@ -287,8 +287,40 @@ def split_cluster(mu, A, S, l_branch=10.0, ang_max=40.0, f_lobe=0.2, neck_max=0.
     return out
 
 
-def xray_satellites(mu, A, S, sub, a_lo=270.0, a_hi=6000.0, s_max=1.0, ratio_max=1.5, dip_max=0.5, smooth=0.8, r_local=12.0):
-    """split off compact round X-ray-like clouds attached to a larger group through a density dip"""
+import os as _os
+# X-ray satellites: cloud charge window [e-] and width cap [unbinned px]. 'wide' (default since the 2026-11-14 audit):
+# 1-94 keV and the whole diffusion range (sigma <= 1.7 px at 675 um), so that the Am-241 26.3 / 59.5 keV lines and deep
+# X-rays are split off tracks as the 13.9-20.8 keV lines and front-side X-rays were ('narrow': 1-22 keV, sigma <= 1 px)
+XSAT = dict(narrow=(270.0, 6000.0, 1.0), wide=(270.0, 25000.0, 1.7))[_os.environ.get("AGMX_XSAT", "wide")]
+
+
+def _compact(Sk, by, bx, s_max, ratio_max, s_bin=1.0):
+    """compact and round: both axes resolved (bins <= 2 px): sigma <= s_max px and axis ratio < ratio_max in unbinned
+    pixels; neither resolved: the same in bins with s_bin (the rule before binning-awareness); one resolved: sigma <=
+    s_max px along it and <= s_bin bins across (no roundness: one axis is not measured)"""
+    a, c, b = Sk
+    ry, rx = by <= 2, bx <= 2
+    if not (ry or rx):
+        sy = sx = 1.0; smax = s_bin
+    elif ry and rx:
+        sy, sx, smax = by, bx, s_max
+    else:
+        ok_y = (np.sqrt(max(a, 0)) * by <= s_max) if ry else (np.sqrt(max(a, 0)) <= s_bin)
+        ok_x = (np.sqrt(max(c, 0)) * bx <= s_max) if rx else (np.sqrt(max(c, 0)) <= s_bin)
+        return bool(ok_y and ok_x)
+    a, c, b = a * sy * sy, c * sx * sx, b * sy * sx
+    tr = 0.5 * (a + c); dd = np.sqrt(max(0.25 * (a - c) ** 2 + b * b, 0))
+    return bool(np.sqrt(tr) <= smax and np.sqrt((tr + dd) / max(tr - dd, 1e-6)) < ratio_max)
+
+
+def xray_satellites(mu, A, S, sub, a_lo=None, a_hi=None, s_max=None, ratio_max=1.5, dip_max=0.5, smooth=0.8, r_local=12.0,
+                    binning=(1, 1)):
+    """split off compact round X-ray-like clouds attached to a larger group through a density dip. Size and roundness
+    (_compact) are judged in unbinned pixels on the axes whose bins are <= 2 px (binning = (rows, columns) per bin): a
+    deep X-ray in 1 x 10 bins is round on the CCD; across larger bins an X-ray is a point, judged in bins as before"""
+    a_lo = XSAT[0] if a_lo is None else a_lo; a_hi = XSAT[1] if a_hi is None else a_hi
+    s_max = XSAT[2] if s_max is None else s_max
+    by, bx = float(binning[0]), float(binning[1])
     sub = sub.copy(); nxt = sub.max() + 1
     for g in np.unique(sub):
         idx = np.nonzero(sub == g)[0]
@@ -296,8 +328,7 @@ def xray_satellites(mu, A, S, sub, a_lo=270.0, a_hi=6000.0, s_max=1.0, ratio_max
         adj, _ = _mst(mu[idx])
         tree = cKDTree(mu[idx])
         for i, k in enumerate(idx):
-            a, c, b = S[k]; tr = 0.5 * (a + c); dd = np.sqrt(max(0.25 * (a - c) ** 2 + b * b, 0))
-            if not (a_lo <= A[k] <= a_hi) or np.sqrt(tr) > s_max or np.sqrt((tr + dd) / max(tr - dd, 1e-6)) >= ratio_max: continue
+            if not (a_lo <= A[k] <= a_hi) or not _compact(S[k], by, bx, s_max, ratio_max): continue
             if A[k] > 0.5 * A[idx].sum(): continue
             nb = np.nonzero(adj[i])[0]
             if not nb.size: continue
@@ -327,7 +358,7 @@ def post_lab(mix, lab, min_clouds=2, max_clouds=1000):
     for L in np.unique(lab):
         k = np.nonzero(lab == L)[0]
         if k.size < min_clouds or k.size > max_clouds: continue
-        sub = xray_satellites(mix.mu[k], mix.A[k], mix.S[k], split_cluster(mix.mu[k], mix.A[k], mix.S[k]))
+        sub = xray_satellites(mix.mu[k], mix.A[k], mix.S[k], split_cluster(mix.mu[k], mix.A[k], mix.S[k]), binning=_binning())
         for s in np.unique(sub):
             if s == 0: continue
             lab[k[sub == s]] = nxt; nxt += 1; STATS["split"] += 1
@@ -335,4 +366,26 @@ def post_lab(mix, lab, min_clouds=2, max_clouds=1000):
     return lab
 
 
-STATS = {"split": 0}
+def _binning():
+    import gmx as GX
+    return GX.BINNING
+
+
+def satellite_lab(mix, lab, min_clouds=2, max_clouds=1000):
+    """A_GMX's standard (not crowded) mode: only the X-ray satellite split of post_lab (no junction / neck rules), so
+    that an X-ray touching a track through a density dip is its own cluster (2026-11-14 audit: ~5 % of the Fe-55
+    K-alpha events of DM09 were merged into tracks)"""
+    lab = np.asarray(lab).copy(); nxt = int(lab.max()) + 1 if lab.size else 0
+    STATS["sat_std"] = 0
+    for L in np.unique(lab):
+        k = np.nonzero(lab == L)[0]
+        if k.size < min_clouds or k.size > max_clouds: continue
+        sub = xray_satellites(mix.mu[k], mix.A[k], mix.S[k], np.zeros(k.size, int), binning=_binning())
+        for s_ in np.unique(sub):
+            if s_ == 0: continue
+            lab[k[sub == s_]] = nxt; nxt += 1; STATS["sat_std"] += 1
+    _, lab = np.unique(lab, return_inverse=True)
+    return lab
+
+
+STATS = {"split": 0, "sat_std": 0}

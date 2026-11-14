@@ -153,7 +153,10 @@ def bayes_catalogue(m, valid, lam_map=None, R_N=None):
     ns, prior = m["ns"], m["prior"]
     if lam_map is None:
         nb, pt = FD.analyse_image(ns["v"], ns["kap"], ns["nm"], valid, 1e-5, prior, only_pix=True, big_halo=_halo_bins())
-        lam_map = PL._init_lam(nb, pt, valid)
+        # the weak prior (0.5 pseudo-electrons at 1e-5 e-/pix) per BIN: unscaled, its 5e4 pseudo-pixels outweighed a
+        # small binned image (2400 bins at 100 x 100: 0.0019 e-/bin estimated for a true 0.1, and every chance pair of
+        # dark electrons became a 2-e- event: 1 fake / unbinned Mpix on blanks, budget 0.08)
+        lam_map = PL._init_lam(nb, pt, valid, lam_prior=1e-5 * BINNING[0] * BINNING[1])
     cand = m["cand"]
     nb, pt = FD.analyse_image(ns["v"], ns["kap"], ns["nm"], valid, lam_map, prior, cand=cand, big_halo=_halo_bins())
     if R_N is None:

@@ -619,16 +619,21 @@ def tune_ccd(raw, active, ovs, ext, r, fs, args):
 # =============================================================================
 # clustering
 # =============================================================================
-def count_dark(e_img, region, win=5, noise_e=None):
+def count_dark(e_img, region, win=5, noise_e=None, frame_rows=None, p_hot=1e-3):
     """Dark charge [e-/pix] counted from isolated single electrons: among the pixels (bins) of region with no other
     charged pixel within win // 2, the fraction r with exactly 1 e- gives lam = r / (1 - r) (Poisson P(1) / (P(0) + P(1)) =
     lam / (1 + lam)). Events and their neighbourhoods drop out by the isolation. The read noise's false single
     electrons (1.5e-5 per pixel at 0.12 e-: more than a 1e-6 dark charge) are subtracted as measured on the negative
     side: quiet pixels reading -1 e- (symmetric noise, tails included); noise_e (Gaussian) only when there are too few
-    quiet pixels to count them. Meant for lam << 1 / win^2,
-    where the comb fit's lambda sits at its lower limit; returns (lam, n_single, n_quiet) or (None, 0, n) with < 1000
-    quiet pixels."""
+    quiet pixels to count them. Defects are left out: hot columns (>= 2 single electrons and beyond the Poisson tail
+    of the columns' mean at p_hot / number of columns) and, for a stitched image of frames of frame_rows rows, hot
+    pixels (charged in >= 2 frames and beyond the binomial tail of the occupancy at p_hot / pixels per frame; benchmark
+    at 1e-6 e-/pix binned: 2.4x the truth -> 0.7-1.0x; blank simulations 1e-6..1e-3 e-/pix with hot pixels / columns:
+    within the statistical error). The estimate is not clipped at 0 (unbiased; |lam| <= err: not measurable). Meant for lam << 1 / win^2, where the comb fit's lambda sits at its lower limit; returns
+    (lam, n_single, n_quiet, info) with info = minus (the -1 e- readings), err (statistical, e-/pix), hot_columns,
+    hot_pixels, or (None, 0, n, info) with < 1000 quiet pixels."""
     from scipy import ndimage as nd
+    from scipy.stats import binom, poisson
     # each row centred on its zero-electron peak first: a pedestal off by a fraction of an electron makes false +1 e-
     # readings far more frequent than -1 e- ones (the negative-side correction below needs a symmetric noise)
     e = np.where(region, e_img, np.nan)
@@ -640,17 +645,40 @@ def count_dark(e_img, region, win=5, noise_e=None):
             mu = np.nanmedian(z, axis=1)
     k = np.rint(np.where(region, e_img - np.nan_to_num(mu, nan=0.0)[:, None], 0.0))
     occ = (k >= 1) & region
+    # defects: hot columns, and hot pixels persistent over the frames of a stitched image
+    use = region.copy()
+    colc, coln = (occ & (k == 1)).sum(0), region.sum(0)
+    rate = colc.sum() / max(coln.sum(), 1)
+    # a defect is a count improbable for ANY of the columns (pixels) tested (p_hot / their number), and never a single
+    # electron: at 1e-6 e-/pix a column expects << 1 dark electron, and a per-column tail flagged every column holding one
+    ncol = max(int((coln > 0).sum()), 1)
+    hot_c = (coln > 0) & (colc >= 2) & (poisson.sf(colc - 1, np.maximum(rate * coln, 1e-12)) < p_hot / ncol)
+    use[:, hot_c] = False
+    n_hp = 0
+    if frame_rows and e_img.shape[0] // frame_rows >= 3:
+        nfr = e_img.shape[0] // frame_rows
+        stack = occ[:nfr * frame_rows].reshape(nfr, frame_rows, -1).sum(0)
+        p_occ = occ[:nfr * frame_rows].mean()
+        npx = max(int(region[:frame_rows].sum()), 1)
+        hot_p = (stack >= 2) & (binom.sf(stack - 1, nfr, max(p_occ, 1e-12)) < p_hot / npx)
+        n_hp = int(hot_p.sum())
+        use[:nfr * frame_rows] &= ~np.tile(hot_p, (nfr, 1))
     nb = nd.uniform_filter(occ.astype(float), win, mode="constant") * win * win - occ
-    quiet = region & (nb < 0.5) & (k >= -1) & (k <= 1)
+    quiet = use & (nb < 0.5) & (k >= -1) & (k <= 1)
     n1, nm1, n = int(((k == 1) & quiet).sum()), int(((k == -1) & quiet).sum()), int(quiet.sum())
+    info = dict(minus=nm1, hot_columns=int(hot_c.sum()), hot_pixels=n_hp)
     if n < 1000:
-        return None, n1, n
+        return None, n1, n, info
     if nm1 > 0 or not noise_e:
-        r = max(n1 - nm1, 0) / n                # the negative side measures the noise's false +1 e- readings
+        # the negative side measures the noise's false +1 e- readings; not clipped at 0 (unbiased: a value <= err means
+        # the dark charge is not measurable here)
+        r = (n1 - nm1) / n
+        info["err"] = float(np.sqrt(n1 + nm1) / n)
     else:
         from scipy.stats import norm
-        r = max(n1 / n - float(norm.sf(0.5 / noise_e)), 0.0)
-    return r / max(1.0 - r, 1e-12), n1, n
+        r = n1 / n - float(norm.sf(0.5 / noise_e))
+        info["err"] = float(np.sqrt(max(n1, 1)) / n)
+    return r / max(1.0 - r, 1e-12), n1, n, info
 
 
 def thresholds_for(mode, r, sigma0_e, mimic_thr=None):
@@ -774,8 +802,10 @@ def agmx_clusters(Q, valid, crowded="auto", crowded_shapes="on", fewe="off", few
     cat = lambda L, dt: np.concatenate(L).astype(dt) if L else np.zeros(0, dt)
     ex = {"agmx_cls": np.array([AGMX_CLS.get(c.get("cls"), 0) for c in cl], np.int64),
           "agmx_regime": np.array([AGMX_REGIME.get(c.get("regime"), -1) for c in cl], np.int64)}
-    for k in ("blend", "ped", "peakfrac", "chi2", "sig"):
-        v = [c.get(k, np.nan) for c in cl]
+    # sxy_px: width in unbinned pixels (= the sigma branches' sxy on unbinned images); NOT_COMPUTED where not measured
+    unb = tuple(binning) == (1, 1)
+    for k in ("blend", "ped", "peakfrac", "chi2", "sig", "sxy_px"):
+        v = [c.get(k, c.get("sxy") if (k == "sxy_px" and unb) else np.nan) for c in cl]
         ex[f"agmx_{k}"] = np.array([float(x) if x is not None and np.isfinite(x) else NOT_COMPUTED for x in v], float)
     fin = lambda v, d: float(v) if v is not None and np.isfinite(v) else d
     bay = [c.get("finder") == "bayes" for c in cl]
@@ -1132,11 +1162,14 @@ def process_image(path, out_dir, curve=None, clusterer="threshold", thresholds="
         if lim:
             rec["fit_at_limit"] = lim             # e.g. ultra-low dark charge: the comb fit cannot measure lambda
         if r["resolved"] and fit["sigma"][0] / gain < 0.3:     # counting CCD: the counted dark charge too
-            lam_c, n1, nq = count_dark(e_img, fit_mask(ps.shape, active, fit["settings"]), noise_e=fit["sigma"][0] / gain)
+            nst = int(h0.get("STITCHN", 1) or 1)       # stitched: frames of equal rows (hot pixels persist over them)
+            fr = e_img.shape[0] // nst if nst >= 3 and e_img.shape[0] % nst == 0 else None
+            lam_c, n1, nq, ci = count_dark(e_img, fit_mask(ps.shape, active, fit["settings"]), noise_e=fit["sigma"][0] / gain,
+                                           frame_rows=fr)
             rec["dc_counted_e"] = lam_c
-            rec["dc_counted"] = dict(single=n1, quiet=nq)
+            rec["dc_counted"] = dict(single=n1, quiet=nq, **ci)
             if lam_c is not None and (any(x.startswith("lam") for x in lim) or rec["dc_e"] < 1e-2):
-                rec["dc_note"] = (f"dark charge from the counted isolated single electrons {lam_c:.3g} e-/pix "
+                rec["dc_note"] = (f"dark charge from the counted isolated single electrons {lam_c:.3g} +- {ci.get('err', 0):.2g} e-/pix "
                                   f"({n1} in {nq} quiet pixels); the fit's {rec['dc_e']:.3g} is at or near its limit")
         info = info_branches(n, mu_row, sig_row, fit, ccd, nfile, h0)
         if plots and write:

@@ -66,7 +66,9 @@ def pois_isf(q, lam):
 def comb_pdf(x, o, lam, s, kmax=None):
     """Density of Q = o + Poisson(lam) + N(0, s^2):  p(x) = sum_k Pois(k; lam) * phi((x - o - k) / s) / s."""
     if kmax is None:
-        kmax = int(lam + 8 * np.sqrt(lam + 1) + 8 * s + 5)
+        # the Poisson weights end at lam + 8 sqrt(lam + 1) whatever s; the s term only matters for a sharp comb (a wide
+        # one, e.g. a pooled fit of a charged binned row with s ~ 1000 e-, would otherwise sum thousands of peaks)
+        kmax = int(lam + 8 * np.sqrt(lam + 1) + 8 * min(s, 3.0) + 5)
     k = np.arange(kmax + 1)
     pk = pois_pmf(k, lam)
     z = (np.asarray(x)[..., None] - o - k) / s
@@ -79,11 +81,14 @@ def fit_comb(vals, o0=0.0, lam0=0.5, s0=0.2, f_out=1e-3, fit_o=True):
     Binned likelihood on a fine histogram (bin 0.05 e-) so the cost does not depend on the number of pixels.
     Several integer starting offsets are tried because o and lam trade off by whole electrons."""
     vals = np.asarray(vals, float)
+    vals = vals[np.isfinite(vals)]
+    if vals.size < 50:                     # (no or too few values, e.g. rows of a very charged binned scene)
+        return dict(o=o0, lam=lam0, s=s0, f=f_out, ok=False, n=vals.size)
     lo, hi = np.percentile(vals, 0.05) - 1.0, min(np.percentile(vals, 99.95) + 1.0, o0 + lam0 + 40)
     vals = vals[(vals > lo) & (vals < hi)]
     if vals.size < 50:
         return dict(o=o0, lam=lam0, s=s0, f=f_out, ok=False, n=vals.size)
-    bw = 0.05
+    bw = max(0.05, (hi - lo) / 20000)      # 0.05 e- bins; coarser only for a span > 1000 e- (memory)
     edges = np.arange(lo, hi + bw, bw)
     h, _ = np.histogram(vals, edges)
     xc = 0.5 * (edges[1:] + edges[:-1])
@@ -368,11 +373,15 @@ def background_map(Q, valid, n_iter=2, colbin=128, rowbin=60, smooth="local_line
             vals, means = [], {}
             for r in rows:
                 v = Q[r][use[r]]
+                if v.size == 0:                  # every pixel of the row masked (crowded binned images): the row
+                    continue                     # takes the nearest fitted row's background, as unfitted rows do
                 v = v[np.abs(v - np.median(v)) < 8 * 1.4826 * np.median(np.abs(v - np.median(v))) + 1]
                 means[r] = v.mean(); vals.append(v - v.mean())
+            if not vals:
+                continue
             vals = np.concatenate(vals)
             f = fit_comb(vals, o0=-0.5, lam0=0.5, s0=max(vals.std(), 0.5), fit_o=True)
-            for r in rows:
+            for r in means:
                 lam_r[r] = f["lam"]; s_r[r] = f["s"]; o_r[r] = means[r] - f["lam"]
                 err[r] = np.sqrt((f["lam"] + f["s"] ** 2) / max(vals.size, 1))
         rows_ok = np.isfinite(lam_r)
@@ -400,6 +409,8 @@ def background_map(Q, valid, n_iter=2, colbin=128, rowbin=60, smooth="local_line
                 # candidate integer offsets around the current one; pick the one whose truncated-MLE lam is
                 # closest to the smooth trend (the shape likelihood alone cannot fix it at lam >~ 4)
                 best = None
+                if not np.isfinite(lam_tmp[r]):
+                    continue
                 lt = max(lam_tmp[r], 0.01)
                 uu, cc = np.unique(j, return_counts=True)
                 for d in (-1, 0, 1):
@@ -411,7 +422,7 @@ def background_map(Q, valid, n_iter=2, colbin=128, rowbin=60, smooth="local_line
                     if best is None or sc < best[0]:
                         K = max(3, int(pois_isf(1e-3, lt)))
                         best = (sc, oi, truncated_poisson_mle(j - oi, K))
-                if best is not None:
+                if best is not None and np.isfinite(best[2]):     # (NaN: a row of charged bins keeps its fit)
                     changed += int(best[1] != int(np.round(o_r[r] - frac[r])))
                     o_r[r] = best[1] + frac[r]; lam_r[r] = best[2]
             if smooth == "bblocks":
@@ -431,7 +442,8 @@ def background_map(Q, valid, n_iter=2, colbin=128, rowbin=60, smooth="local_line
             lam_s = np.where(fast, np.maximum((lam_s - pmis) / np.maximum(1.0 - 2.0 * pmis, 1e-3), LAM_FLOOR), lam_s)
         # broad rows: the per-row mean fixes o + lam, keep it when lam is smoothed
         for r in broad:
-            o_full[r] = o_r[r] + lam_r[r] - lam_s[r]
+            if np.isfinite(o_r[r]):
+                o_full[r] = o_r[r] + lam_r[r] - lam_s[r]
         res = np.where(use, Q - o_full[:, None] - lam_s[:, None], np.nan)
         rb = np.arange(0, H, rowbin); cb = np.arange(0, W, colbin)
         grid = np.zeros((rb.size, cb.size))
@@ -476,6 +488,9 @@ def poisson_tail_k(lam, alpha):
     lam = np.atleast_1d(np.asarray(lam, float))
     out = np.empty(lam.shape, int)
     for i, l in enumerate(lam.ravel()):
+        if l > 500:                       # exp(-l) underflows (-> endless loop): the quantile, same k
+            out.ravel()[i] = int(stats.poisson.isf(alpha, l)) + 1
+            continue
         k = 0
         sf = 1.0                          # P(X >= 0)
         pmf = np.exp(-l)

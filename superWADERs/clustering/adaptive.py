@@ -65,17 +65,22 @@ def occupancy(Q, valid, noise, box=31, lam=0.0, bg=None):
     return np.where(valid, num / np.maximum(den, 1e-3), 0.0)
 
 
-def hysteresis(Q, region, sigma, k_pix, n_pix=10.0, n_seed=30.0, seed_e=9.5):
-    """WADERs-like clusters inside `region` with thresholds in electrons"""
+def hysteresis(Q, region, sigma, k_pix, n_pix=10.0, n_seed=30.0, seed_e=9.5, base=None):
+    """WADERs-like clusters inside `region` with thresholds in electrons. base: per-pixel baseline [e-] (the mean
+    dark charge on Q) removed from the energies and widths only; the pixels are selected on Q as without it"""
     tp, ts = max(n_pix * sigma, k_pix - 0.5), max(n_seed * sigma, seed_e)
     lab, n = ndimage.label((Q > tp) & region, structure=EIGHT)
+    Qe = Q if base is None else Q - base
     out = []
     for k, sl in enumerate(ndimage.find_objects(lab), start=1):
-        m = lab[sl] == k; q = Q[sl][m]
-        if q.max() <= ts:
+        m = lab[sl] == k
+        if Q[sl][m].max() <= ts:
             continue
+        q = Qe[sl][m]
         ys, xs = np.nonzero(m); ys = ys + sl[0].start; xs = xs + sl[1].start
-        my, mx, sxy = CM.moments(Q, ys, xs)
+        my, mx, sxy = CM.moments(Qe, ys, xs)
+        if base is not None and np.isfinite(sxy):
+            sxy = float(np.sqrt(max(sxy * sxy - 1.0 / 12.0, 0.0)))   # pixel size removed, as A_GMX's widths
         E = float(q.sum() * AM.E_PER_E)
         ext = max(sl[0].stop - sl[0].start, sl[1].stop - sl[1].start)
         cls = "big deposit" if E > 75 else ("extended" if ext >= 10 else ("x-ray diffuse" if sxy >= 1 else "x-ray"))
@@ -84,8 +89,26 @@ def hysteresis(Q, region, sigma, k_pix, n_pix=10.0, n_seed=30.0, seed_e=9.5):
     return out
 
 
+def unmodelled_baseline(Q, valid, s_thr, k_pix, grow=3, n_min=50):
+    """per-row mean of the quiet pixels (outside the hysteresis pixels, dilated by grow px) for the 'unmodelled'
+    energies: the mean, not the median (the dark charge is Poisson, skewed), after one 5-MAD clip of the row's
+    quiet pixels (outliers: unmasked event tails, hot pixels); rows with < n_min quiet pixels take the image's value"""
+    busy = ndimage.binary_dilation((Q > max(10 * s_thr, k_pix - 0.5)) & valid, structure=EIGHT, iterations=grow)
+    quiet = valid & ~busy
+    allq = Q[quiet]
+    def cmean(v):
+        if v.size == 0:
+            return 0.0
+        med = np.median(v); mad = 1.4826 * np.median(np.abs(v - med)) + 1e-6
+        return float(v[np.abs(v - med) < 5 * mad].mean())
+    glob_ = cmean(allq)
+    b = np.array([cmean(Q[r][quiet[r]]) if quiet[r].sum() >= n_min else glob_ for r in range(Q.shape[0])])
+    return np.broadcast_to(b[:, None], Q.shape)
+
+
 CROWDED = os.environ.get("AGMX_CROWDED", "auto")      # default of adaptive_cluster(crowded=...): auto | on | off
 CROWDED_SHAPES = os.environ.get("AGMX_CROWDED_SHAPES", "on")    # in crowded mode: muon lines + topology split: on | off
+XSAT_STD = os.environ.get("AGMX_XSAT_STD", "on")    # standard mode: X-ray satellites split off tracks: on | off
 FEWE = os.environ.get("AGMX_FEWE", "off")    # Bayesian few-electron finder switch (wip/lowdc/bayes): off | auto | on
 
 
@@ -173,7 +196,12 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
         # fixed at k = 5 (pixel > 4.5 e-), what the earlier code used on the PD06/DM12 images (lam ~ 1.8 there);
         # 3.7 e- (k = 2) and 5.5 e- (k = 6) were both worse (Fe-55 injections 0.81 / 0.88 vs 0.93). Open item.
         k_unm = 5 if AM.PHYS_FIX else k
-        out = [dict(c, regime="unmodelled", occ=np.nan) for c in hysteresis(np.where(valid, Q, 0.0), valid, s_thr, k_unm)]
+        # energies above the mean dark charge: on these CCDs (lam ~ 1-2 e-/pix) the footprint's dark charge was counted
+        # as signal (+2.6-4.8 % at 1-6 keV in the 2026-11-14 bias probe); the pixels are still selected on Q
+        base = unmodelled_baseline(Q, valid, s_thr, k_unm) if AM.PHYS_FIX else None
+        info["unmodelled_baseline"] = float(np.median(base[valid])) if base is not None and valid.any() else 0.0
+        out = [dict(c, regime="unmodelled", occ=np.nan)
+               for c in hysteresis(np.where(valid, Q, 0.0), valid, s_thr, k_unm, base=base)]
         if engine == "gmx":
             import gmx as GX
             GX.fill_flags(out, np.where(valid, Q, 0.0), valid)   # no trusted background here: ped from the image
@@ -199,7 +227,11 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
         elif cm:
             res = GX.general_cluster(Q, valid, bg, return_pixels=True, split_crossings=True, hints=hints, **kw)
         else:
-            res = GX.general_cluster(Q, valid, bg, return_pixels=rpix, **kw)
+            sat = None
+            if XSAT_STD == "on":
+                import crowded_shapes as CS
+                sat = CS.satellite_lab
+            res = GX.general_cluster(Q, valid, bg, return_pixels=rpix, post_lab=sat, **kw)
         for c in res:
             y, x = int(round(c["y"])), int(round(c["x"]))
             o = float(occ[y, x]) if 0 <= y < Q.shape[0] and 0 <= x < Q.shape[1] else np.nan
