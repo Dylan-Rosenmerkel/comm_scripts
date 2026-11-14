@@ -388,6 +388,10 @@ def build_parser(full=False):
                    help="rebuild every tool's pages from the kept results (default: only the tools of this run, and all "
                         "of them after --criteria / --reprocess)")
     g = ap.add_argument_group("clustering")
+    g.add_argument("--stitch", choices=("time", "order"), default=None,
+                   help="continuous readout: join consecutive images of one setting row by row before clustering, so "
+                        "events across image boundaries are one cluster (time: by DATEINI / DATEEND, order: the list "
+                        "order); stitched/<name>.stitch.json maps rows back to the images (engine/stitch.py)")
     g.add_argument("--clusterer", choices=("auto", "agmx", "threshold"), default="auto",
                    help="auto (default): one chain per CCD from the characterisation (Bayes / A_GMX / crowded A_GMX / "
                         "unmodelled / threshold); agmx or threshold: that clusterer on every CCD (details: -h -v)")
@@ -1305,6 +1309,13 @@ def main(argv=None):
         images, l1_fits = raw_inputs(run, l1_skips="all")
     else:
         images, l1_fits = raw_inputs(run)
+        if args.stitch and images:                   # continuous readout: consecutive images joined (engine/stitch.py)
+            import stitch as ST
+            made = ST.write_stitched(ST.group_images(images, args.stitch), os.path.join(out, "stitched"), log=run.say)
+            run.say(f"stitching ({args.stitch}): {len(images)} images -> {len(made)} "
+                    f"({sum(len(m) > 1 for _, m in made)} stitched readouts)")
+            images = [p for p, _ in made]
+            run.images = images
     need, done = to_process(run, images, tools_now)
     # the inputs that are new to a tool in this run (or changed): the tools that combine images (defect-map groups)
     # make only the groups with such an input again

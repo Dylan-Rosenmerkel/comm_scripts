@@ -136,6 +136,16 @@ now at or above the threshold method on every binning. DM09 identical.
 axis, anisotropic for 1x100 / 100x1), the dark charge per bin, block sizes and halo in bins; strips of a few rows or
 columns as 1-D.
 
+**Stitching implemented (2026-11-13): `run_superWADERs --stitch time|order`** (`superWADERs/engine/stitch.py`):
+consecutive images of one setting joined row by row (time: next DATEINI within 10 s + 5 % of a readout of the previous
+DATEEND; order: the list order), vertical overscan left out, the stitched file named `..._stitch<N>_<ACM>_...` with a
+`.stitch.json` of every member's first row (member_of()). Benchmark (wip/binned/results/ceiling_stitched.md), without
+-> with: events split at a boundary found whole 0-100 % -> 100 % (10 of 11 settings); muons whole unbinned 0.72-0.87
+-> 0.83-0.96, binned 0.61-1.00 -> 0.89-1.00; 2-10 e- unchanged or better; dark charge per bin at 1e-5 2.2-5.7x ->
+1.1-2.0x the truth. Worse: 2 e- at 1e-4 (0.05-0.45 -> 0: the accurate dark charge triggers the >= 3 e- rule; ceiling
+0.14-0.54) and 100x100 at 1e-6 for 2 e- (0.60 -> 0.25). Open: the dark-charge fit's lower limit (1e-6 reads 8-77x
+high): report the counted (truncated Poisson) dark charge there.
+
 1A.3 **Pooling over all images of a setting by default:** the dark charge per CCD, row and column; hot pixels and
 columns (persistent across images, masked); the noise model (asymmetric tails); the false-alarm rate from the
 candidates of all images (the Bayesian finder's run mode, made the default for >= 2 images).

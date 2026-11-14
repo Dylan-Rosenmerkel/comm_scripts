@@ -155,9 +155,35 @@ def analyse(out):
         stat = {}
         fakes = fakes_bayes = n_files = 0
         split = [0, 0]
-        for key, tr in T["truth"].items():
-            fn, ext = key.split("|")
-            f = os.path.join(rd, "root", f"panaSKImg_clustersRec_{fn[:-5]}_ext{ext}.root")
+        jobs = []                                  # (cluster file, truth list in that file's row coordinates)
+        stitched = sorted(glob.glob(os.path.join(rd, "stitched", "*.stitch.json")))
+        if stitched:                               # --stitch: truth of the members in stitched rows, split events merged
+            for sj in stitched:
+                S = json.load(open(sj))
+                stem = os.path.basename(S["stitched"])[:-5]
+                for ext in range(1, NEXT + 1):
+                    ev, other = {}, []
+                    for m in S["members"]:
+                        for t0 in T["truth"].get(f"{os.path.basename(m['file'])}|{ext}", []):
+                            t = dict(t0)
+                            for k in ("y", "y0", "y1"):
+                                if k in t:
+                                    t[k] = t[k] + m["row0"]
+                            if t["type"] in ("hot_column", "hot_pixel"):
+                                other.append(t)
+                            elif t["id"] in ev:            # the other part of a split event
+                                e = ev[t["id"]]
+                                w = e["n"] + t["n"]
+                                e.update(y=(e["y"] * e["n"] + t["y"] * t["n"]) / max(w, 1), x=(e["x"] * e["n"] + t["x"] * t["n"]) / max(w, 1),
+                                         y0=min(e["y0"], t["y0"]), y1=max(e["y1"], t["y1"]), x0=min(e["x0"], t["x0"]), x1=max(e["x1"], t["x1"]), n=w)
+                            else:
+                                ev[t["id"]] = t
+                    jobs.append((os.path.join(rd, "root", f"panaSKImg_clustersRec_{stem}_ext{ext}.root"), list(ev.values()) + other))
+        else:
+            for key, tr in T["truth"].items():
+                fn, ext = key.split("|")
+                jobs.append((os.path.join(rd, "root", f"panaSKImg_clustersRec_{fn[:-5]}_ext{ext}.root"), tr))
+        for f, tr in jobs:
             if not os.path.exists(f):
                 continue
             n_files += 1
@@ -198,7 +224,7 @@ def analyse(out):
             for e, cc in s["ccds"].items():
                 if "dc_e" in cc:
                     dcs.append(cc["dc_e"])
-        mpix = n_files * H * W / 1e6
+        mpix = (len(T["truth"]) if stitched else n_files) * H * W / 1e6
         rep[os.path.basename(sd)] = dict(
             eff={k: (v[1] / v[0] if v[0] else None, v[0]) for k, v in sorted(stat.items()) if k != "muon"},
             muon=dict(n=stat.get("muon", [0])[0], found=(stat["muon"][1] / stat["muon"][0]) if stat.get("muon", [0])[0] else None,
