@@ -342,6 +342,7 @@ def background_map(Q, valid, n_iter=2, colbin=128, rowbin=60, smooth="local_line
     for it in range(n_iter):
         use = valid & ~mask
         o_r = np.full(H, np.nan); lam_r = np.full(H, np.nan); s_r = np.full(H, np.nan); err = np.full(H, np.nan)
+        npx = np.zeros(H)
         broad = []
         # rows of >= 100 usable pixels are fitted one by one; on narrow images (e.g. 20 bins at 100 x 100 binning)
         # blocks of k consecutive rows with >= 100 pixels together, each row taking its block's (o, lam, s)
@@ -357,8 +358,18 @@ def background_map(Q, valid, n_iter=2, colbin=128, rowbin=60, smooth="local_line
                 if f["resolved"]:
                     o_r[r], lam_r[r], s_r[r] = f["o"], f["lam"], f["s"]
                     err[r] = np.sqrt(max(f["lam"], 0.01) / v.size)
+                    npx[r] = v.size
                 else:
                     broad.append(r)
+        # the smoothing weights 1 / err^2 use each row's OWN lam: rows that came out low get more weight, a bias of
+        # ~ -1 / (counts per row) - negligible with >= 100 counts, -10 % on 100x100-binned blanks (10 e- per row), where
+        # the few-electron finder's threshold, calibrated on that lam, let 1.5x its fake budget through. Rows of < 100
+        # expected counts take the common lam (median over rows) instead
+        fin = np.isfinite(lam_r) & np.isfinite(err) & (npx > 0)
+        if fin.any():
+            lam_c = max(float(np.median(lam_r[fin])), 0.01)
+            few = fin & (np.maximum(lam_r, 0.0) * npx < 100)
+            err[few] = np.sqrt(lam_c / npx[few])
         # broad-noise rows: pooled comb fits
         broad = np.array(broad, int)
         n_res = int(np.isfinite(lam_r).sum())
