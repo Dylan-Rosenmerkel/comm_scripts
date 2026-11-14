@@ -146,6 +146,18 @@ DATEEND; order: the list order), vertical overscan left out, the stitched file n
 0.14-0.54) and 100x100 at 1e-6 for 2 e- (0.60 -> 0.25). Open: the dark-charge fit's lower limit (1e-6 reads 8-77x
 high): report the counted (truncated Poisson) dark charge there.
 
+**Round 3 (2026-11-13):** (1) A_GMX's background map on narrow images (rows < 100 pixels, e.g. 20 bins): blocks of
+rows fitted together, undefined 2-D correction cells filled (was 'no row could be fitted' -> crude background, and NaN
+-> crash); (2) A_GMX's own count_threshold budget per Mpix of UNBINNED area (gmx.BINNING; was per bin: 1e4x too
+strict at 100x100); (3) the switch's f_c cut FC_AGMX x sqrt(b_y b_x), at most 0.1; (4) counted dark charge
+(native_pipeline.count_dark: isolated single electrons among quiet pixels, rows centred on their zero peak, the noise's
+false +1 e- measured as the -1 e- readings) reported as dc_counted_e (and noted when the fit is at its limit); (5)
+--stitch-gap (default 5 s; real L2 consecutive images are ~58 s apart: not joined). Unbinned unchanged (DM09 identical).
+Results (wip/binned/results/ceiling_round3.md, stitched): every binning but 100x100 at or near the ceiling at <= 1e-5;
+counted dark charge 1.0-1.2x the truth at 1e-4 / 1e-5, 1.8-2.9x at 1e-6 (fit: up to 77x); 100x100 low-rate 1e-6:
+3-5 e- 0.93-1.00, 1e-4: fakes 163 -> 4; open: 100x100 at 1e-5 (lam ~0.1 e- per bin: 3 e- 0.14-0.40 vs ceiling 0.99,
+fakes 0.06-0.2 / Mpix) and 1e-6 dark charge (noise false readings 15x the signal: needs many readouts pooled).
+
 1A.3 **Pooling over all images of a setting by default:** the dark charge per CCD, row and column; hot pixels and
 columns (persistent across images, masked); the noise model (asymmetric tails); the false-alarm rate from the
 candidates of all images (the Bayesian finder's run mode, made the default for >= 2 images).

@@ -392,6 +392,8 @@ def build_parser(full=False):
                    help="continuous readout: join consecutive images of one setting row by row before clustering, so "
                         "events across image boundaries are one cluster (time: by DATEINI / DATEEND, order: the list "
                         "order); stitched/<name>.stitch.json maps rows back to the images (engine/stitch.py)")
+    g.add_argument("--stitch-gap", metavar="S", type=float, default=5.0,
+                   help="--stitch time: largest gap [s] between one image's DATEEND and the next DATEINI (default 5)")
     g.add_argument("--clusterer", choices=("auto", "agmx", "threshold"), default="auto",
                    help="auto (default): one chain per CCD from the characterisation (Bayes / A_GMX / crowded A_GMX / "
                         "unmodelled / threshold); agmx or threshold: that clusterer on every CCD (details: -h -v)")
@@ -1311,7 +1313,8 @@ def main(argv=None):
         images, l1_fits = raw_inputs(run)
         if args.stitch and images:                   # continuous readout: consecutive images joined (engine/stitch.py)
             import stitch as ST
-            made = ST.write_stitched(ST.group_images(images, args.stitch), os.path.join(out, "stitched"), log=run.say)
+            made = ST.write_stitched(ST.group_images(images, args.stitch, args.stitch_gap), os.path.join(out, "stitched"),
+                                     log=run.say)
             run.say(f"stitching ({args.stitch}): {len(images)} images -> {len(made)} "
                     f"({sum(len(m) > 1 for _, m in made)} stitched readouts)")
             images = [p for p, _ in made]

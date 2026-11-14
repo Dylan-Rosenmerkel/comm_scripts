@@ -619,6 +619,40 @@ def tune_ccd(raw, active, ovs, ext, r, fs, args):
 # =============================================================================
 # clustering
 # =============================================================================
+def count_dark(e_img, region, win=5, noise_e=None):
+    """Dark charge [e-/pix] counted from isolated single electrons: among the pixels (bins) of region with no other
+    charged pixel within win // 2, the fraction r with exactly 1 e- gives lam = r / (1 - r) (Poisson P(1) / (P(0) + P(1)) =
+    lam / (1 + lam)). Events and their neighbourhoods drop out by the isolation. The read noise's false single
+    electrons (1.5e-5 per pixel at 0.12 e-: more than a 1e-6 dark charge) are subtracted as measured on the negative
+    side: quiet pixels reading -1 e- (symmetric noise, tails included); noise_e (Gaussian) only when there are too few
+    quiet pixels to count them. Meant for lam << 1 / win^2,
+    where the comb fit's lambda sits at its lower limit; returns (lam, n_single, n_quiet) or (None, 0, n) with < 1000
+    quiet pixels."""
+    from scipy import ndimage as nd
+    # each row centred on its zero-electron peak first: a pedestal off by a fraction of an electron makes false +1 e-
+    # readings far more frequent than -1 e- ones (the negative-side correction below needs a symmetric noise)
+    e = np.where(region, e_img, np.nan)
+    z = np.where(np.abs(e) < 0.5, e, np.nan)
+    with np.errstate(all="ignore"):
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            mu = np.nanmedian(z, axis=1)
+    k = np.rint(np.where(region, e_img - np.nan_to_num(mu, nan=0.0)[:, None], 0.0))
+    occ = (k >= 1) & region
+    nb = nd.uniform_filter(occ.astype(float), win, mode="constant") * win * win - occ
+    quiet = region & (nb < 0.5) & (k >= -1) & (k <= 1)
+    n1, nm1, n = int(((k == 1) & quiet).sum()), int(((k == -1) & quiet).sum()), int(quiet.sum())
+    if n < 1000:
+        return None, n1, n
+    if nm1 > 0 or not noise_e:
+        r = max(n1 - nm1, 0) / n                # the negative side measures the noise's false +1 e- readings
+    else:
+        from scipy.stats import norm
+        r = max(n1 / n - float(norm.sf(0.5 / noise_e)), 0.0)
+    return r / max(1.0 - r, 1e-12), n1, n
+
+
 def thresholds_for(mode, r, sigma0_e, mimic_thr=None):
     """(pixel threshold, seed threshold [e-], sigma_seed [e-], n_seed, description) for the 'threshold' clusterer.
     sigma_seed / n_seed only feed the panaSKImg bookkeeping branches (sigma_seed_eV, qmin_cluster_seed, seed_nsig_*):
@@ -1097,6 +1131,13 @@ def process_image(path, out_dir, curve=None, clusterer="threshold", thresholds="
         lim = fit_limits(fit)
         if lim:
             rec["fit_at_limit"] = lim             # e.g. ultra-low dark charge: the comb fit cannot measure lambda
+        if r["resolved"] and fit["sigma"][0] / gain < 0.3:     # counting CCD: the counted dark charge too
+            lam_c, n1, nq = count_dark(e_img, fit_mask(ps.shape, active, fit["settings"]), noise_e=fit["sigma"][0] / gain)
+            rec["dc_counted_e"] = lam_c
+            rec["dc_counted"] = dict(single=n1, quiet=nq)
+            if lam_c is not None and (any(x.startswith("lam") for x in lim) or rec["dc_e"] < 1e-2):
+                rec["dc_note"] = (f"dark charge from the counted isolated single electrons {lam_c:.3g} e-/pix "
+                                  f"({n1} in {nq} quiet pixels); the fit's {rec['dc_e']:.3g} is at or near its limit")
         info = info_branches(n, mu_row, sig_row, fit, ccd, nfile, h0)
         if plots and write:
             write_plots(os.path.join(out_dir, stem), ext, ps, active, fit, r, mu_row, sig_row, h0, args)

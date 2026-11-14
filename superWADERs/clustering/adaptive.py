@@ -182,6 +182,7 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
     occ = occupancy(Q, valid, sigma, box, lam, bg)
     if engine == "gmx":
         import gmx as GX
+        GX.BINNING = (int(binning[0]), int(binning[1]))
         fmode = (fewe or FEWE).lower()
         if fmode not in ("off", "auto", "on"):
             raise ValueError(f"adaptive_cluster: fewe={fmode!r} (use 'off', 'auto' or 'on')")

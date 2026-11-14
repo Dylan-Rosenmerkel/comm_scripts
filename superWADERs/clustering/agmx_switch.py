@@ -11,7 +11,7 @@ Called by clustering_tests/adaptive.adaptive_cluster(..., fewe='auto' | 'on') af
      must not turn its block to A_GMX. f_c is the share of pixels with max_{n>=1} f(v - n) / f(v) > 1e-2; it
      combines read noise, its tail and the dark charge in one measure of sparsity (~50 f_c other candidates per 4-px
      link disk)
-  3. regime per block: 'bayes' (f_c <= FC_BAYES), 'both' (<= FC_AGMX; treated as 'bayes': Bayes catalogue), 'agmx'
+  3. regime per block: 'bayes' (f_c <= FC_BAYES), 'both' (<= fc_agmx(); treated as 'bayes': Bayes catalogue), 'agmx'
      (above, or A_GMX regime 'unmodelled' / crowded mode for the whole image). fewe='on' forces 'bayes' wherever
      A_GMX is not unmodelled. The Bayes region B = valid pixels of non-'agmx' blocks outside the halo
   4. ownership, decided ONCE per event so that a block edge or the halo edge cannot double count or lose it: a
@@ -66,7 +66,7 @@ LINK = 1            # px: an A_GMX cluster within this of a neighbourhood's cand
 
 
 def regime_of(fc):
-    return "bayes" if fc <= FC_BAYES else ("both" if fc <= FC_AGMX else "agmx")
+    return "bayes" if fc <= FC_BAYES else ("both" if fc <= fc_agmx() else "agmx")
 
 
 def big_footprint(clusters, e_per_e, shape):
@@ -128,6 +128,13 @@ def _block_regime(m, y, x):
     i = min(max(int(round(y)) // BLOCK, 0), m["blk_reg"].shape[0] - 1)
     j = min(max(int(round(x)) // BLOCK, 0), m["blk_reg"].shape[1] - 1)
     return m["blk_reg"][i, j]
+
+
+def fc_agmx():
+    """FC_AGMX per bin: in binned images the soft candidates are mostly single dark electrons and the fake budget per
+    bin is b_y x b_x times larger: FC_AGMX x sqrt(b_y b_x), at most 0.1 (neighbourhoods start to percolate); FC_AGMX
+    itself for unbinned images"""
+    return FC_AGMX if BINNING == (1, 1) else min(FC_AGMX * math.sqrt(BINNING[0] * BINNING[1]), 0.1)
 
 
 def lam_2e():

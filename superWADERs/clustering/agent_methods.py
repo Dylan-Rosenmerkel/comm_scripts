@@ -338,16 +338,22 @@ def background_map(Q, valid, n_iter=2, colbin=128, rowbin=60, smooth="local_line
         use = valid & ~mask
         o_r = np.full(H, np.nan); lam_r = np.full(H, np.nan); s_r = np.full(H, np.nan); err = np.full(H, np.nan)
         broad = []
-        for r in range(H):
-            v = Q[r][use[r]]
+        # rows of >= 100 usable pixels are fitted one by one; on narrow images (e.g. 20 bins at 100 x 100 binning)
+        # blocks of k consecutive rows with >= 100 pixels together, each row taking its block's (o, lam, s)
+        npr = use.sum(axis=1)
+        k = 1 if np.median(npr) >= 100 else int(np.ceil(100 / max(float(np.median(npr)), 1.0)))
+        for r0 in range(0, H, k):
+            rows = range(r0, min(r0 + k, H))
+            v = np.concatenate([Q[r][use[r]] for r in rows])
             if v.size < 100:
                 continue
             f = fit_row_fast(v)
-            if f["resolved"]:
-                o_r[r], lam_r[r], s_r[r] = f["o"], f["lam"], f["s"]
-                err[r] = np.sqrt(max(f["lam"], 0.01) / v.size)
-            else:
-                broad.append(r)
+            for r in rows:
+                if f["resolved"]:
+                    o_r[r], lam_r[r], s_r[r] = f["o"], f["lam"], f["s"]
+                    err[r] = np.sqrt(max(f["lam"], 0.01) / v.size)
+                else:
+                    broad.append(r)
         # broad-noise rows: pooled comb fits
         broad = np.array(broad, int)
         n_res = int(np.isfinite(lam_r).sum())
@@ -444,6 +450,10 @@ def background_map(Q, valid, n_iter=2, colbin=128, rowbin=60, smooth="local_line
                                      bounds_error=False, fill_value=None)
         rr, cc = np.meshgrid(np.arange(H), np.arange(W), indexing="ij")
         dmap = ip(np.stack([rr.ravel(), cc.ravel()], 1)).reshape(H, W)
+        # cells the interpolation cannot cover (very narrow images, e.g. 20 bins wide): no correction there; rows the
+        # smoothing left undefined: the median row (finite everywhere on ordinary images, so nothing changes there)
+        dmap = np.where(np.isfinite(dmap), dmap, 0.0)
+        lam_s = np.where(np.isfinite(lam_s), lam_s, np.nanmedian(lam_s) if np.isfinite(lam_s).any() else LAM_FLOOR)
         dcol = dmap.mean(0)
         lam_map = np.maximum(lam_s[:, None] + dmap, LAM_FLOOR)
         o_map = np.repeat(o_full[:, None], W, 1)

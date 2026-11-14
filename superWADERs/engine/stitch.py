@@ -6,7 +6,8 @@ lose edge rows.
     made = write_stitched(groups, out_dir)          # [(stitched path, members)], the members' row offsets in a JSON
 
 Grouping: images of the same ACM, size, binning (NPBIN x NSBIN), number of skips (NDCM) and exposure. mode "time":
-in readout order (DATEINI), joined while the next image starts within TOL of the end of the previous one (DATEEND);
+in readout order (DATEINI), joined while the next image starts within max_gap s (default TOL_S) of the end of the
+previous one (DATEEND; real L2 runs of consecutive images have ~58 s between images: not continuous, not joined);
 mode "order": the list order, every image of a setting joined (trusted continuous; e.g. simulations). Groups of one
 image stay as they are. Rows of a vertical overscan (PHYSROW / NPBIN onward) are left out of the stack.
 The stitched file: the first member's headers, NROW = all rows, DATEEND of the last member, STITCHN = members, the
@@ -22,7 +23,7 @@ from datetime import datetime
 
 import numpy as np
 
-TOL_S = 10.0               # s: the next image must start within this of the previous one's end (plus 5 % of a readout)
+TOL_S = 5.0                # s: the next image must start within this of the previous one's end (--stitch-gap)
 ACM_RE = re.compile(r"_(\d+_\d{8}_\d{6}_\d+)$")
 
 
@@ -44,7 +45,7 @@ def _info(path):
         return dict(path=path, key=key, t0=_time(h0.get("DATEINI")), t1=_time(h0.get("DATEEND")))
 
 
-def group_images(paths, mode="time"):
+def group_images(paths, mode="time", max_gap=TOL_S):
     """lists of consecutive images of one readout (see the module doc); single images as lists of one"""
     infos = [_info(p) for p in paths]
     by_key = {}
@@ -61,8 +62,7 @@ def group_images(paths, mode="time"):
         for i in timed:
             if cur:
                 prev = cur[-1]
-                tol = TOL_S + 0.05 * max(prev["t1"] - prev["t0"], 0.0)
-                if abs(i["t0"] - prev["t1"]) > tol:
+                if abs(i["t0"] - prev["t1"]) > max_gap:
                     groups.append([c["path"] for c in cur])
                     cur = []
             cur.append(i)

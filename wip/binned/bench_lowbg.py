@@ -62,7 +62,7 @@ def muon(rng, Ht, Wt):
     return Y + rng.normal(0, 1, Y.size) * S, X + rng.normal(0, 1, X.size) * S
 
 
-def make_setting(out, by, bx, dc, n_img, seed):
+def make_setting(out, by, bx, dc, n_img, seed, rate=1.0):
     from astropy.io import fits
     rng = np.random.default_rng(seed)
     name = f"{by}x{bx}_dc{dc:g}"
@@ -74,11 +74,11 @@ def make_setting(out, by, bx, dc, n_img, seed):
     frames = []
     for ext in range(1, NEXT + 1):
         ev = []                                             # (type, Y, X electron positions)
-        for _ in range(rng.poisson(6 * n_img)):
+        for _ in range(rng.poisson(6 * n_img * rate)):
             ev.append(("fewe",) + deposit(rng, rng.uniform(0, Ht), rng.uniform(0, W), int(rng.integers(2, 11)), rng.uniform(0, THICK)))
-        for _ in range(rng.poisson(2 * n_img)):
+        for _ in range(rng.poisson(2 * n_img * rate)):
             ev.append(("xray",) + deposit(rng, rng.uniform(0, Ht), rng.uniform(0, W), int(rng.uniform(1.0, 8.0) / EPS), rng.uniform(0, THICK)))
-        for _ in range(rng.poisson(0.5 * n_img)):
+        for _ in range(rng.poisson(0.5 * n_img * rate)):
             ev.append(("muon",) + muon(rng, Ht, W))
         hot_col = int(rng.integers(100, W - 100))
         hot_pix = [(int(rng.integers(0, H)), int(rng.integers(0, W))) for _ in range(3)]
@@ -219,11 +219,13 @@ def analyse(out):
             fk = (~used) & (ne < 20)
             fakes += int(fk.sum())
             fakes_bayes += int((fk & (c["finder"] == 2)).sum())
-        dcs = []
+        dcs, dcc = [], []
         for s in json.load(open(os.path.join(rd, "native_summary.json"))):
             for e, cc in s["ccds"].items():
                 if "dc_e" in cc:
                     dcs.append(cc["dc_e"])
+                if cc.get("dc_counted_e") is not None:
+                    dcc.append(cc["dc_counted_e"])
         mpix = (len(T["truth"]) if stitched else n_files) * H * W / 1e6
         rep[os.path.basename(sd)] = dict(
             eff={k: (v[1] / v[0] if v[0] else None, v[0]) for k, v in sorted(stat.items()) if k != "muon"},
@@ -231,7 +233,7 @@ def analyse(out):
                       whole=(stat["muon"][2] / stat["muon"][0]) if stat.get("muon", [0])[0] else None),
             fakes=fakes, fakes_bayes=fakes_bayes, fakes_per_mpix=fakes / max(mpix, 1e-9), files=n_files,
             split_found=(split[1] / split[0]) if split[0] else None, split_n=split[0],
-            dc_fit_median=float(np.median(dcs)) if dcs else None, dc_true=T["dc"] * T["by"] * T["bx"],
+            dc_fit_median=float(np.median(dcs)) if dcs else None, dc_counted_median=float(np.median(dcc)) if dcc else None, dc_true=T["dc"] * T["by"] * T["bx"],
             chains=open(os.path.join(rd, "summary.txt")).read().count("A_GMX") if os.path.exists(os.path.join(rd, "summary.txt")) else None)
     json.dump(rep, open(os.path.join(out, "report.json"), "w"), indent=1)
     cats = ["fewe_2", "fewe_3", "fewe_4-5", "fewe_6-10", "xray"]
@@ -256,6 +258,7 @@ def main():
     ap.add_argument("--bins", nargs="*", default=["1x1", "10x10", "1x10", "10x1", "1x100", "100x1", "100x100"])
     ap.add_argument("--dc", nargs="*", type=float, default=[1e-6, 1e-5, 1e-4])
     ap.add_argument("--n", type=int, default=20)
+    ap.add_argument("--rate", type=float, default=1.0, help="event rate x this (1: ~6 few-e, 2 X-rays, 0.5 muons per image)")
     ap.add_argument("-j", "--jobs", type=int, default=2, help="workers per run_superWADERs run")
     ap.add_argument("--parallel", type=int, default=1, help="settings run at the same time")
     ap.add_argument("--extra", default="", help="more run_superWADERs arguments, e.g. '--clusterer threshold'")
@@ -264,7 +267,7 @@ def main():
         for k, b in enumerate(a.bins):
             by, bx = (int(v) for v in b.split("x"))
             for j, dc in enumerate(a.dc):
-                make_setting(a.out, by, bx, dc, a.n, seed=1000 + 10 * k + j)
+                make_setting(a.out, by, bx, dc, a.n, seed=1000 + 10 * k + j, rate=a.rate)
     if a.what in ("run", "all"):
         run(a.out, a.jobs, a.parallel, a.extra.split())
     if a.what in ("analyse", "all"):

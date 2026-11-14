@@ -1080,13 +1080,17 @@ def _group_stats(nn, valid, lam, s, covered=None, m_max=9, link=None):
     return lab, ids, T[ids - 1]
 
 
+BINNING = (1, 1)   # on-chip binning (rows, columns) of the image: set by adaptive_cluster(binning=); budgets are per
+                   # Mpix of UNBINNED area (a bin covers BINNING[0] x BINNING[1] pixels of the CCD)
+
+
 def count_threshold(valid, lam, s, fakes_per_mpix, seed=12345, n_min=10, n_max=50):
     """threshold on T for `fakes_per_mpix` false groups per Mpix of active area: the value exceeded by F groups per
     image in blank images simulated from this image's own background (Poisson(lam) + N(0, s) per pixel; fixed seed,
     so reproducible); the analytic value ln(N_pix / F) (one trial per pixel) only when the simulated blanks have too
     few groups to measure it. Returns (threshold, analytic, simulated)."""
     npix = float(valid.sum())
-    F = max(fakes_per_mpix * npix / 1e6, 1e-6)                 # expected false groups in this image
+    F = max(fakes_per_mpix * npix * BINNING[0] * BINNING[1] / 1e6, 1e-6)   # expected false groups in this image
     t_an = float(np.log(npix / F))
     nb = int(np.clip(np.ceil(5.0 / F), n_min, n_max))
     rng = np.random.default_rng(seed)
