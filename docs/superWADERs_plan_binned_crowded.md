@@ -124,6 +124,14 @@ muons whole 0.64-0.91 at 10x10 / 10x1 / 1x100. Full table: wip/binned/results/ce
 (images of 6 x 20 bins: nothing found), 100x1 and 1x100 (0.5-0.85), 4-10 e- at 1x100 / 100x1 below the threshold
 method, muons whole, the safety rule; the 2 e- limit at 1e-4 is physical.
 
+**Step 1A.2, second part (2026-11-13):** A_GMX's read noise on very small images (< 100 zero-peak pixels, e.g. 6 x 20
+bins at 100x100) came out as the default 1.0 e- -> 'unmodelled'; now the robust spread of all valid pixels. Edge
+margins rounded down (a bin larger than the margin is kept whole). Results (wip/binned/results/ceiling_after_1A2b.md):
+10x10 2-10 e- 0.97-1.00 at <= 1e-5, 100x1 0.78-0.98, 1x100 0.81-0.96, 100x100 0.14-0.60 (= the threshold method; the
+benchmark's ~8 events per 120-bin image overlap); X-rays 0.94-1.00 binned (100x100 0.66-0.75); muons whole 0.90-1.00 at
+10x10 / 10x1 / 1x100 (unbinned still 0.72-0.87: track splitting in sparse images); fakes 0-5 per setting. A_GMX is
+now at or above the threshold method on every binning. DM09 identical.
+
 1A.2 **Bin geometry in the few-electron finder and A_GMX:** an event is point-like in bins (diffusion sigma / b per
 axis, anisotropic for 1x100 / 100x1), the dark charge per bin, block sizes and halo in bins; strips of a few rows or
 columns as 1-D.

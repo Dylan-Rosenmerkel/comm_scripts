@@ -695,10 +695,10 @@ def threshold_clusters(e_img, region, t_pix, t_seed):
 def agmx_valid(shape, active, first_row, binning=(1, 1)):
     """A_GMX's active pixels as agmx_root.valid_mask / comm_clustering: rows from first_row + 3 to the second-last-but-one,
     columns of the active region without a 2-pixel border. The margins are unbinned pixels: with on-chip binning
-    (rows, columns) they are ceil((first_row + 3) / b_y) and ceil(2 / b_y) rows and ceil(2 / b_x) columns (a 6-row
-    100x1 image keeps rows 1-4)."""
+    (rows, columns) they are floor((first_row + 3) / b_y) and floor(2 / b_y) rows and floor(2 / b_x) columns: a bin
+    larger than the margin is kept whole (a 6-row 100x1 image keeps all 6 rows); unbinned unchanged."""
     by, bx = (max(int(b), 1) for b in binning)
-    r0, r1, c = math.ceil((first_row + 3) / by), math.ceil(2 / by), math.ceil(2 / bx)
+    r0, r1, c = (first_row + 3) // by, 2 // by, 2 // bx
     cols = np.flatnonzero(active.any(axis=0))
     v = np.zeros(shape, bool)
     v[r0:shape[0] - r1, cols[0] + c:cols[-1] + 1 - c] = True

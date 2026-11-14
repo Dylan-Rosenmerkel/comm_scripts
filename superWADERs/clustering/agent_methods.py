@@ -189,7 +189,12 @@ def read_noise(Q, valid):
     robust spread of all active pixels is used instead (clusters are a small fraction of the pixels)"""
     act = Q[valid]
     z = act[np.abs(act) < 0.5]
-    s0 = float(1.4826 * np.median(np.abs(z - np.median(z)))) if z.size > 100 else 1.0
+    if z.size > 100:
+        s0 = float(1.4826 * np.median(np.abs(z - np.median(z))))
+    elif act.size >= 20:            # small images (e.g. 6 x 20 bins at 100 x 100 binning): all pixels, robustly
+        s0 = float(1.4826 * np.median(np.abs(act - np.median(act))))
+    else:
+        s0 = 1.0
     if PHYS_FIX and s0 > 0.3:
         s0 = max(s0, float(1.4826 * np.median(np.abs(act - np.median(act)))))
     return s0
