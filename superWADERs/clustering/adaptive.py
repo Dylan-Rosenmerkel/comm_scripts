@@ -108,6 +108,7 @@ def unmodelled_baseline(Q, valid, s_thr, k_pix, grow=3, n_min=50):
 
 CROWDED = os.environ.get("AGMX_CROWDED", "auto")      # default of adaptive_cluster(crowded=...): auto | on | off
 CROWDED_SHAPES = os.environ.get("AGMX_CROWDED_SHAPES", "on")    # in crowded mode: muon lines + topology split: on | off
+LINK_STD = os.environ.get("AGMX_LINK_STD", "on")    # standard mode: collinear track fragments joined (crowded.link_tracks)
 XSAT_STD = os.environ.get("AGMX_XSAT_STD", "on")    # standard mode: X-ray satellites split off tracks: on | off
 FEWE = os.environ.get("AGMX_FEWE", "off")    # Bayesian few-electron finder switch (wip/lowdc/bayes): off | auto | on
 
@@ -231,12 +232,25 @@ def adaptive_cluster(Q, valid, bg=None, sigma=None, sigma_crowd=None, occ_thr=0.
             if XSAT_STD == "on":
                 import crowded_shapes as CS
                 sat = CS.satellite_lab
-            res = GX.general_cluster(Q, valid, bg, return_pixels=rpix, post_lab=sat, **kw)
+            res = GX.general_cluster(Q, valid, bg, return_pixels=rpix or (LINK_STD == "on" and max(binning) <= 10), post_lab=sat, **kw)
         for c in res:
             y, x = int(round(c["y"])), int(round(c["x"]))
             o = float(occ[y, x]) if 0 <= y < Q.shape[0] and 0 <= x < Q.shape[1] else np.nan
             reg = c["regime"] if c.get("regime") == "line" else ("crowded" if o >= occ_thr else "sparse")
             out.append(dict(c, regime=reg, occ=o))
+        if not cm and LINK_STD == "on" and max(binning) <= 10:     # (bins of 100 px: straightness in bins means nothing)
+            # a sharp (front-side) muon at a shallow angle to the rows / columns is a staircase of single-row runs, each
+            # its own cloud with a dip at every step: up to ~30 % of a 250-400-px muon left as 'artifact-row' pieces
+            # (low-background benchmark: whole 0.83-0.96). The collinear fragments are joined as in crowded mode
+            import crowded as CR
+            info["n_linked"] = 0
+            for _ in range(3):      # the staircase runs link to each other first; the joined piece (now on the track's
+                out, nl = CR.link_tracks(out, along=True, min_part_streak=6.0)   # axis) links to the rest of the muon next
+                info["n_linked"] += nl
+                if not nl:
+                    break
+            if not rpix:
+                for c in out: c.pop("_pix", None)
         if cm:
             out = out + [dict(c, occ=np.nan) for c in streak_cl]
             out, info["n_linked"] = CR.link_tracks(out)

@@ -423,13 +423,18 @@ def _pca(ys, xs, w):
     return np.array([cy, cx]), u, t.min(), t.max(), np.sqrt(max(ev[0], 0))
 
 
-def link_tracks(cl, ang=4.0, gap=15.0, gap_long=25.0, off=2.5, min_len=12.0, min_part=12.0, max_w_over_l=0.12, max_w_long=0.2):
+def link_tracks(cl, ang=4.0, gap=15.0, gap_long=25.0, off=2.5, min_len=12.0, min_part=12.0, max_w_over_l=0.12, max_w_long=0.2,
+                along=False, min_part_streak=None):
     """join straight fragments of one track (clusters with '_pix'; union-find over all qualifying pairs). With the
     longer piece L (>= min_len px) and the shorter S (>= min_part px): S's endpoints within max(off, 1.5 + 0.01 len(L))
     px of L's axis; axes parallel within ang deg when S >= min_len; nearest endpoints < gap px apart (< gap_long when
     both >= 30 px and the offset < 2 px); both straight (width / length < max_w_over_l, < max_w_long from 50 px).
     min_part = 12 px: shorter pieces (photo-electron tracks of 59.5 keV gammas, X-rays) are never joined to a track
-    (with 5 px, Am-241 EXT3 lost 4 % of its 59.5 keV events). Returns (clusters, number of links)"""
+    (with 5 px, Am-241 EXT3 lost 4 % of its 59.5 keV events). along=True: the gap is measured along L's axis (<= 0 for
+    pieces whose shared-charge footprints overlap, which the endpoint distance counts as ~20 px; A_GMX standard mode).
+    min_part_streak: shorter minimum for pieces classed 'artifact-row' / 'artifact-column' (single-row / column runs of
+    a sharp track at a shallow angle; worms and X-rays are never such pieces).
+    Returns (clusters, number of links)"""
     T = []
     for k, c in enumerate(cl):
         if "_pix" not in c or c.get("regime") == "serial": continue
@@ -437,7 +442,8 @@ def link_tracks(cl, ang=4.0, gap=15.0, gap_long=25.0, off=2.5, min_len=12.0, min
         if ys.size < 5: continue
         cen, u, t0, t1, wt = _pca(ys.astype(float), xs.astype(float), q)
         Lk = t1 - t0
-        if Lk >= min_part and wt / max(Lk, 1e-9) < (max_w_long if Lk >= 50 else max_w_over_l):
+        mp = min_part_streak if (min_part_streak and c.get("cls") in ("artifact-row", "artifact-column")) else min_part
+        if Lk >= mp and wt / max(Lk, 1e-9) < (max_w_long if Lk >= 50 else max_w_over_l):
             T.append((k, cen + t0 * u, cen + t1 * u, u, Lk))
     par = list(range(len(cl)))
 
@@ -459,7 +465,11 @@ def link_tracks(cl, ang=4.0, gap=15.0, gap_long=25.0, off=2.5, min_len=12.0, min
                 if Sh[4] >= min_len and abs(np.dot(Lg[3], Sh[3])) < np.cos(np.radians(ang)): continue
                 o = max(perp(Sh[1], Lg[1], Lg[3]), perp(Sh[2], Lg[1], Lg[3]))
                 if o >= max(off, 1.5 + 0.01 * Lg[4]): continue
-                g = min(np.linalg.norm(p - q) for p in (Lg[1], Lg[2]) for q in (Sh[1], Sh[2]))
+                if along:
+                    ts = [float((q - Lg[1]) @ Lg[3]) for q in (Sh[1], Sh[2])]
+                    g = max(0.0, min(ts) - Lg[4], -max(ts))          # L spans 0..Lg[4] along its axis from Lg[1]
+                else:
+                    g = min(np.linalg.norm(p - q) for p in (Lg[1], Lg[2]) for q in (Sh[1], Sh[2]))
                 if g >= (gap_long if (Sh[4] >= 30 and o < 2.0) else gap): continue
                 if find(Ti[0]) != find(Tj[0]):
                     par[find(Ti[0])] = find(Tj[0]); nl += 1
