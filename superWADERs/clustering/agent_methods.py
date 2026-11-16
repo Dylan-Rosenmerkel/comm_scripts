@@ -194,6 +194,14 @@ def read_noise(Q, valid):
     robust spread of all active pixels is used instead (clusters are a small fraction of the pixels)"""
     act = Q[valid]
     z = act[np.abs(act) < 0.5]
+    if z.size <= 100 and act.size >= 100:
+        # no zero-electron peak (binned images with a high dark charge per bin: 150-300 e-/bin on 5x5 L2 surface images,
+        # where the spread of all bins - Poisson + events, ~300-660 e- - sent them to 'unmodelled'): the comb coherence
+        # |<exp(2 pi i Q)>| = exp(-2 pi^2 s^2) measures the read noise at any dark charge (integers drop out); used when
+        # the comb is resolved (as fit_row_fast)
+        R = float(np.abs(np.mean(np.exp(2j * np.pi * act))))
+        if R > max(np.exp(-2 * np.pi ** 2 * 0.45 ** 2), 4.0 / np.sqrt(act.size)):
+            return float(np.sqrt(max(-np.log(R), 1e-8) / (2 * np.pi ** 2)))
     if z.size > 100:
         s0 = float(1.4826 * np.median(np.abs(z - np.median(z))))
     elif act.size >= 20:            # small images (e.g. 6 x 20 bins at 100 x 100 binning): all pixels, robustly

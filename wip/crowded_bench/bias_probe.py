@@ -143,7 +143,12 @@ def _one(task):
         bg = AM.background_map(Sb, vb) if noise < 1.0 else None
     except Exception:
         bg = None
-    cl, info = AD.adaptive_cluster(Sb, vb, bg, engine="gmx", crowded=sc["crowded"], fewe=sc["fewe"], return_pixels=True,
+    if os.environ.get("BENCH_CLUSTERER", "agmx") == "threshold":       # the production threshold clusterer (thr_cluster.py)
+        import thr_cluster as TC
+        bg_t = bg if bg is not None else AM.simple_bg(Sb, vb)
+        cl, info = TC.threshold_cluster(Sb, vb, bg_t, AM.E_PER_E)
+    else:
+      cl, info = AD.adaptive_cluster(Sb, vb, bg, engine="gmx", crowded=sc["crowded"], fewe=sc["fewe"], return_pixels=True,
                                    return_info=True, binning=(by, bx))
     cl = [c for c in cl if "_pix" in c and np.isfinite(c.get("E", np.nan)) and len(c["_pix"][0])]
     Ee = np.array([c["E"] / AM.E_PER_E for c in cl])

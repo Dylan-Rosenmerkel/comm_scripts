@@ -144,7 +144,11 @@ def one(task):
         Sb = S if by * bx == 1 else bin_(np.round(S)) + np.random.default_rng(7 + img + ext).normal(0, NOISE_E, (hb, wb))
     vb = bin_(valid.astype(float)) == by * bx
     bg = AM.background_map(np.where(vb, Sb, 0.0), vb)
-    cl, info = AD.adaptive_cluster(np.where(vb, Sb, 0.0), vb, bg, engine="gmx", crowded=os.environ.get("BENCH_CROWDED", "auto"), return_pixels=True,
+    if os.environ.get("BENCH_CLUSTERER", "agmx") == "threshold":       # the production threshold clusterer (thr_cluster.py)
+        import thr_cluster as TC
+        cl, info = TC.threshold_cluster(np.where(vb, Sb, 0.0), vb, bg, AM.E_PER_E)
+    else:
+      cl, info = AD.adaptive_cluster(np.where(vb, Sb, 0.0), vb, bg, engine="gmx", crowded=os.environ.get("BENCH_CROWDED", "auto"), return_pixels=True,
                                    return_info=True, binning=(by, bx))
     cl = [c for c in cl if "_pix" in c and np.isfinite(c.get("E", np.nan)) and len(c["_pix"][0])]
     own, best = np.zeros((hb, wb), np.int32), np.zeros((hb, wb))
