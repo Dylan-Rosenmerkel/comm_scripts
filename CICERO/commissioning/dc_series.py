@@ -1,4 +1,4 @@
-"""Dark current over a series of images (run_superWADERs --dc-series): how the dark current of every CCD changes
+"""Dark current over a series of images (run_CICERO --dc-series): how the dark current of every CCD changes
 with time, as numbers, a PDF report and an interactive page.
 
 Per image and CCD (from the native fits of the run, native_pipeline.process_image):
@@ -119,7 +119,7 @@ def write_pdf(series, sums, mods_of, path, limit=None):
     plt.rcParams["text.usetex"] = False
     with PdfPages(path) as pdf:
         fig = plt.figure(figsize=(11, 8.5))
-        fig.text(0.05, 0.95, "Dark current over the series (run_superWADERs --dc-series)", fontsize=15, weight="bold")
+        fig.text(0.05, 0.95, "Dark current over the series (run_CICERO --dc-series)", fontsize=15, weight="bold")
         rows = []
         for (acm, ext), pts in sorted(series.items()):
             s = sums[(acm, ext)]
@@ -263,7 +263,7 @@ def report(records, meta_of, mods_of, out_dir, limit=None, autoconfig_args=(), f
                  fmt(p["dc_err"], "{:.2g}"), fmt(p["lam01"]), fmt(p["rate"]), fmt(p.get("row_rate")), fmt(p.get("row_intercept")),
                  fmt(p["gain"], "{:.4f}"), fmt(p["noise"], "{:.3f}"), "yes" if p["resolved"] else "no"] for p in pts]
         method = [
-            "Every number comes from the native fits of this run (run_superWADERs: the same pedestal, dark-current fit and gain "
+            "Every number comes from the native fits of this run (run_CICERO: the same pedestal, dark-current fit and gain "
             "choice of gain_dc_split, one per image and CCD; their details are in native_summary.json and summary.txt of the run).",
             "DC fit: lambda of the dark-current fit (Gaussian electron peaks of width sigma, Poisson weights of mean lambda) on "
             "the pedestal-subtracted pixels of the active area, divided by the gain: dark charge per pixel [e-/pix], with the fit "
@@ -303,7 +303,7 @@ def report(records, meta_of, mods_of, out_dir, limit=None, autoconfig_args=(), f
     for mod, items in sorted(modules.items()):
         rid, name, ccds, tabs = PR.module_page(mod, [it[:4] for it in items])
         PR.write_page(os.path.join(d, rid + "_dc.html"), rid + "_dc", f"{name} · dark current",
-                      "dark current over the series (run_superWADERs --dc-series)", tabs, ccds, back="index.html",
+                      "dark current over the series (run_CICERO --dc-series)", tabs, ccds, back="index.html",
                       tool="dc_series", module=mod)
         for acm, ext, ccd, _, _, _ in items:
             s, pts = sums[(acm, ext)], series[(acm, ext)]

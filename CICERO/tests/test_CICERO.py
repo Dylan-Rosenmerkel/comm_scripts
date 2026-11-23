@@ -1,6 +1,6 @@
-"""superWADERs: independence from the rest of comm_scripts, and the command line.
+"""CICERO: independence from the rest of comm_scripts, and the command line.
 
-    python -m unittest discover -s superWADERs/tests -v        (from the comm_scripts folder)
+    python -m unittest discover -s CICERO/tests -v        (from the comm_scripts folder)
 """
 import glob
 import json
@@ -11,12 +11,12 @@ import tempfile
 import unittest
 
 SW = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CMD = os.path.join(SW, "run_superWADERs")
+CMD = os.path.join(SW, "run_CICERO")
 MODULE_DIRS = ("engine", "clustering", "commissioning")
 
 
 def modules():
-    """every module of superWADERs (engine/, clustering/, commissioning/; not the copied third-party scripts that
+    """every module of CICERO (engine/, clustering/, commissioning/; not the copied third-party scripts that
     need extra packages: raw_levels' viewers, lsm_defects' Image_4, compare_dcfit_vs_skips' pypdf)"""
     out = []
     for d in MODULE_DIRS:
@@ -28,8 +28,8 @@ def modules():
 
 
 class Independence(unittest.TestCase):
-    def test_imports_come_from_superwaders(self):
-        """Every superWADERs module, and everything they import from comm_scripts, is loaded from superWADERs/
+    def test_imports_come_from_CICERO(self):
+        """Every CICERO module, and everything they import from comm_scripts, is loaded from CICERO/
         (never from src/, clustering_tests/ or wip/), even with those folders first on the path."""
         cs = os.path.dirname(SW)
         code = f"""
@@ -37,7 +37,7 @@ import importlib, json, os, sys
 for d in ("src", "clustering_tests", "wip/lowdc/bayes", "wip/native_pipeline"):
     sys.path.insert(0, os.path.join({cs!r}, d))                # the copies elsewhere first: must not be used
 sys.path.insert(0, os.path.join({SW!r}, "engine"))
-import native_pipeline                                           # sets superWADERs' own path
+import native_pipeline                                           # sets CICERO's own path
 bad, failed = {{}}, {{}}
 for m in {modules()!r}:
     try:
@@ -55,10 +55,10 @@ print(json.dumps(dict(bad=bad, failed=failed)))
         res = json.loads(r.stdout.strip().splitlines()[-1])
         missing = {m: e for m, e in res["failed"].items() if "ROOT" not in e}
         self.assertEqual(missing, {}, "modules that cannot be imported")
-        self.assertEqual(res["bad"], {}, "modules loaded from outside superWADERs/")
+        self.assertEqual(res["bad"], {}, "modules loaded from outside CICERO/")
 
     def test_no_reference_to_run_wader_or_src(self):
-        """No superWADERs code starts or imports bin/run_WADERs, or reads files from src/, clustering_tests/, wip/."""
+        """No CICERO code starts or imports bin/run_WADERs, or reads files from src/, clustering_tests/, wip/."""
         for f in glob.glob(os.path.join(SW, "**", "*.py"), recursive=True) + [CMD]:
             if "/tests/" in f:
                 continue
@@ -211,7 +211,7 @@ class Campaign(unittest.TestCase):
 
 
 class Reviews(unittest.TestCase):
-    """commissioning/reviews.py: merge, import, the files the pages read; run_superWADERs --campaign DIR (no INPUT)."""
+    """commissioning/reviews.py: merge, import, the files the pages read; run_CICERO --campaign DIR (no INPUT)."""
 
     def setUp(self):
         p = os.path.join(SW, "commissioning")
@@ -349,7 +349,7 @@ class ReviewServer(unittest.TestCase):
 
 
 class ReviewHelper(unittest.TestCase):
-    """run_superWADERs starts the review helper in the background once; a second start finds it running."""
+    """run_CICERO starts the review helper in the background once; a second start finds it running."""
 
     def test_helper(self):
         import signal

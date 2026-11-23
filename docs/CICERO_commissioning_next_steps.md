@@ -1,13 +1,13 @@
-# superWADERs: commissioning additions, plan of attack (2026-11-11)
+# CICERO: commissioning additions, plan of attack (2026-11-11)
 
-From "SuperWADERs Additions" (Document1.pdf). Status of run_superWADERs today: native engine (no panaSKImg),
+From "CICERO Additions" (Document1.pdf). Status of run_CICERO today: native engine (no panaSKImg),
 panaSKImg-style plots, all pedestal methods, --tune, L0 traces (decode / check / plot / html viewer), unbinned L1
 images -> FITS per number of skips -> pipeline -> noise vs N (docs/native_pipeline.md). Everything below builds on
 `src/native_pipeline.py` (fits per CCD), `src/raw_data.py` (L0 / L1) and `src/raw_levels/` (ccd_opt_ml readers).
 
 ## Status (2026-11-11, end of day): all six items have a first version
 
-See docs/superWADERs_user_guide.md (how to use, what was checked, the data needed). Done today: report usability
+See docs/CICERO_user_guide.md (how to use, what was checked, the data needed). Done today: report usability
 (help panel, hints, plot buttons, viewer zoom / colour bar / PNG, flagged tabs, searchable index), L1 diagnostics,
 --dc-series, --defect-map (group scripts + defect log + interactive map), --sr (streak finder), binned decode_l1 in
 ccd_opt_ml (branch binned-l1, 7 tests pass; synced). Waiting for data (guide section 5) to validate thresholds.
@@ -18,7 +18,7 @@ ccd_opt_ml (branch binned-l1, 7 tests pass; synced). Waiting for data (guide sec
   unbinned files. 20x20 file of 2026-10-06: 80 of 80 rows; at N = 1 its prescan / active / overscan levels (316 / 183
   / 149 ADU on EXT1) match a DAQ avg 20x20 1-skip image of the same board (349 / 184 / 143, other time); unbinned
   round trip unchanged (2e-4 ADU). Not yet ported to ccd_opt_ml's decode_l1.
-- **3. Packet report: first version done** (`run_superWADERs PACKET.txt --packet [--module-list FILE]`,
+- **3. Packet report: first version done** (`run_CICERO PACKET.txt --packet [--module-list FILE]`,
   src/packet_report.py + src/packet_report_template.html). Inputs in any order, classified by file type (trace_,
   psd_, avg_*.fits, level-1 channel files); module names from the correlation list (lines `ACM, module[, EXT<n> or
   CCD name]`); one self-contained HTML per CCD (`packet/<module>_ACM<id>_EXT<n>_<CCD>.html`) + `packet/index.html`.

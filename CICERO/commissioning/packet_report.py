@@ -1,4 +1,4 @@
-"""Commissioning packet report (run_superWADERs --packet): one interactive HTML page per module from the files of a
+"""Commissioning packet report (run_CICERO --packet): one interactive HTML page per module from the files of a
 packet, plus an index.
 
 A packet is a list of files in any order (.txt), of these types (recognised from the file, not the order):
@@ -36,8 +36,8 @@ import sys
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SW_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # superWADERs/
-for _p in ("commissioning", "clustering", "engine"):          # superWADERs' own modules first on the path
+SW_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # CICERO/
+for _p in ("commissioning", "clustering", "engine"):          # CICERO's own modules first on the path
     _p = os.path.join(SW_DIR, _p)
     if _p in sys.path:
         sys.path.remove(_p)
@@ -478,7 +478,7 @@ def render(items, out_dir, mods_of, n_files=None, classes=None):
         path = os.path.join(pdir, rid + ".html")
         nfiles = len({f[1] for it in its for f in it[5]})
         write_page(path, rid, f"{name} · {len(its)} CCD(s)",
-                   f"commissioning packet report (run_superWADERs --packet), {nfiles} file(s)", tabs, ccd_list, back="index.html",
+                   f"commissioning packet report (run_CICERO --packet), {nfiles} file(s)", tabs, ccd_list, back="index.html",
                    tool="packet", module=module, stamp=f"{nfiles} file(s) "
                    + hashlib.sha1("\n".join(sorted({f[1] for it in its for f in it[5]})).encode()).hexdigest()[:10])
         for r in ov:

@@ -1,4 +1,4 @@
-/* superWADERs reviews: the review panel shared by the overview pages and the module pages (inlined into both).
+/* CICERO reviews: the review panel shared by the overview pages and the module pages (inlined into both).
 
 A review: {id, campaign, created, updated, reviewer, status: approved | concern | rejected | note, comment,
            target: {tool, module, ext, ccd, view, page, tab}, data: the data it refers to (a stamp),
@@ -7,7 +7,7 @@ Where reviews live: one file per campaign,
   <campaign>/reviews.js        every review (window.SW_REVIEWS), read by every page; each save merges into it
 A review shows on the page as soon as it is added (kept in this browser, localStorage, until it is in reviews.js) and
 is written into the campaign folder at once:
-  review helper                the campaign's review_server.py, started in the background by run_superWADERs: the page
+  review helper                the campaign's review_server.py, started in the background by run_CICERO: the page
                                came from it (http), or it runs for this folder (review_server_info.js gives its
                                address and token to pages opened by double-click); any browser
   Chrome / Edge, file://       without the helper: the page writes reviews.js itself (asks for the folder once)
@@ -17,7 +17,7 @@ Merging: by id, the latest 'updated' wins; a deleted review is kept as a deletio
 const SWR = (() => {
   const STATUS = { approved: ["✔", "pass", "approved"], concern: ["▲", "warn", "concern"], rejected: ["✖", "fail", "rejected"],
                    note: ["✎", "na", "note"] };
-  const FORMAT = "superWADERs-reviews-1";
+  const FORMAT = "CICERO-reviews-1";
   let cfg = { campaign: "", page: "", root: "", onChange: () => {}, same: () => true };   // same(r): r's stamp is comparable here
   let mode = (location.protocol.startsWith("http") || window.SW_SERVER) ? "probing" : "file", msg = "", busy = false;   // server | folder | file
   let mem = [];
@@ -127,7 +127,7 @@ const SWR = (() => {
     const rs = all().filter(q);
     const sel = choices && choices.length > 1 ? `<select class="swr-on">${choices.map((c, i) => `<option value="${i}">${esc(c[0])}</option>`).join("")}</select>` : "";
     const warn = rs.some(r => r.unsaved) && mode === "file" && !window.showDirectoryPicker
-      ? `<div class="swr-how">Kept on this page. It goes into the campaign folder as soon as the review helper runs on this computer: it starts with every <code>run_superWADERs</code> run (or: <code>run_superWADERs --campaign &lt;folder&gt;</code>); no need to reload.</div>` : "";
+      ? `<div class="swr-how">Kept on this page. It goes into the campaign folder as soon as the review helper runs on this computer: it starts with every <code>run_CICERO</code> run (or: <code>run_CICERO --campaign &lt;folder&gt;</code>); no need to reload.</div>` : "";
     el.innerHTML = `<div class="swr-list">${listHTML(rs, stamp)}</div>${warn}
       <div class="swr-form noprint"><div class="swr-row"><input class="swr-name" placeholder="your name" value="${esc(name())}">
       <select class="swr-status"><option value="approved">✔ approved</option><option value="concern">▲ concern</option><option value="rejected">✖ rejected</option><option value="note" selected>✎ note</option></select>${sel}</div>
@@ -184,11 +184,11 @@ const SWR = (() => {
     const n = pending().length;
     const where = mode === "server" ? `<span class="swr-ok">comments are saved into the campaign folder as you add them</span>`
       : mode === "folder" ? `<span class="swr-ok">comments are saved into the campaign folder as you add them</span>`
-      : mode === "probing" ? "" : n ? `<span class="swr-unsaved">${n} comment(s) on this page only, for now: they go into the campaign folder when the review helper runs (it starts with run_superWADERs)</span>`
+      : mode === "probing" ? "" : n ? `<span class="swr-unsaved">${n} comment(s) on this page only, for now: they go into the campaign folder when the review helper runs (it starts with run_CICERO)</span>`
       : window.showDirectoryPicker ? `<span class="swr-hint">your first comment asks for the campaign folder once; then comments are saved into it as you add them</span>`
-      : `<span class="swr-hint">comments are saved into the campaign folder while the review helper runs (it starts with run_superWADERs)</span>`;
+      : `<span class="swr-hint">comments are saved into the campaign folder while the review helper runs (it starts with run_CICERO)</span>`;
     el.innerHTML = `<span class="swr-bar-t">Reviews: ${all().length}</span> ${where}${msg ? ` <span class="swr-msgbar">· ${esc(msg)}</span>` : ""}<button class="swr-help">?</button>`;
-    el.querySelector(".swr-help").onclick = () => alert("Reviews: your name, a status (approved / concern / rejected / note) and a comment, for a CCD (overview pages) or a tab of a report (module pages). A review shows on the page at once.\n\nAll reviews of the campaign are in one file, reviews.js in the campaign folder, and every page shows them. A review is written there as soon as you add it:\n  - through the review helper, which run_superWADERs starts in the background on this computer (any browser);\n  - in Chrome / Edge also without it: the first review asks for the campaign folder once.\nOtherwise it stays on this page and is written when the helper runs (run_superWADERs --campaign <folder>).\n\nA review records the data it refers to: when newer data arrive it is marked 'data changed since'.");
+    el.querySelector(".swr-help").onclick = () => alert("Reviews: your name, a status (approved / concern / rejected / note) and a comment, for a CCD (overview pages) or a tab of a report (module pages). A review shows on the page at once.\n\nAll reviews of the campaign are in one file, reviews.js in the campaign folder, and every page shows them. A review is written there as soon as you add it:\n  - through the review helper, which run_CICERO starts in the background on this computer (any browser);\n  - in Chrome / Edge also without it: the first review asks for the campaign folder once.\nOtherwise it stays on this page and is written when the helper runs (run_CICERO --campaign <folder>).\n\nA review records the data it refers to: when newer data arrive it is marked 'data changed since'.");
   }
   function style() {
     if (document.getElementById("swr-style")) return;

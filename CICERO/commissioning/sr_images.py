@@ -1,4 +1,4 @@
-"""Serial-register (SR) images (run_superWADERs --sr): images of the horizontal register only. Every image "row" is
+"""Serial-register (SR) images (run_CICERO --sr): images of the horizontal register only. Every image "row" is
 one more readout of the register, so rows are reads in time, not positions on the CCD.
 
 Serial-register events are streaks in the serial register: readout artifacts, i.e. runs of charged pixels along a
@@ -227,7 +227,7 @@ def render(per_ccd, out_dir, mods_of, thr_sigma=4.0, min_len=3, tag=""):
     for mod, its in sorted(modules.items()):
         rid, name, ccds, tabs = PR.module_page(mod, [it[:4] for it in its])
         PR.write_page(os.path.join(d, rid + "_sr.html"), rid + "_sr", f"{name} · serial register",
-                      "serial-register images (run_superWADERs --sr)", tabs, ccds, back="index.html", tool="sr", module=mod)
+                      "serial-register images (run_CICERO --sr)", tabs, ccds, back="index.html", tool="sr", module=mod)
         for r in ov:
             if r["module"] == mod:
                 r["page"] = rid + "_sr.html"

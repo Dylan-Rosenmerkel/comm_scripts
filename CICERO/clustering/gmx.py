@@ -32,8 +32,8 @@ import numpy as np
 from scipy import ndimage, stats, sparse
 from scipy.spatial import cKDTree
 from scipy.sparse.csgraph import connected_components
-SW_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # superWADERs/
-for _p in ("commissioning", "clustering", "engine"):          # superWADERs' own modules first on the path
+SW_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # CICERO/
+for _p in ("commissioning", "clustering", "engine"):          # CICERO's own modules first on the path
     _p = os.path.join(SW_DIR, _p)
     if _p in sys.path:
         sys.path.remove(_p)

@@ -1,15 +1,15 @@
-# run_superWADERs: user guide (2026-11-12)
+# run_CICERO: user guide (2026-11-12)
 
-`run_superWADERs` is a separate program (`superWADERs/`; overview, clustering and layout in
-[superWADERs/README.md](../superWADERs/README.md)): its own engine (no panaSKImg), clustering chosen per CCD, and the
+`run_CICERO` is a separate program (`CICERO/`; overview, clustering and layout in
+[CICERO/README.md](../CICERO/README.md)): its own engine (no panaSKImg), clustering chosen per CCD, and the
 commissioning tools below. It uses nothing from `run_WADERs` or `src/`. Python: the `damic` conda environment (found
 automatically).
 
 ```
-run_superWADERs INPUT [-o PARENT] [-j N] [options]       # INPUT: one file, or a .txt list (one path per line)
-run_superWADERs -h            # all flags          run_superWADERs -h -v     # the full guide
+run_CICERO INPUT [-o PARENT] [-j N] [options]       # INPUT: one file, or a .txt list (one path per line)
+run_CICERO -h            # all flags          run_CICERO -h -v     # the full guide
 ```
-Results: `PARENT/superWADERs_<input name>/` (`--overwrite` to replace an existing one), `summary.txt` first.
+Results: `PARENT/CICERO_<input name>/` (`--overwrite` to replace an existing one), `summary.txt` first.
 
 ## 1. What it takes as input
 
@@ -38,17 +38,17 @@ Without an entry: `--module ACM=NAME`, then the data folder name (`..._DMa_DMb_D
 
 ### Fits and clusters
 ```
-run_superWADERs images.txt --gain-correction --composite --module-list modules.csv
+run_CICERO images.txt --gain-correction --composite --module-list modules.csv
 ```
 Clustering: `--clusterer auto` (default; one chain per CCD: A_GMX + Bayesian few-electron switch, A_GMX crowded mode,
-A_GMX 'unmodelled', threshold clusterer; see superWADERs/README.md), `agmx` or `threshold` (one clusterer everywhere).
+A_GMX 'unmodelled', threshold clusterer; see CICERO/README.md), `agmx` or `threshold` (one clusterer everywhere).
 `--thresholds auto|sigma0|PIX,SEED` (threshold clusterer), `--gain` / `--gain-file` (CCDs without a comb), `--tune`,
 `--no-clusters`, `--gain-*`, `--composite`: `-h`. Every CCD is processed (flooded CCDs go to the threshold clusterer).
 Per CCD, `summary.txt` lists the chain and why; `characterisation/<image>.json` has the full record.
 
 ### L1 images: images with N skips (`--l1-skips`)
 ```
-run_superWADERs l1.txt --l1-skips 1,10,100,1000 [--l1-skip-first 20] [--no-clusters]
+run_CICERO l1.txt --l1-skips 1,10,100,1000 [--l1-skip-first 20] [--no-clusters]
 ```
 `l1.txt` lists the four `.RJ45ADCDATA0..3` files (the `.meta` must be next to them). Output `L1/`:
 - `avg_img_<rows>x<cols>x<N>_..._L1_....fits`: one image per N (mean of skips K..K+N-1), DAQ header from the .meta;
@@ -61,14 +61,14 @@ run_superWADERs l1.txt --l1-skips 1,10,100,1000 [--l1-skip-first 20] [--no-clust
 
 ### L0 traces
 ```
-run_superWADERs traces.txt [--l0-no-html]
+run_CICERO traces.txt [--l0-no-html]
 ```
 `L0/<trace>/overview.png`, `viewer.html` (interactive, whole trace), `summary.json`; the summary lists for each trace:
 samples, pixels x skips, skip cycle, inline vs raw sums (agree = decoder and firmware consistent), quality.
 
 ### Commissioning packet (`--packet`)
 ```
-run_superWADERs packet.txt --packet --module-list modules.csv
+run_CICERO packet.txt --packet --module-list modules.csv
 ```
 `packet.txt`: the packet's files in any order (traces, PSD traces, images, L1 files). Output `packet/`:
 `index.html` (one line per module: ACM, extensions, CCD names, flags; filter box, click a column title to sort) and
@@ -86,7 +86,7 @@ one report per module `<module>_ACM<id>.html` with check boxes for its CCDs (see
 
 ### Dark current over a series (`--dc-series`)
 ```
-run_superWADERs series.txt --dc-series [--dc-limit 0.01] [--no-clusters] --module-list modules.csv
+run_CICERO series.txt --dc-series [--dc-limit 0.01] [--no-clusters] --module-list modules.csv
 ```
 The usual run, plus `dc_series/`: `dc_report.pdf` (summary table; one page per module: rates of its CCDs vs time;
 one page per CCD: dark charge per image (fit and 0e-/1e- counts), rate vs time with the settling fit, dark charge per
@@ -99,7 +99,7 @@ Rates in e-/pix/day: DC / (exposure + readout/2); the row fit gives the rate fro
 
 ### Defect maps (`--defect-map`)
 ```
-run_superWADERs images.txt --defect-map [--defect-sigma 5] [--no-clusters] --module-list modules.csv
+run_CICERO images.txt --defect-map [--defect-sigma 5] [--no-clusters] --module-list modules.csv
 ```
 Per module and image size: all images of one ACM with the same rows x columns and binning form one group, whatever their type or number of skips; `defects/<module>_ACM<id>_<rows>x<cols>_<binning>/`:
 - the group's `Image_4` (D. Venegas-Vargas, copy in src/lsm_defects/): composite median of all images (PNG + log
@@ -123,7 +123,7 @@ Per module and image size: all images of one ACM with the same rows x columns an
 
 ### Serial-register images (`--sr`)
 ```
-run_superWADERs sr_images.txt --sr [--sr-threshold 4] [--sr-min-length 3] [--no-clusters]
+run_CICERO sr_images.txt --sr [--sr-threshold 4] [--sr-min-length 3] [--no-clusters]
 ```
 Streaks = serial-register events (readout artifacts): runs of >= `--sr-min-length` pixels above `--sr-threshold` x
 noise along one read (row), confined to it. `sr/`: `sr_streaks.csv` (one line per streak), `sr_summary.csv` (per
@@ -143,14 +143,14 @@ Commissioning data arrive packet by packet. Give every packet (or list) the same
 - **`DIR/index.html` combines every tool per CCD.**
 - **Without `--campaign`, a run stands alone:** a fresh folder with only its inputs and tools.
 
-Details, the verdicts and the criteria file are in [superWADERs/README.md](../superWADERs/README.md), section
+Details, the verdicts and the criteria file are in [CICERO/README.md](../CICERO/README.md), section
 "Commissioning campaigns".
 
 ```
-run_superWADERs packet_DM01.txt --packet --campaign ~/comm/LSM2026 --module-list modules.csv
-run_superWADERs packet_DM02.txt --packet --campaign ~/comm/LSM2026 --module-list modules.csv
-run_superWADERs series.txt --dc-series --campaign ~/comm/LSM2026
-run_superWADERs packet_DM01_retest.txt --packet --dataset retest --campaign ~/comm/LSM2026   # DM01 measured again
+run_CICERO packet_DM01.txt --packet --campaign ~/comm/LSM2026 --module-list modules.csv
+run_CICERO packet_DM02.txt --packet --campaign ~/comm/LSM2026 --module-list modules.csv
+run_CICERO series.txt --dc-series --campaign ~/comm/LSM2026
+run_CICERO packet_DM01_retest.txt --packet --dataset retest --campaign ~/comm/LSM2026   # DM01 measured again
 ```
 
 **Several data sets per module** (`--dataset NAME`: a second packet, a second cooldown's dark-current run, ...): each
@@ -171,11 +171,11 @@ dark-current rate, plus each CCD's review status.
 **Reviews.** Every overview (per CCD) and every module report (per tab, for the whole module or one CCD) has a review
 box: your name, a status (approved / concern / rejected / note) and a comment. Click **Add review**: the review
 shows at once and is saved into the campaign folder (`DIR/reviews.js`) right away, through the review helper that
-`run_superWADERs` starts in the background (any browser, also pages opened by double-click; on another computer
-`run_superWADERs --campaign DIR` without input starts it), or in Chrome / Edge by the page itself (it asks for the
+`run_CICERO` starts in the background (any browser, also pages opened by double-click; on another computer
+`run_CICERO --campaign DIR` without input starts it), or in Chrome / Edge by the page itself (it asks for the
 folder once). Otherwise the review stays on the page and is saved by itself as soon as the helper runs. Saved
 reviews show on every page of the campaign and are listed in `DIR/reviews.csv` and `DIR/reviews.txt`. A review keeps the data and numbers it was written on; when newer data
-arrive it is marked "data changed since". Details: [superWADERs/README.md](../superWADERs/README.md), "Reviews".
+arrive it is marked "data changed since". Details: [CICERO/README.md](../CICERO/README.md), "Reviews".
 
 ## 3. Using the HTML pages
 
@@ -242,13 +242,13 @@ Every page works offline (no network) in Chrome, Safari or Firefox; open it by d
 
 | what | file |
 |---|---|
-| command | `superWADERs/run_superWADERs` (`bin/run_superWADERs` starts it) |
-| engine | `superWADERs/engine/`: `native_pipeline.py`, `characterise.py`, `native_kernels.py`, `native_rootio.py`, `native_plots.py`, and its own autoconfig / gain modules |
-| clustering | `superWADERs/clustering/` (A_GMX, Bayesian few-electron finder) |
-| L0 / L1 | `superWADERs/commissioning/raw_data.py`; readers copied from ccd_opt_ml in `raw_levels/` (`utils/sync_from_ccd_opt_ml.py [--check]`) |
-| packet report and the module page template | `superWADERs/commissioning/packet_report.py`, `packet_report_template.html` |
-| campaign, verdicts, overview pages | `superWADERs/commissioning/campaign.py`, `overview_template.html`, `criteria_default.json`, `worker.py`, `ccd_metrics.py` |
-| DC series | `superWADERs/commissioning/dc_series.py` |
-| defects | `superWADERs/commissioning/defects.py`; group scripts copied in `lsm_defects/` (`utils/sync_from_lsm_analysis.py [--check]`) |
-| SR images | `superWADERs/commissioning/sr_images.py` |
-| docs | this guide; `superWADERs/README.md`; `docs/native_pipeline.md`, `docs/native_pipeline_validation.md` (engine validation), `docs/superWADERs_commissioning_next_steps.md` |
+| command | `CICERO/run_CICERO` (`bin/run_CICERO` starts it) |
+| engine | `CICERO/engine/`: `native_pipeline.py`, `characterise.py`, `native_kernels.py`, `native_rootio.py`, `native_plots.py`, and its own autoconfig / gain modules |
+| clustering | `CICERO/clustering/` (A_GMX, Bayesian few-electron finder) |
+| L0 / L1 | `CICERO/commissioning/raw_data.py`; readers copied from ccd_opt_ml in `raw_levels/` (`utils/sync_from_ccd_opt_ml.py [--check]`) |
+| packet report and the module page template | `CICERO/commissioning/packet_report.py`, `packet_report_template.html` |
+| campaign, verdicts, overview pages | `CICERO/commissioning/campaign.py`, `overview_template.html`, `criteria_default.json`, `worker.py`, `ccd_metrics.py` |
+| DC series | `CICERO/commissioning/dc_series.py` |
+| defects | `CICERO/commissioning/defects.py`; group scripts copied in `lsm_defects/` (`utils/sync_from_lsm_analysis.py [--check]`) |
+| SR images | `CICERO/commissioning/sr_images.py` |
+| docs | this guide; `CICERO/README.md`; `docs/native_pipeline.md`, `docs/native_pipeline_validation.md` (engine validation), `docs/CICERO_commissioning_next_steps.md` |

@@ -2,10 +2,10 @@
 """Native skipper-CCD processing: raw (skip-averaged) image -> cluster files in panaSKImg format, without panaSKImg
 or pysimdamicm.
 
-The engine of run_superWADERs (superWADERs/, independent of bin/run_WADERs and src/: every module it uses is in
-superWADERs/engine, clustering, commissioning). Started from src/native_pipeline.py (commit be14496) and the any-image
+The engine of run_CICERO (CICERO/, independent of bin/run_WADERs and src/: every module it uses is in
+CICERO/engine, clustering, commissioning). Started from src/native_pipeline.py (commit be14496) and the any-image
 front end (wip/native_pipeline, 7980f24): clusterer 'auto' (characterise.py: data form, geometry, artefacts, gain
-source, noise / dark charge / counting, crowding -> one clustering chain per CCD; the default of run_superWADERs),
+source, noise / dark charge / counting, crowding -> one clustering chain per CCD; the default of run_CICERO),
 --gain / --gain-file for CCDs without a comb, raw skip files compressed first, A_GMX's Bayesian few-electron switch
 (fewe, run-pooled dark charge), clustersRec branches finder / p_event / N_post / sigma_post, TNamed
 'characterisation'.
@@ -28,7 +28,7 @@ Per image the file is read ONCE and every CCD (FITS extension) is processed in t
   4. calibrate  e- = (pixel - pedestal) / gain
   5. g(n)       optional (curve=): ADU -> electrons with gain_vs_charge's A^-1 (electrons_with_anchor), energies
                 with epsilon(T) (pair_energy.py) as gain_vs_charge.apply / GainNonlinearityProcess
-  6. clusters   'auto'     : (run_superWADERs' default) one chain per CCD, chosen by characterise.decide_ccd on the
+  6. clusters   'auto'     : (run_CICERO' default) one chain per CCD, chosen by characterise.decide_ccd on the
                              calibrated image: Bayesian few-electron switch inside A_GMX (sparse, low dark charge),
                              A_GMX, A_GMX crowded mode (core fill >= 0.10), A_GMX 'unmodelled' (hysteresis; read
                              noise >= 1 e- or a structured background), threshold clusterer (flooded / not counting)
@@ -74,9 +74,9 @@ import numpy as np
 from scipy import ndimage, optimize
 from scipy.special import gammaln
 
-HERE = os.path.dirname(os.path.abspath(__file__))              # superWADERs/engine
-SW_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # superWADERs/
-for _p in ("commissioning", "clustering", "engine"):          # superWADERs' own modules first on the path
+HERE = os.path.dirname(os.path.abspath(__file__))              # CICERO/engine
+SW_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # CICERO/
+for _p in ("commissioning", "clustering", "engine"):          # CICERO's own modules first on the path
     _p = os.path.join(SW_DIR, _p)
     if _p in sys.path:
         sys.path.remove(_p)
@@ -88,7 +88,7 @@ import naming                         # noqa: E402
 from pair_energy import PANASKIMG_EV, pair_energy_eV   # noqa: E402
 import native_kernels as K            # noqa: E402
 
-VERSION = "superWADERs-0.2 (2026-11-12)"
+VERSION = "CICERO-0.3 (2026-11-23)"
 EIGHT = np.ones((3, 3), bool)
 SQ2PI = math.sqrt(2 * math.pi)
 FIT_PARAMS = ["norm", "mu", "sigma", "lam", "gain"]     # order of fit_quality.PARAMS / panaSKImg's fit function
@@ -1282,7 +1282,7 @@ def process_image(path, out_dir, curve=None, clusterer="threshold", thresholds="
                 E_fin = q * eV / 1000.0
                 E_props = E_seed = E_fin
                 named = {"agmx_config": json.dumps({ext: dict(
-                    method="A_GMX (superWADERs clustering/adaptive.py engine 'gmx')",
+                    method="A_GMX (CICERO clustering/adaptive.py engine 'gmx')",
                     gain_corrected=model is not None, gain_anchor=anchor if model is not None else None,
                     parameters=dict(crowded=crowded_eff, crowded_shapes=crowded_shapes, fewe=fewe_eff,
                                     fewe_pooled=pool is not None), cls_codes=AGMX_CLS, finder_codes=FINDER,
@@ -1333,7 +1333,7 @@ def process_image(path, out_dir, curve=None, clusterer="threshold", thresholds="
 
 def curve_file(curve, stem):
     """the g(n) file for an image: curve is a gain_vs_charge JSON (used for every image) or a gain_vs_charge/ folder
-    (run_superWADERs --gain-correction), where 'image_<stem>' (per-image curve) is preferred if curve ends with
+    (run_CICERO --gain-correction), where 'image_<stem>' (per-image curve) is preferred if curve ends with
     ':per-image', then the curve of the image's gain period ('module_<ACM id>_period<k>', the one whose image list holds
     this image), else 'module_<ACM id>' (pooled curve)"""
     import glob

@@ -57,9 +57,9 @@ import warnings
 
 import numpy as np
 
-HERE = os.path.dirname(os.path.abspath(__file__))              # superWADERs/engine
-SW_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # superWADERs/
-for _p in ("commissioning", "clustering", "engine"):          # superWADERs' own modules first on the path
+HERE = os.path.dirname(os.path.abspath(__file__))              # CICERO/engine
+SW_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # CICERO/
+for _p in ("commissioning", "clustering", "engine"):          # CICERO's own modules first on the path
     _p = os.path.join(SW_DIR, _p)
     if _p in sys.path:
         sys.path.remove(_p)

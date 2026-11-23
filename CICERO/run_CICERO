@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""run_superWADERs: skipper-CCD images (and raw DAQ files) -> fits, clusters, cluster files and commissioning reports,
-with superWADERs' own engine. No panaSKImg, and nothing from bin/run_WADERs or comm_scripts/src: every module it uses
+"""run_CICERO: skipper-CCD images (and raw DAQ files) -> fits, clusters, cluster files and commissioning reports,
+with CICERO's own engine. No panaSKImg, and nothing from bin/run_WADERs or comm_scripts/src: every module it uses
 is in this folder (engine/, clustering/, commissioning/).
 
-    run_superWADERs INPUT [-o PARENT] [-j N] [options]      INPUT: an image, a raw DAQ file, or a .txt list of them
-    run_superWADERs INPUT --campaign DIR [options]          add INPUT to the campaign DIR (data arriving in packets)
-    run_superWADERs --campaign DIR                          no INPUT: open the campaign, with the review helper
-    run_superWADERs -h            the flags;      run_superWADERs -h -v      the full guide
+    run_CICERO INPUT [-o PARENT] [-j N] [options]      INPUT: an image, a raw DAQ file, or a .txt list of them
+    run_CICERO INPUT --campaign DIR [options]          add INPUT to the campaign DIR (data arriving in packets)
+    run_CICERO --campaign DIR                          no INPUT: open the campaign, with the review helper
+    run_CICERO -h            the flags;      run_CICERO -h -v      the full guide
 
-Every run is a campaign (commissioning/campaign.py): a new folder (superWADERs_<run name>/), or with --campaign DIR a
+Every run is a campaign (commissioning/campaign.py): a new folder (CICERO_<run name>/), or with --campaign DIR a
 folder that grows packet by packet. An input already in the campaign (same path, size and modification time) is not
 processed again; each run processes the new inputs, keeps their results (records/), rebuilds the pages of the tools
 it was given from everything the campaign holds (the other tools keep theirs; --refresh-all rebuilds all), and the
@@ -67,9 +67,9 @@ import sys
 import time
 from dataclasses import dataclass, field
 
-PROG = "run_superWADERs"
+PROG = "run_CICERO"
 SCRIPT_PATH = os.path.realpath(__file__)
-SW_DIR = os.path.dirname(SCRIPT_PATH)                                  # superWADERs/
+SW_DIR = os.path.dirname(SCRIPT_PATH)                                  # CICERO/
 for _d in ("commissioning", "clustering", "engine"):                   # engine first on the path
     _d = os.path.join(SW_DIR, _d)
     if _d in sys.path:
@@ -78,8 +78,8 @@ for _d in ("commissioning", "clustering", "engine"):                   # engine 
 from naming import acm_id, image_stem  # noqa: E402  (standard library only)
 
 NEEDED_MODULES = ("numpy", "astropy", "scipy", "numba", "skimage", "matplotlib", "ROOT")
-INSIDE_FLAG = "RUN_SUPERWADERS_IN_ENV"
-OUT_PREFIX = "superWADERs_"
+INSIDE_FLAG = "RUN_CICERO_IN_ENV"
+OUT_PREFIX = "CICERO_"
 IMAGE_EXT = (".fz", ".fits", ".fits.bz2", ".fits.gz")
 RAW_INPUT = re.compile(r"\.RJ45ADCDATA\d$")
 RESERVED_AUTOCONFIG = ("--peaks", "--per-ext", "--tune", "-o", "--output", "--gain", "--cluster-threshold-e")
@@ -121,7 +121,7 @@ def _env_has(env, module):
 
 
 def find_env(conda, name):
-    """Prefix of the environment to use: --env / $SUPERWADERS_ENV; else one named 'damic'; else the first environment
+    """Prefix of the environment to use: --env / $CICERO_ENV (or the old $SUPERWADERS_ENV); else one named 'damic'; else the first environment
     whose site-packages hold numba and ROOT."""
     try:
         out = subprocess.run([conda, "env", "list", "--json"], capture_output=True, text=True, check=True).stdout
@@ -235,16 +235,16 @@ def module_resolver(run):
 # =============================================================================
 SHORT_DESCRIPTION = """\
 Skipper-CCD images (and raw DAQ files) -> fits, clusters (one clustering chain per CCD, chosen from what the image
-is), cluster ROOT files in panaSKImg's format, commissioning reports; all in superWADERs_<run name>/."""
+is), cluster ROOT files in panaSKImg's format, commissioning reports; all in CICERO_<run name>/."""
 
 SHORT_EPILOG = """\
 examples:
-  run_superWADERs images.txt                          fits and clusters (clusterer auto)
-  run_superWADERs images.txt --gain-correction --composite --module-list modules.csv
-  run_superWADERs packet.txt --packet --module-list modules.csv
-  run_superWADERs series.txt --dc-series --no-clusters
+  run_CICERO images.txt                          fits and clusters (clusterer auto)
+  run_CICERO images.txt --gain-correction --composite --module-list modules.csv
+  run_CICERO packet.txt --packet --module-list modules.csv
+  run_CICERO series.txt --dc-series --no-clusters
 
-run_superWADERs -h -v   full guide: inputs, outputs, the clustering chains, the commissioning tools"""
+run_CICERO -h -v   full guide: inputs, outputs, the clustering chains, the commissioning tools"""
 
 HELP_EPILOG = """\
 inputs (one file or a .txt list, one path per line, relative to the .txt; # comments; any order):
@@ -254,7 +254,7 @@ inputs (one file or a .txt list, one path per line, relative to the .txt; # comm
   *_L1_*.RJ45ADCDATA0..3 (+ .meta)       level-1 images, binned or not: one FITS image per --l1-skips N -> L1/,
                                          then through the pipeline; noise vs N, fits side by side, diagnostics
 
-output (superWADERs_<run name>/, <run name> = image or .txt name; or the --campaign folder):
+output (CICERO_<run name>/, <run name> = image or .txt name; or the --campaign folder):
   index.html                   open first: the campaign overview (every tool's verdict per module and CCD)
   images/index.html            fits and CCD quality: one view per image setting, history over the images
   packet/, dc_series/, defects/, sr/   each tool's overview (index.html) and its module pages
@@ -315,8 +315,8 @@ commissioning tools:
   Add --no-clusters when no cluster files are needed (much faster). The pages work offline (double-click).
 
 campaign (--campaign DIR): give each new packet (or list) with the same --campaign DIR and the tools it is for:
-    run_superWADERs packet_DM01.txt --packet --campaign ~/comm/LSM2026 --module-list modules.csv
-    run_superWADERs series_day3.txt --dc-series --campaign ~/comm/LSM2026
+    run_CICERO packet_DM01.txt --packet --campaign ~/comm/LSM2026 --module-list modules.csv
+    run_CICERO series_day3.txt --dc-series --campaign ~/comm/LSM2026
   Only new or changed inputs are processed; an input given again with another tool gets only that tool's part
   (e.g. its packet viewer or serial-register streaks). The pages of the tools of this run (dark-current series,
   defect groups with a new image, serial-register, packet pages, the images overview when images were processed) are
@@ -328,16 +328,16 @@ campaign (--campaign DIR): give each new packet (or list) with the same --campai
 reviews: every page has a review box (overviews: per CCD; module reports: per tab, for the whole module or one
   CCD): a name, a status (approved / concern / rejected / note) and a comment. A review shows on the page at once and
   is saved into DIR/reviews.js, which every page shows, through the review helper: a small local web server for the
-  folder that run_superWADERs starts in the background after every run (it stops after 12 h without use; on another
-  computer: run_superWADERs --campaign DIR, no INPUT). Pages opened by double-click save through it too, in any
+  folder that run_CICERO starts in the background after every run (it stops after 12 h without use; on another
+  computer: run_CICERO --campaign DIR, no INPUT). Pages opened by double-click save through it too, in any
   browser. In Chrome / Edge a page can also save without it (it asks for the folder once). Otherwise a review stays
   on the page and is saved as soon as the helper runs. A review records the data it was about: when newer data
   arrive the pages mark it 'data changed since'.
 
 data sets (--dataset NAME): a module measured more than once (a second packet after a repair, a second cooldown's
   dark-current run, ...): give each its name, e.g.
-    run_superWADERs packet_DM01_retest.txt --packet --dataset retest --campaign ~/comm/LSM2026
-    run_superWADERs cooldown2.txt --dc-series --dataset cooldown2 --campaign ~/comm/LSM2026
+    run_CICERO packet_DM01_retest.txt --packet --dataset retest --campaign ~/comm/LSM2026
+    run_CICERO cooldown2.txt --dc-series --dataset cooldown2 --campaign ~/comm/LSM2026
   Each data set of a module gets its own report (<module>@<data set>_...html) and its own view in the tool's overview
   (newest first); the campaign overview shows the newest data set of every CCD and links to all of them. Inputs
   without --dataset form the default data set (and keep the data set they were given before).
@@ -348,7 +348,7 @@ module names (--module-list FILE): one line per ACM (or per CCD), comma / tab / 
   103, PA03, EXT2
 
 environment: numpy, astropy, scipy, numba, scikit-image, matplotlib, ROOT (the damic conda environment, found
-  automatically; --env NAME or $SUPERWADERS_ENV). No panaSKImg / pysimdamicm.
+  automatically; --env NAME or $CICERO_ENV). No panaSKImg / pysimdamicm.
 """
 
 
@@ -361,10 +361,10 @@ def build_parser(full=False):
                     help="an image, a raw DAQ file or a .txt list (one path per line); without it (and with --campaign "
                          "DIR): only take in the reviews")
     ap.add_argument("-o", "--parent", metavar="DIR", default=".",
-                    help="folder in which superWADERs_<run name> is made (default: current folder)")
+                    help="folder in which CICERO_<run name> is made (default: current folder)")
     ap.add_argument("-j", "--jobs", metavar="N", type=int, default=min(2, os.cpu_count() or 1),
                     help="images processed at the same time, one process each (default 2)")
-    ap.add_argument("--overwrite", action="store_true", help="replace an existing superWADERs_<run name> folder")
+    ap.add_argument("--overwrite", action="store_true", help="replace an existing CICERO_<run name> folder")
     g = ap.add_argument_group("campaign (data arriving packet by packet)")
     g.add_argument("--campaign", metavar="DIR", default=None,
                    help="add this input to the campaign folder DIR (made on first use): only inputs not yet in it (or "
@@ -454,8 +454,8 @@ def build_parser(full=False):
     g.add_argument("--sr", action="store_true", help="serial-register images: streaks along a read (sr/)")
     g.add_argument("--sr-threshold", metavar="N", type=float, default=4.0, help="with --sr: N x noise (default 4)")
     g.add_argument("--sr-min-length", metavar="PIX", type=int, default=3, help="with --sr: shortest streak (default 3)")
-    ap.add_argument("--env", metavar="NAME", default=os.environ.get("SUPERWADERS_ENV"),
-                    help="conda environment (default $SUPERWADERS_ENV, else 'damic', else one with numba and ROOT)")
+    ap.add_argument("--env", metavar="NAME", default=os.environ.get("CICERO_ENV") or os.environ.get("SUPERWADERS_ENV"),
+                    help="conda environment (default $CICERO_ENV, else 'damic', else one with numba and ROOT)")
     ap.add_argument("-v", "--verbose", action="store_true", help="with -h: the full guide")
     return ap
 
@@ -494,7 +494,7 @@ class Run:
 
 
 def reviews_only(args):
-    """run_superWADERs --campaign DIR without INPUT: the reviews up to date, the review helper running, the
+    """run_CICERO --campaign DIR without INPUT: the reviews up to date, the review helper running, the
     campaign open in the browser (standard library only)."""
     if not args.campaign:
         die("give an INPUT (or --campaign DIR without INPUT to take in the reviews written on its pages)")

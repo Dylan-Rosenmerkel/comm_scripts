@@ -1,4 +1,4 @@
-"""Continuous-readout stitching (run_superWADERs --stitch): consecutive images of one readout joined row by row into
+"""Continuous-readout stitching (run_CICERO --stitch): consecutive images of one readout joined row by row into
 one image per group, so an event read across an image boundary is one cluster and only the ends of the whole readout
 lose edge rows.
 
@@ -107,7 +107,7 @@ def write_stitched(groups, out_dir, log=print):
         with fits.open(g[-1]) as h:
             h0["DATEEND"] = h[0].header.get("DATEEND", h0.get("DATEEND"))
         h0["NROW"] = row0
-        h0["STITCHN"] = (len(g), "images joined row by row (run_superWADERs --stitch)")
+        h0["STITCHN"] = (len(g), "images joined row by row (run_CICERO --stitch)")
         name = stitched_name(g[0], len(g))
         path = os.path.join(out_dir, name + ".fits")
         hdus = [fits.PrimaryHDU(header=h0)] + [fits.ImageHDU(np.vstack(s), header=hh) for s, hh in zip(stacks, hx)]

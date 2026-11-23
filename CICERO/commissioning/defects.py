@@ -1,4 +1,4 @@
-"""Defect maps (run_superWADERs --defect-map): median composites and column defects with the group's Image_4 script,
+"""Defect maps (run_CICERO --defect-map): median composites and column defects with the group's Image_4 script,
 plus a defect log and an interactive defect map.
 
 The group's Image_4 (D. Venegas-Vargas, LSM_Module_Testing_Analysis/src; copy in lsm_defects/,
@@ -44,8 +44,8 @@ from pathlib import Path
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SW_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # superWADERs/
-for _p in ("commissioning", "clustering", "engine"):          # superWADERs' own modules first on the path
+SW_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # CICERO/
+for _p in ("commissioning", "clustering", "engine"):          # CICERO's own modules first on the path
     _p = os.path.join(SW_DIR, _p)
     if _p in sys.path:
         sys.path.remove(_p)
@@ -416,7 +416,7 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0, redo=
                         "value_adu", "seen_in"])
             w.writerows(csv_rows)
         size = PR.write_page(os.path.join(d, "defect_map.html"), name, f"{module} · ACM {acm} · {itype} · defect map",
-                             f"defect map (run_superWADERs --defect-map), {len(files)} image(s)", tabs, ccd_list,
+                             f"defect map (run_CICERO --defect-map), {len(files)} image(s)", tabs, ccd_list,
                              back="../index.html", tool="defects", module=module)
         nums = [[f"EXT{c + 1}", ", ".join(f"{t}: {sum(1 for r in csv_rows if r[2] == c + 1 and r[5] == t)}" for t, _ in TYPES)] for c in range(nch)]
         import json

@@ -1,16 +1,16 @@
-# superWADERs clustering chain: plan for binned images, crowded images and the remaining gaps (2026-11-13)
+# CICERO clustering chain: plan for binned images, crowded images and the remaining gaps (2026-11-13)
 
 Status: plan, nothing below is implemented. Priority order: **0 → 1 (binned) → 2 (crowded) → 3 (small items) → 4
 (larger gaps)**. Each step ends with a validation on real data and, where truth is needed, on injections into real
 images; nothing becomes the default before that.
 
-Code: `superWADERs/` (engine, clustering, commissioning). Validation harness: `wip/superWADERs_validation/` (runs
-every data type on this machine through `run_superWADERs` and compares with earlier results), A_GMX benchmarks in
+Code: `CICERO/` (engine, clustering, commissioning). Validation harness: `wip/CICERO_validation/` (runs
+every data type on this machine through `run_CICERO` and compares with earlier results), A_GMX benchmarks in
 `wip/lowdc/` and `wip/agmx_crowded/`.
 
 ## 0. First: the validation now running
 
-`wip/superWADERs_validation/run_validation.py` (started 2026-11-13):
+`wip/CICERO_validation/run_validation.py` (started 2026-11-13):
 - the 16 suite cases (DM09, Fe-55 Image_8 DM07/27/28, PD06 A/B/C, AMtest, L2 ACM 103 and its strips, injected
   few-electron events, binned, raw skips, single skip, std image) through the program itself, against the earlier
   results of the wip engine;
@@ -26,9 +26,9 @@ Whatever it finds is fixed before the steps below.
   agmx`, also after the changes below.
 - **Fixed:** the summary crashed on CCDs whose fit has no error (flooded / unresolved, gain from the prior): AMtest and
   binned runs ended with an error after all processing (`fit_quality.quality`, `gain_dc_split.held_quality`, in
-  `superWADERs/` and `src/`).
+  `CICERO/` and `src/`).
 - **Fixed:** `gmx.detection_bg` on images with < 61 rows (np.convolve 'same' returns 61 values): window sums from the
-  full convolution; identical for >= 61 rows (checked), no crash on strips. In `superWADERs/` and `clustering_tests/`.
+  full convolution; identical for >= 61 rows (checked), no crash on strips. In `CICERO/` and `clustering_tests/`.
 - **Halo test** (switch, 90 images, Fe-55 / muons): efficiency of 2-10 e- events 10-20 px from a deposit 0.86-0.89
   with the 15 px halo, 0.91-0.96 with 3-10 px; no fakes and big deposits unchanged with every halo. **HALO 15 -> 5 px.**
 - **Boundary test** (90 images, checkerboard of read noise): the current switch loses 26 of 2811 events A_GMX finds
@@ -136,7 +136,7 @@ now at or above the threshold method on every binning. DM09 identical.
 axis, anisotropic for 1x100 / 100x1), the dark charge per bin, block sizes and halo in bins; strips of a few rows or
 columns as 1-D.
 
-**Stitching implemented (2026-11-13): `run_superWADERs --stitch time|order`** (`superWADERs/engine/stitch.py`):
+**Stitching implemented (2026-11-13): `run_CICERO --stitch time|order`** (`CICERO/engine/stitch.py`):
 consecutive images of one setting joined row by row (time: next DATEINI within 10 s + 5 % of a readout of the previous
 DATEEND; order: the list order), vertical overscan left out, the stitched file named `..._stitch<N>_<ACM>_...` with a
 `.stitch.json` of every member's first row (member_of()). Benchmark (wip/binned/results/ceiling_stitched.md), without

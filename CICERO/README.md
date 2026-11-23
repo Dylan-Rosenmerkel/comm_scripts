@@ -1,18 +1,21 @@
-# superWADERs
+# CICERO
 
-`run_superWADERs` is a separate program from `run_WADERs`. It has its own engine (pedestal, fits, clustering,
+**CICERO**: CCD Image Calibration, Event Recognition, and Optimization. Adaptive software for CCD image
+calibration and energy-event analysis (formerly superWADERs; `run_superWADERs` still works and forwards to `run_CICERO`).
+
+`run_CICERO` is a separate program from `run_WADERs`. It has its own engine (pedestal, fits, clustering,
 panaSKImg-format cluster files) and its own commissioning tools. It needs no panaSKImg. It does not use
 `bin/run_WADERs`, `src/`, `clustering_tests/` or `wip/`: every module it runs is in this folder
-(`tests/test_superwaders.py` checks this).
+(`tests/test_CICERO.py` checks this).
 
 ```bash
-run_superWADERs INPUT [-o PARENT] [-j N] [options]   # INPUT: an image, a raw DAQ file, or a .txt list of them
-run_superWADERs -h                                   # the flags;   -h -v: the full guide
+run_CICERO INPUT [-o PARENT] [-j N] [options]   # INPUT: an image, a raw DAQ file, or a .txt list of them
+run_CICERO -h                                   # the flags;   -h -v: the full guide
 ```
 
-`bin/run_superWADERs` (on your PATH with the rest of `comm_scripts/bin`) starts `superWADERs/run_superWADERs`. Results
-go to `PARENT/superWADERs_<run name>/`; read `summary.txt` first. Python: the `damic` conda environment (numpy,
-astropy, scipy, numba, scikit-image, matplotlib, ROOT), found automatically (`--env NAME` or `$SUPERWADERS_ENV`).
+`bin/run_CICERO` (on your PATH with the rest of `comm_scripts/bin`) starts `CICERO/run_CICERO`. Results
+go to `PARENT/CICERO_<run name>/`; read `summary.txt` first. Python: the `damic` conda environment (numpy,
+astropy, scipy, numba, scikit-image, matplotlib, ROOT), found automatically (`--env NAME` or `$CICERO_ENV`).
 
 ## Commissioning campaigns: packet by packet (`--campaign DIR`)
 
@@ -24,11 +27,11 @@ Data arrive in packets, so a campaign folder grows run by run. Each run:
 - rebuilds `index.html`, which combines every tool per CCD.
 
 ```bash
-run_superWADERs packet_DM01.txt --packet --campaign ~/comm/LSM2026 --module-list modules.csv   # first packet
-run_superWADERs packet_DM02.txt --packet --campaign ~/comm/LSM2026 --module-list modules.csv   # adds DM02 only
-run_superWADERs series_day3.txt --dc-series --campaign ~/comm/LSM2026                         # dark current: new images only
-run_superWADERs images.txt --defect-map --campaign ~/comm/LSM2026      # only defect groups with a new image are redone
-run_superWADERs any.txt --campaign ~/comm/LSM2026 --criteria limits.json   # new limits: every page re-judged, no fits
+run_CICERO packet_DM01.txt --packet --campaign ~/comm/LSM2026 --module-list modules.csv   # first packet
+run_CICERO packet_DM02.txt --packet --campaign ~/comm/LSM2026 --module-list modules.csv   # adds DM02 only
+run_CICERO series_day3.txt --dc-series --campaign ~/comm/LSM2026                         # dark current: new images only
+run_CICERO images.txt --defect-map --campaign ~/comm/LSM2026      # only defect groups with a new image are redone
+run_CICERO any.txt --campaign ~/comm/LSM2026 --criteria limits.json   # new limits: every page re-judged, no fits
 ```
 
 - **Inputs:** an input is known by its path, size and modification time; a changed file is processed again.
@@ -43,7 +46,7 @@ run_superWADERs any.txt --campaign ~/comm/LSM2026 --criteria limits.json   # new
 - **Per run only:** the run-pooled dark charge of the few-electron finder, `--gain-correction` curves and `--composite`
   use the images of the current run only.
 
-**Without `--campaign`, a run stands alone**, as before: a fresh folder (`superWADERs_<run name>/`) with only its
+**Without `--campaign`, a run stands alone**, as before: a fresh folder (`CICERO_<run name>/`) with only its
 inputs and the tools asked for, the same pages and overviews, no comparison with anything else. Every tool can be run
 this way, alone or together: `--packet`, `--dc-series`, `--defect-map`, `--sr`, or plain images.
 
@@ -52,7 +55,7 @@ relative links. Open them from the folder, and copy or zip the whole folder to s
 its own cannot follow its links.
 
 ```
-LSM2026/                        the --campaign folder (or superWADERs_<run name>/)
+LSM2026/                        the --campaign folder (or CICERO_<run name>/)
   index.html                    campaign overview: every tool per module and CCD; the CCD panel links to each tool's
                                 overview (opened at that CCD) and to the CCD's full reports
   summary.txt                   verdict counts, fits per CCD, every run of the campaign
@@ -65,7 +68,7 @@ LSM2026/                        the --campaign folder (or superWADERs_<run name>
   campaign.json, criteria.json, records/   the campaign's ledger, limits and kept results
   modules.csv                   the campaign's module list (the last --module-list; later runs use it)
   reviews.js                    every review written on the pages, in one file (read by every page)
-  review_server.py              the review helper (started by run_superWADERs): pages save reviews through it
+  review_server.py              the review helper (started by run_CICERO): pages save reviews through it
   reviews.csv, reviews.txt      every review as a table; the latest review of every CCD
 ```
 
@@ -103,8 +106,8 @@ Every full report links back to its overview ("← overview of all modules").
 A module can have several data entries for one tool: a second packet after a repair, a dark-current run in a second
 cooldown, and so on. Give each its name:
 ```bash
-run_superWADERs packet_DM01_retest.txt --packet --dataset retest --campaign ~/comm/LSM2026
-run_superWADERs cooldown2.txt --dc-series --sr --dataset cooldown2 --campaign ~/comm/LSM2026
+run_CICERO packet_DM01_retest.txt --packet --dataset retest --campaign ~/comm/LSM2026
+run_CICERO cooldown2.txt --dc-series --sr --dataset cooldown2 --campaign ~/comm/LSM2026
 ```
 - Each data set of a module gets its own report: `packet/DM01@retest_ACM101.html`,
   `dc_series/DM01@cooldown2_ACM101_dc.html`, and its own `dc_report_<data set>.pdf`, `dc_series_<data set>.csv`,
@@ -133,10 +136,10 @@ numbers it was written on.
 Type the review on the page and click **Add review**: it shows at once, and it is saved into the campaign folder
 (`reviews.js`, one file for the whole campaign, which every page reads) right away. Nothing to install or click:
 
-- **Any browser:** `run_superWADERs` starts a small **review helper** for the campaign folder in the background after
+- **Any browser:** `run_CICERO` starts a small **review helper** for the campaign folder in the background after
   every run (a local web server, Python only, on this computer). While it runs, every page of the campaign, also
   opened by double-click, saves through it. It stops by itself after 12 h without use, or when the folder goes away.
-  On a computer where nothing was run (e.g. a colleague opening a shared folder), `run_superWADERs --campaign DIR`
+  On a computer where nothing was run (e.g. a colleague opening a shared folder), `run_CICERO --campaign DIR`
   without input starts it and opens the campaign.
 - **Chrome, Edge:** the page can also write into the folder itself; the first review asks for the campaign folder
   once.
@@ -150,7 +153,7 @@ token, only while it runs; other web sites cannot use it) are in the campaign fo
 `reviews.csv` and `reviews.txt` are rebuilt at every save, and by every run, which also adds the review summary to
 `summary.txt`. Deleting a review keeps a deletion record, so the deletion wins over an older copy of the file. Reviews
 can also be written from the command line:
-`python superWADERs/commissioning/reviews.py DIR --add --reviewer NAME --status concern --module DM03 --ext EXT2 --comment "..."`.
+`python CICERO/commissioning/reviews.py DIR --add --reviewer NAME --status concern --module DM03 --ext EXT2 --comment "..."`.
 
 The images overview has one view per image setting (e.g. 500-skip 1×1 and 1-skip 1×1).
 
@@ -228,24 +231,24 @@ the Bayesian switch only runs in `auto`).
 
 | task | command | output (in the run folder) |
 |---|---|---|
-| fits and clusters | `run_superWADERs images.txt [--gain-correction] [--composite --module-list modules.csv]` | `index.html`, `images/index.html`, `root/` (+ `root_gaincorr*/`), `summary.txt`, `fit_quality.csv`, plots, `characterisation/` |
+| fits and clusters | `run_CICERO images.txt [--gain-correction] [--composite --module-list modules.csv]` | `index.html`, `images/index.html`, `root/` (+ `root_gaincorr*/`), `summary.txt`, `fit_quality.csv`, plots, `characterisation/` |
 | add to a campaign | any of these with `--campaign DIR` | the same, for everything the campaign holds |
 | CCDs without a comb | `... --gain 1.3` or `--gain EXT1=1.3,EXT4=0.82` or `--gain-file gains.json` | flagged in `summary.txt` |
-| L0 traces / PSD traces | `run_superWADERs traces.txt [--l0-no-html]` | `L0/<trace>/` |
-| L1 images (binned or not) | `run_superWADERs l1.txt --l1-skips 1,10,100,1000 [--l1-skip-first K]` | `L1/`: one FITS per N, noise vs N, diagnostics |
-| commissioning packet | `run_superWADERs packet.txt --packet --module-list modules.csv` | `packet/` (one page per module) |
-| dark current over a series | `run_superWADERs series.txt --dc-series [--dc-limit X] [--no-clusters]` | `dc_series/` |
-| defect maps | `run_superWADERs images.txt --defect-map [--defect-sigma 5] [--no-clusters]` | `defects/` |
-| serial-register images | `run_superWADERs sr.txt --sr [--sr-threshold 4] [--sr-min-length 3] [--no-clusters]` | `sr/` |
+| L0 traces / PSD traces | `run_CICERO traces.txt [--l0-no-html]` | `L0/<trace>/` |
+| L1 images (binned or not) | `run_CICERO l1.txt --l1-skips 1,10,100,1000 [--l1-skip-first K]` | `L1/`: one FITS per N, noise vs N, diagnostics |
+| commissioning packet | `run_CICERO packet.txt --packet --module-list modules.csv` | `packet/` (one page per module) |
+| dark current over a series | `run_CICERO series.txt --dc-series [--dc-limit X] [--no-clusters]` | `dc_series/` |
+| defect maps | `run_CICERO images.txt --defect-map [--defect-sigma 5] [--no-clusters]` | `defects/` |
+| serial-register images | `run_CICERO sr.txt --sr [--sr-threshold 4] [--sr-min-length 3] [--no-clusters]` | `sr/` |
 
 The commissioning tools (inputs, pages, what was checked, the data still needed) are described in
-[docs/superWADERs_user_guide.md](../docs/superWADERs_user_guide.md).
+[docs/CICERO_user_guide.md](../docs/CICERO_user_guide.md).
 
 ## Layout
 
 ```
-superWADERs/
-  run_superWADERs       the command (driver: inputs, front end, g(n), processing, composite, tools, summary)
+CICERO/
+  run_CICERO       the command (driver: inputs, front end, g(n), processing, composite, tools, summary)
   engine/               native_pipeline.py (per image: pedestal, fits, calibration, clustering chain, ROOT files),
                         characterise.py (front end), native_kernels / native_rootio / native_plots,
                         autoconfig_panaSKImg, gain_dc_split, gain_vs_charge, fit_quality, naming, pair_energy
@@ -255,10 +258,10 @@ superWADERs/
                         record), ccd_metrics, overview_template.html, criteria_default.json,
                         raw_data (+ raw_levels/), packet_report (+ module page template), dc_series, defects
                         (+ lsm_defects/), sr_images, compare_dcfit_vs_skips
-  tests/                python -m unittest discover -s superWADERs/tests -v
+  tests/                python -m unittest discover -s CICERO/tests -v
 ```
 
-Where the files came from (2026-11-12). They are now superWADERs' own and can change without touching `run_WADERs`:
+Where the files came from (2026-11-12). They are now CICERO's own and can change without touching `run_WADERs`:
 - `engine/native_pipeline.py` and `characterise.py`: `wip/native_pipeline` (the any-image front end, 7980f24) with
   the later changes of `src/native_pipeline.py`;
 - the other `engine/` modules: `src/`;
@@ -267,13 +270,13 @@ Where the files came from (2026-11-12). They are now superWADERs' own and can ch
 
 `raw_levels/` (ccd_opt_ml) and `lsm_defects/` (LSM_Module_Testing_Analysis) are kept in sync with their own
 repositories by `utils/sync_from_ccd_opt_ml.py` and `utils/sync_from_lsm_analysis.py` (both update `src/` and
-`superWADERs/`; `--dest superWADERs` updates this folder only).
+`CICERO/`; `--dest CICERO` updates this folder only).
 
 ## Efficiency
 
-Recorded, not applied: [docs/superWADERs_efficiency_notes.md](../docs/superWADERs_efficiency_notes.md).
+Recorded, not applied: [docs/CICERO_efficiency_notes.md](../docs/CICERO_efficiency_notes.md).
 - **Ready as a patch:** three exact or near-exact speed-ups to A_GMX's background map (2.8× on electron-counting CCDs,
-  100× on noisy ones), in `docs/patches/superWADERs_efficiency_E1-E3.patch`.
+  100× on noisy ones), in `docs/patches/CICERO_efficiency_E1-E3.patch`.
 - **Larger items:** the few-electron threshold simulation, double fits, per-CCD parallelism.
 
 ## What has been checked

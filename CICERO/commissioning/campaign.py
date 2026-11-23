@@ -1,4 +1,4 @@
-"""A commissioning campaign: one folder that grows packet by packet (run_superWADERs --campaign DIR).
+"""A commissioning campaign: one folder that grows packet by packet (run_CICERO --campaign DIR).
 
 Data arrive in packets, so every input is processed ONCE and its results are kept; each run adds the new inputs and
 rebuilds every report and overview page from everything the campaign holds, without fitting earlier data again.

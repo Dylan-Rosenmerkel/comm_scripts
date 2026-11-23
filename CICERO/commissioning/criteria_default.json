@@ -1,7 +1,7 @@
 {
  "name": "PLACEHOLDER commissioning criteria (to be set by the group)",
  "version": "draft-2026-11-12",
- "note": "Every limit here is a placeholder, tuned only so that a synthetic campaign gives sensible verdicts; replace them with the agreed acceptance values (run_superWADERs --criteria FILE; a campaign keeps its own copy in criteria.json). A CCD's verdict is the worst of its checks: fail > warn > pass. direction 'above' = bad when larger, 'below' = bad when smaller; abs = compare |value|; a limit of null = shown, not judged; flag_levels set the severity of the non-numeric checks: fail, warn, note (shown with the CCD, no effect on the verdict) or off.",
+ "note": "Every limit here is a placeholder, tuned only so that a synthetic campaign gives sensible verdicts; replace them with the agreed acceptance values (run_CICERO --criteria FILE; a campaign keeps its own copy in criteria.json). A CCD's verdict is the worst of its checks: fail > warn > pass. direction 'above' = bad when larger, 'below' = bad when smaller; abs = compare |value|; a limit of null = shown, not judged; flag_levels set the severity of the non-numeric checks: fail, warn, note (shown with the CCD, no effect on the verdict) or off.",
  "nominal_gain": {
   "EXT1": 1.26,
   "EXT2": 1.32,

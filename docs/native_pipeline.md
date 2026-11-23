@@ -5,8 +5,8 @@ panaSKImg format (`panaSKImg_clustersRec_<image>_ext<n>.root`, trees `clustersRe
 which MakeComposite and the comm_scripts analysis code read unchanged. It replaces the cluster-producing part of
 `bin/run_WADERs` (autoconfig + gain_dc_split + panaSKImg runs + g(n) + agmx_root).
 
-Status: `bin/run_WADERs --engine native` (`run_WADERs` keeps panaSKImg as its default). `run_superWADERs` is a separate
-program since 2026-11-12 (`superWADERs/`) with its own copy of this engine plus the any-image front end. Validated
+Status: `bin/run_WADERs --engine native` (`run_WADERs` keeps panaSKImg as its default). `run_CICERO` is a separate
+program since 2026-11-12 (`CICERO/`) with its own copy of this engine plus the any-image front end. Validated
 against panaSKImg on the 3 DM09 Image_5 images (native_pipeline_validation.md), and on the board-103 skip-noise images
 with an overscan (2026-11-10: gain and noise equal to panaSKImg's on 80 CCD-images, median difference 0.00 %; up to
 2.8 % on unresolved 100-skip CCDs, where panaSKImg used a Gaussian-fit pedestal).
@@ -30,7 +30,7 @@ Raw DAQ files (`src/raw_data.py`; native engine only; readers copied from ccd_op
   Rows cut by the end of the file are left out; pixels failing a layout check get their row's median.
   Check (2026-11-10): synthetic level-1 file (decode_l1.write_l1) from a 25 x 250 crop of a DM09 Image 5, 4
   channels, 1000 skips, 4 ADU per-skip noise of zero mean per pixel: N = 1000 reproduces the image to 2e-4 ADU
-  (float32), N = 10 / 100 leave 1.262 / 0.381 ADU (expected 1.265 / 0.379); end to end through run_superWADERs
+  (float32), N = 10 / 100 leave 1.262 / 0.381 ADU (expected 1.265 / 0.379); end to end through run_CICERO
   (with an L0 trace and a psd trace) in 9 s. The real level-1 files on this machine (installation check
   2026-10-06) are cut after 80 pixels (no complete row) or binned (20 x 20): both reported, no image made.
 

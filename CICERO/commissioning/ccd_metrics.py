@@ -14,7 +14,7 @@ Per image (the CCDs of one module are read at the same time):
   crosstalk   victim pixel ADU vs source charge [e-] where the source has > XT_SOURCE_E and the victim no event of
               its own (> 20 e-): slope with an intercept (the victim's dark-charge level and pedestal residual are
               not crosstalk), in e- per e-, with its error
-These read the image file once more (the engine's arrays are not reused here; see docs/superWADERs_efficiency_notes.md).
+These read the image file once more (the engine's arrays are not reused here; see docs/CICERO_efficiency_notes.md).
 """
 import math
 

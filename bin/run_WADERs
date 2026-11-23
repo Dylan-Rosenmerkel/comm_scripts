@@ -6,7 +6,7 @@
 
 Engine (--engine): waders (default) runs panaSKImg per CCD, the steps below; native does steps 1-3d in python, one
 process per image (src/native_pipeline.py, run_native(); no panaSKImg needed; same output folders).
-(bin/run_superWADERs is a separate program, superWADERs/: its own engine, clustering and commissioning tools.)
+(bin/run_CICERO is a separate program, CICERO/: its own engine, clustering and commissioning tools.)
 
 What happens, per image (each step is one function below)
 ---------------------------------------------------------

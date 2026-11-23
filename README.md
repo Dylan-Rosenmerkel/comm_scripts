@@ -10,14 +10,14 @@ Scripts to analyse skipper-CCD images with panaSKImg (WADERs) without writing JS
 ```
 comm_scripts/
   README.md
-  bin/     commands to run          run_WADERs (and the alias runWADERs), run_superWADERs (starts
-                                    superWADERs/run_superWADERs), run_AGMX (A_GMX clusters for a finished run)
+  bin/     commands to run          run_WADERs (and the alias runWADERs), run_CICERO (starts
+                                    CICERO/run_CICERO), run_AGMX (A_GMX clusters for a finished run)
   src/     the pipeline modules     autoconfig_panaSKImg.py, gain_dc_split.py,
   of run_WADERs                     gain_vs_charge.py, fit_quality.py, agmx_root.py (A_GMX -> panaSKImg cluster files);
                                     native_*.py and the commissioning tools for run_WADERs --engine native
-  superWADERs/  a separate program  run_superWADERs with its own engine, clustering (clusterer auto: one chain per
+  CICERO/  a separate program  run_CICERO with its own engine, clustering (clusterer auto: one chain per
                                     CCD) and commissioning tools; uses nothing from bin/run_WADERs, src/, clustering_tests/
-                                    or wip/ (superWADERs/README.md)
+                                    or wip/ (CICERO/README.md)
   utils/   standalone helpers       compare_dcfit_vs_skips.py, split_clustersRec_by_ext.py,
                                     skip_noise_L1.py, compare_runs.py
   clustering_tests/  research code   alternative clustering methods (A_GMX, GMX, MHC, MFD+G, ...) and the
@@ -45,13 +45,13 @@ function does what. Everything still open: `docs/notes/OPEN_ITEMS.md`.
 ```bash
 /path/to/comm_scripts/bin/run_WADERs image.fz          # one image
 /path/to/comm_scripts/bin/run_WADERs my_images.txt     # a list, one image path per line
-/path/to/comm_scripts/bin/run_superWADERs my_images.txt   # superWADERs: no panaSKImg, clustering chosen per CCD
+/path/to/comm_scripts/bin/run_CICERO my_images.txt   # CICERO: no panaSKImg, clustering chosen per CCD
 ```
 
-`run_superWADERs` is a separate program (`superWADERs/`): its own engine and clustering, with the chain chosen per
+`run_CICERO` is a separate program (`CICERO/`): its own engine and clustering, with the chain chosen per
 CCD (Bayesian few-electron finder / A_GMX / crowded A_GMX / unmodelled / threshold), plus the commissioning tools: raw
 L0 / L1 files, commissioning packet reports, dark current over a series, defect maps and serial-register images.
-See [run_superWADERs](#run_superwaders-a-separate-program) below and [superWADERs/README.md](superWADERs/README.md).
+See [run_CICERO](#run_cicero-a-separate-program) below and [CICERO/README.md](CICERO/README.md).
 
 The rest of this section is about `run_WADERs`.
 
@@ -110,9 +110,12 @@ gain periods by 0.6 % (on Fe-55 it was as good or slightly better).
 On the 2025-08-27 Image 5s the per-image and pooled curves gave the same front-side K-alpha to
 within a few eV whenever an image's own comb was usable.
 
-## run_superWADERs: a separate program
+## run_CICERO: a separate program
 
-`run_superWADERs` (`superWADERs/`, started by `bin/run_superWADERs`) has its own engine, clustering and commissioning
+**CICERO**: CCD Image Calibration, Event Recognition, and Optimization (formerly superWADERs; the old command
+`run_superWADERs` still works and forwards to `run_CICERO`).
+
+`run_CICERO` (`CICERO/`, started by `bin/run_CICERO`) has its own engine, clustering and commissioning
 tools, and uses nothing from `bin/run_WADERs`, `src/`, `clustering_tests/` or `wip/` (its modules started as copies of
 them on 2026-11-12 and now change on their own). Pedestal, fits and cluster files in panaSKImg's format are the native
 engine's; the clustering is chosen per CCD (`--clusterer auto`, the default): A_GMX with the Bayesian few-electron
@@ -122,19 +125,19 @@ Data arriving packet by packet go into one campaign folder (`--campaign DIR`): o
 every tool (images, packet, dark current, defect maps, serial register) has an overview page (module × CCD grid
 with pass / warn / fail verdicts from a criteria file) combined in `DIR/index.html`; every page has review boxes
 (name, status, comment per CCD or report tab), kept in `DIR/reviews.js`; without `--campaign` a run
-stands alone. Clustering, campaigns, layout and what has been checked: [superWADERs/README.md](superWADERs/README.md);
-efficiency notes (not applied): [docs/superWADERs_efficiency_notes.md](docs/superWADERs_efficiency_notes.md). It needs the `damic`
+stands alone. Clustering, campaigns, layout and what has been checked: [CICERO/README.md](CICERO/README.md);
+efficiency notes (not applied): [docs/CICERO_efficiency_notes.md](docs/CICERO_efficiency_notes.md). It needs the `damic`
 conda environment (found automatically). `run_WADERs --engine native` still runs `src/`'s copy of the native engine
 (threshold or A_GMX clusters), unchanged.
 
 ```bash
-run_superWADERs INPUT [-o PARENT] [-j N] [--overwrite] [options]    # INPUT: one file, or a .txt list (one path per line)
-run_superWADERs -h                                                  # every flag;  -h -v: the full guide
+run_CICERO INPUT [-o PARENT] [-j N] [--overwrite] [options]    # INPUT: one file, or a .txt list (one path per line)
+run_CICERO -h                                                  # every flag;  -h -v: the full guide
 ```
 
-Results: `PARENT/superWADERs_<input name>/`; read `summary.txt` first. The full user guide, with what every
+Results: `PARENT/CICERO_<input name>/`; read `summary.txt` first. The full user guide, with what every
 number and plot means and what data are still needed to validate each tool, is
-[docs/superWADERs_user_guide.md](docs/superWADERs_user_guide.md).
+[docs/CICERO_user_guide.md](docs/CICERO_user_guide.md).
 
 ### Inputs
 
@@ -165,16 +168,16 @@ Without an entry the name comes from `--module ACM=NAME`, then the data folder n
 
 | task | command | output (in the run folder) |
 |---|---|---|
-| fits and clusters (chain per CCD) | `run_superWADERs images.txt [--gain-correction] [--composite]` | `index.html`, `images/index.html`, `root/` (+ `root_gaincorr*/`), `summary.txt`, `characterisation/` |
+| fits and clusters (chain per CCD) | `run_CICERO images.txt [--gain-correction] [--composite]` | `index.html`, `images/index.html`, `root/` (+ `root_gaincorr*/`), `summary.txt`, `characterisation/` |
 | add a packet / list to a campaign | any command below with `--campaign DIR` (`--criteria FILE`, `--refresh-all`, `--reprocess`) | the same in `DIR/`, for everything the campaign holds; only new inputs are processed |
-| review the pages | type in the review box of any page; saved into `DIR/reviews.js` at once (the review helper starts with every run; elsewhere: `run_superWADERs --campaign DIR`, no input) | the reviews on every page; `reviews.csv`, `reviews.txt` |
+| review the pages | type in the review box of any page; saved into `DIR/reviews.js` at once (the review helper starts with every run; elsewhere: `run_CICERO --campaign DIR`, no input) | the reviews on every page; `reviews.csv`, `reviews.txt` |
 | a module measured again (2nd packet, 2nd cooldown) | the command with `--dataset NAME --campaign DIR` | one report and one overview view per data set; the campaign overview uses the newest |
-| L0 traces / PSD traces | `run_superWADERs traces.txt [--l0-no-html]` | `L0/<trace>/`: `overview.png`, `viewer.html`, `summary.json` |
-| L1 images at several skip counts | `run_superWADERs l1.txt --l1-skips 1,10,100,1000 [--l1-skip-first K]` | `L1/`: one FITS per N (all through the pipeline), `noise_vs_skips.csv/.png`, `compare/`, `<image>_diagnostics/` |
-| commissioning packet | `run_superWADERs packet.txt --packet --module-list modules.csv` | `packet/index.html` + one page per module |
-| dark current over a series | `run_superWADERs series.txt --dc-series [--dc-limit X] [--no-clusters]` | `dc_series/`: `dc_report.pdf`, `dc_series.csv`, one page per module |
-| defect maps | `run_superWADERs images.txt --defect-map [--defect-sigma 5] [--no-clusters]` | `defects/<module>_ACM<id>_<size>/`: `defects.csv`, `defect_map.html`, composites, the group's Image_4 plot and log |
-| serial-register images | `run_superWADERs sr.txt --sr [--sr-threshold 4] [--sr-min-length 3] [--no-clusters]` | `sr/`: `sr_streaks.csv`, `sr_summary.csv`, PNGs, one page per module |
+| L0 traces / PSD traces | `run_CICERO traces.txt [--l0-no-html]` | `L0/<trace>/`: `overview.png`, `viewer.html`, `summary.json` |
+| L1 images at several skip counts | `run_CICERO l1.txt --l1-skips 1,10,100,1000 [--l1-skip-first K]` | `L1/`: one FITS per N (all through the pipeline), `noise_vs_skips.csv/.png`, `compare/`, `<image>_diagnostics/` |
+| commissioning packet | `run_CICERO packet.txt --packet --module-list modules.csv` | `packet/index.html` + one page per module |
+| dark current over a series | `run_CICERO series.txt --dc-series [--dc-limit X] [--no-clusters]` | `dc_series/`: `dc_report.pdf`, `dc_series.csv`, one page per module |
+| defect maps | `run_CICERO images.txt --defect-map [--defect-sigma 5] [--no-clusters]` | `defects/<module>_ACM<id>_<size>/`: `defects.csv`, `defect_map.html`, composites, the group's Image_4 plot and log |
+| serial-register images | `run_CICERO sr.txt --sr [--sr-threshold 4] [--sr-min-length 3] [--no-clusters]` | `sr/`: `sr_streaks.csv`, `sr_summary.csv`, PNGs, one page per module |
 
 The commissioning flags can be combined in one run (e.g. `--dc-series --defect-map --sr`). Every tool's folder has an
 overview page, `index.html`: a module × CCD grid with pass / warn / fail verdicts from the criteria file, what needs
@@ -247,12 +250,12 @@ can be sent to others as it is.
 
 | file | what |
 |---|---|
-| `superWADERs/run_superWADERs` | the command (`bin/run_superWADERs` starts it) |
-| `superWADERs/engine/` | `native_pipeline.py` (pedestal, fits, calibration, clustering chain, cluster files), `characterise.py` (front end), and superWADERs' own copies of autoconfig, gain_dc_split, gain_vs_charge, ... |
-| `superWADERs/clustering/` | A_GMX and the Bayesian few-electron finder |
-| `superWADERs/commissioning/` (campaigns, overviews) | `campaign.py` (ledger, records, criteria, verdicts, overview pages), `worker.py` (one image -> its record), `ccd_metrics.py`, `overview_template.html`, `criteria_default.json` (placeholder limits), `reviews.py` + `review_widget.js` (reviews) |
-| `superWADERs/commissioning/` (tools) | `raw_data.py` + `raw_levels/` (L0 / L1; copies from ccd_opt_ml, `utils/sync_from_ccd_opt_ml.py`), `packet_report.py` + template, `dc_series.py`, `defects.py` + `lsm_defects/` (`utils/sync_from_lsm_analysis.py`), `sr_images.py` |
-| `superWADERs/README.md`, `docs/superWADERs_user_guide.md`, `docs/superWADERs_commissioning_next_steps.md`, `docs/superWADERs_efficiency_notes.md` | overview (incl. campaigns), user guide, plan and open items, efficiency notes (not applied) |
+| `CICERO/run_CICERO` | the command (`bin/run_CICERO` starts it) |
+| `CICERO/engine/` | `native_pipeline.py` (pedestal, fits, calibration, clustering chain, cluster files), `characterise.py` (front end), and CICERO's own copies of autoconfig, gain_dc_split, gain_vs_charge, ... |
+| `CICERO/clustering/` | A_GMX and the Bayesian few-electron finder |
+| `CICERO/commissioning/` (campaigns, overviews) | `campaign.py` (ledger, records, criteria, verdicts, overview pages), `worker.py` (one image -> its record), `ccd_metrics.py`, `overview_template.html`, `criteria_default.json` (placeholder limits), `reviews.py` + `review_widget.js` (reviews) |
+| `CICERO/commissioning/` (tools) | `raw_data.py` + `raw_levels/` (L0 / L1; copies from ccd_opt_ml, `utils/sync_from_ccd_opt_ml.py`), `packet_report.py` + template, `dc_series.py`, `defects.py` + `lsm_defects/` (`utils/sync_from_lsm_analysis.py`), `sr_images.py` |
+| `CICERO/README.md`, `docs/CICERO_user_guide.md`, `docs/CICERO_commissioning_next_steps.md`, `docs/CICERO_efficiency_notes.md` | overview (incl. campaigns), user guide, plan and open items, efficiency notes (not applied) |
 
 **Not yet validated on real data** (see the user guide, section 5, for the data needed): a full commissioning packet
 (5-minute 1x1 1-skip and 10x10 500-skip images), serial-register images (tested only on synthetic data), the defect
@@ -361,7 +364,7 @@ events. Code in `wip/lowdc/` (not in `src/`); off by default, so nothing changes
 How to use:
 
 ```bash
-AGMX_FEWE=auto run_WADERs images.txt --clusterer agmx      # single-image mode (conservative); run_superWADERs does this per CCD by itself
+AGMX_FEWE=auto run_WADERs images.txt --clusterer agmx      # single-image mode (conservative); run_CICERO does this per CCD by itself
 ```
 ```python
 # recommended: run-pooled mode (dark charge, event rates, cut and noise model from all images of the run)
@@ -408,11 +411,11 @@ cl = adaptive.adaptive_cluster(Q_k, valid_k, engine="gmx", fewe="auto", fewe_lam
 - **Untuned values:** the f_c cut and the halo.
 - The L2 gains (1.3 / 0.82 ADU/e-) are unconfirmed.
 
-## Any image: characterisation front end and `--clusterer auto` (working: the default of run_superWADERs)
+## Any image: characterisation front end and `--clusterer auto` (working: the default of run_CICERO)
 
 Developed in `wip/native_pipeline/` (details and its robustness suite: `wip/native_pipeline/ANYIMAGE.md`); since
-2026-11-12 it is part of `superWADERs/` (`engine/characterise.py`, `engine/native_pipeline.py`) and the default
-clustering of `run_superWADERs`. `src/` and `run_WADERs` do not have it. Before clustering, each image and CCD is
+2026-11-12 it is part of `CICERO/` (`engine/characterise.py`, `engine/native_pipeline.py`) and the default
+clustering of `run_CICERO`. `src/` and `run_WADERs` do not have it. Before clustering, each image and CCD is
 characterised: data form, geometry, binning, dead / quiet channel, first-column artefact, saturation, gain source,
 noise, dark charge, crowding. Every fallback is logged, and the record goes to `characterisation/<image>.json` and
 into each ROOT file. The chain is then chosen per CCD:
@@ -427,9 +430,9 @@ into each ROOT file. The chain is then chosen per CCD:
 | raw skips / std images | compressed first / refused |
 
 ```bash
-run_superWADERs images.txt [--gain-correction]                         # clusterer auto is the default
-run_superWADERs l2_images.txt --gain EXT1=1.3,EXT2=1.3,EXT3=1.3,EXT4=0.82   # no comb: give the gain
-python superWADERs/engine/characterise.py IMAGES... -o OUT              # the front end alone (JSON per image)
+run_CICERO images.txt [--gain-correction]                         # clusterer auto is the default
+run_CICERO l2_images.txt --gain EXT1=1.3,EXT2=1.3,EXT3=1.3,EXT4=0.82   # no comb: give the gain
+python CICERO/engine/characterise.py IMAGES... -o OUT              # the front end alone (JSON per image)
 cd wip/native_pipeline && $PY run.py -j 2                               # the wip robustness suite (its own copies)
 ```
 
@@ -454,7 +457,7 @@ cd wip/native_pipeline && $PY run.py -j 2                               # the wi
 - **Binned images:** clustering is not adapted to the bin size.
 - **Dark charge below ~1e-5 e-/pix** cannot be measured from a few images.
 - **Not yet ported:** the work-arounds for `gmx.py` (< 61 rows) and for strips are not fixed in `clustering_tests/`.
-- **Ported to superWADERs/** (2026-11-12); run there on synthetic images only so far (superWADERs/README.md).
+- **Ported to CICERO/** (2026-11-12); run there on synthetic images only so far (CICERO/README.md).
 
 ## Tests
 

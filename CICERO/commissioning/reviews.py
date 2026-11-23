@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""superWADERs reviews: who looked at which data, what they concluded, and why.
+"""CICERO reviews: who looked at which data, what they concluded, and why.
 
 A review is written on a page of a campaign (an overview: one CCD; a module report: one tab, the whole module or one
 CCD of it) by anyone who opens it: a name, a status (approved / concern / rejected / note) and a comment. It records
@@ -9,7 +9,7 @@ inputs; when newer data arrive the pages mark it 'data changed since') and the m
 Where they live: one file per campaign,
   <campaign>/reviews.js       every review of the campaign ("window.SW_REVIEWS = {format, campaign, made, reviews}"),
                               read by every page. Each save merges into it (the review server, a page's 'Save to
-                              campaign folder', run_superWADERs --reviews FILE, reviews.py --add / --import), so
+                              campaign folder', run_CICERO --reviews FILE, reviews.py --add / --import), so
                               several people can review the same folder without losing each other's reviews.
   <campaign>/reviews.csv      the same as a table (one row per review), reviews.txt the latest review per CCD
   <campaign>/reviews/*.json   (earlier versions: one file per save) still read and merged in
@@ -18,7 +18,7 @@ older copy of the review in a downloaded file).
 
 Saving from the pages: a comment typed on a page shows on it at once and is written into reviews.js
   through the review helper: a small local web server for this folder (this file, copied into the campaign as
-  review_server.py). run_superWADERs starts it in the background after every run; it stops by itself after 12 h
+  review_server.py). run_CICERO starts it in the background after every run; it stops by itself after 12 h
   without use. While it runs, every page of the campaign, also opened by double-click, in any browser, saves through
   it (it leaves review_server_info.js with its address and a token in the folder).
   Chrome / Edge     can also write into the folder themselves (the page asks for the folder once).
@@ -33,7 +33,7 @@ usage:
   python reviews.py DIR --import FILE [FILE ...]     merge review files (reviews.js downloaded from a page) in
   python reviews.py DIR --add --reviewer NAME --status concern --module M1 [--ext EXT2] [--tool images]
                     --comment "..."                  write one review from the command line
-(run_superWADERs --campaign DIR [--reviews FILE ...] does the same; no INPUT needed for that)."""
+(run_CICERO --campaign DIR [--reviews FILE ...] does the same; no INPUT needed for that)."""
 import argparse
 import csv
 import datetime
@@ -44,7 +44,7 @@ import shutil
 import sys
 import uuid
 
-FORMAT = "superWADERs-reviews-1"
+FORMAT = "CICERO-reviews-1"          # written; files from before the rename say "superWADERs-reviews-1" (read the same)
 STATUSES = ("approved", "concern", "rejected", "note")
 TARGET_KEYS = ("tool", "module", "ext", "ccd", "acm", "dataset", "view", "page", "tab")
 

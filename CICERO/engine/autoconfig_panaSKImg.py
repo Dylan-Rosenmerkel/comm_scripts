@@ -469,8 +469,8 @@ def panaskimg_has_plot_range():
 DEFAULT_PANASKIMG = find_panaskimg()
 
 # chi2/ndf, scaled errors and dark-current bias of panaSKImg fits (same folder)
-SW_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # superWADERs/
-for _p in ("commissioning", "clustering", "engine"):          # superWADERs' own modules first on the path
+SW_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # CICERO/
+for _p in ("commissioning", "clustering", "engine"):          # CICERO's own modules first on the path
     _p = os.path.join(SW_DIR, _p)
     if _p in sys.path:
         sys.path.remove(_p)

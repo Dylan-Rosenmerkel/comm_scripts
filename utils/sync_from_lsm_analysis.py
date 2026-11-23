@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Copy the defect-map script of LSM_Module_Testing_Analysis (D. Venegas-Vargas: src/Image_4.py) into
-comm_scripts/src/lsm_defects/ (run_WADERs --engine native) and superWADERs/commissioning/lsm_defects/ (run_superWADERs),
+comm_scripts/src/lsm_defects/ (run_WADERs --engine native) and CICERO/commissioning/lsm_defects/ (run_CICERO),
 unchanged except for a first line naming the source and its commit (--dest: only one of them).
 
---defect-map (src/defects.py, superWADERs/commissioning/defects.py) runs it on the run's images (its geometry
+--defect-map (src/defects.py, CICERO/commissioning/defects.py) runs it on the run's images (its geometry
 constants set from each image's header) and adds the defect log and the interactive defect map.
 
     python utils/sync_from_lsm_analysis.py [--source ~/Documents/LSM_Module_Testing_Analysis] [--check]
-                                           [--dest both|src|superWADERs]
+                                           [--dest both|src|CICERO]
 """
 import argparse
 import os
@@ -16,7 +16,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DESTS = {"src": os.path.join(ROOT, "src", "lsm_defects"),
-         "superWADERs": os.path.join(ROOT, "superWADERs", "commissioning", "lsm_defects")}
+         "CICERO": os.path.join(ROOT, "CICERO", "commissioning", "lsm_defects")}
 FILES = ["Image_4.py"]
 MARK = ("# copied from LSM_Module_Testing_Analysis/src/{name} (commit {commit}) by utils/sync_from_lsm_analysis.py: "
         "edit it there, not here\n")
@@ -26,9 +26,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--source", default=os.path.expanduser("~/Documents/LSM_Module_Testing_Analysis"))
     ap.add_argument("--check", action="store_true", help="only report which copies differ from the source")
-    ap.add_argument("--dest", choices=("both", "src", "superWADERs"), default="both",
+    ap.add_argument("--dest", choices=("both", "src", "CICERO", "superWADERs"), default="both",
                     help="which copy to update (default both)")
     a = ap.parse_args()
+    a.dest = "CICERO" if a.dest == "superWADERs" else a.dest   # name before the rename
     rc = 0
     for key, dst in DESTS.items():
         if a.dest in ("both", key):

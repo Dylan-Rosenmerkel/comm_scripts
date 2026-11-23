@@ -1,4 +1,4 @@
-"""One image -> its campaign record, in a worker process (run_superWADERs: -j images at a time).
+"""One image -> its campaign record, in a worker process (run_CICERO: -j images at a time).
 
 image_job((path, out_dir, process_image keyword arguments, options)) runs native_pipeline.process_image (fits,
 clustering chain, cluster files as asked) and makes the record kept in the campaign (campaign.py), so that every

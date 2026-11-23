@@ -1,4 +1,4 @@
-"""Level-0 and level-1 raw skipper-CCD data for run_superWADERs.
+"""Level-0 and level-1 raw skipper-CCD data for run_CICERO.
 
 The DAQ writes one binary file per channel, <name>.RJ45ADCDATA<ch>, next to <name>.meta (JSON: the settings that
 the FITS header of an image carries):
@@ -33,8 +33,8 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LEVELS = os.path.join(HERE, "raw_levels")
-SW_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # superWADERs/
-for _p in ("commissioning", "clustering", "engine"):          # superWADERs' own modules first on the path
+SW_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # CICERO/
+for _p in ("commissioning", "clustering", "engine"):          # CICERO's own modules first on the path
     _p = os.path.join(SW_DIR, _p)
     if _p in sys.path:
         sys.path.remove(_p)
