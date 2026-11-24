@@ -265,7 +265,8 @@ def geometry_record(h0, hdul, args):
                      prescan=h0.get("PRESCAN"), physcol=h0.get("PHYSCOL"), ccd_cols_unbinned=ccd_cols,
                      first_active_col=geo["n_cols_prescan"], first_overscan_col=geo["ccd_cols"],
                      overscan_cols=max(ncol - geo["ccd_cols"], 0), no_overscan=geo["no_overscan"],
-                     id_row_start=geo["id_row_start"], n_ccd=n_ext, acm_multi_extension=n_ext > 1,
+                     id_row_start=geo["id_row_start"], first_overscan_row=geo["first_overscan_row"],
+                     overscan_rows=max(nrow - geo["first_overscan_row"], 0), n_ccd=n_ext, acm_multi_extension=n_ext > 1,
                      shape_class=shape_class(nrow, ncol, npbin, nsbin)), meth, conf), geo
 
 
@@ -288,7 +289,7 @@ def group_key(path, h0, shape):
 def first_column(data, geo, noise_adu, gain, nskips):
     """level of the first active column vs the rest of the row (per-row medians removed) [ADU]"""
     r0, a0, a1 = geo["id_row_start"], geo["n_cols_prescan"], geo["ccd_cols"]
-    x = data[r0:, a0:a1].astype(float)
+    x = data[r0:geo.get("first_overscan_row", data.shape[0]), a0:a1].astype(float)
     if x.shape[1] < 4 or x.shape[0] < 2:
         return None
     x = x - np.median(x, axis=1, keepdims=True)

@@ -22,7 +22,8 @@ What happens (one function each, called in order by main()):
                         environment that has them (the damic environment)
   raw_inputs            level-0 traces -> L0/ (decoded, checked, plotted); level-1 images -> L1/ FITS images with N
                         skips, which join the images
-  packet_traces         --packet: level-0 traces / PSD traces of the packet -> records/packet/ (new ones only)
+  packet_traces         level-0 traces / PSD traces -> records/packet/ (new ones only) -> the packet pages (trace view,
+                        noise spectrum), with or without --packet
   to_process            the images not yet in the campaign (or changed, or missing a part a tool asks for)
   front_end             characterise every image and CCD before anything is fitted (engine/characterise.py): data form
                         (skip-resolved raw files are compressed first), geometry, dead / quiet channels, first-column
@@ -83,8 +84,8 @@ OUT_PREFIX = "CICERO_"
 IMAGE_EXT = (".fz", ".fits", ".fits.bz2", ".fits.gz")
 RAW_INPUT = re.compile(r"\.RJ45ADCDATA\d$")
 RESERVED_AUTOCONFIG = ("--peaks", "--per-ext", "--tune", "-o", "--output", "--gain", "--cluster-threshold-e")
-DEFAULT_COMPOSITE_MACRO = os.path.expanduser(
-    "~/Documents/LSM_Module_Testing_Analysis/src/MakeComposite_Fe55_Clusters_Extensions.cc")
+DEFAULT_COMPOSITE_MACRO = os.path.join(SW_DIR, "commissioning", "lsm_composite",
+                                       "MakeComposite_Fe55_Clusters_Extensions.cc")   # copy (utils/sync_from_lsm_analysis.py)
 ACM_ORDER = ("110", "109", "106")      # ACM ids in the order of the modules in a ..._DMa_DMb_DMc_... data folder
 
 
@@ -250,7 +251,7 @@ HELP_EPILOG = """\
 inputs (one file or a .txt list, one path per line, relative to the .txt; # comments; any order):
   avg_*.fits, .fits.bz2, .fz, .fits.gz   averaged images (any size, binning, number of skips); skip-resolved raw
                                          FITS files are compressed first (mean over the skips, --skip-start K)
-  trace_* / psd_* .RJ45ADCDATA<ch>       level-0 traces: decoded, checked, plotted -> L0/
+  trace_* / psd_* .RJ45ADCDATA<ch>       level-0 traces: decoded, checked, plotted -> L0/; trace / PSD pages -> packet/
   *_L1_*.RJ45ADCDATA0..3 (+ .meta)       level-1 images, binned or not: one FITS image per --l1-skips N -> L1/,
                                          then through the pipeline; noise vs N, fits side by side, diagnostics
 
@@ -431,7 +432,7 @@ def build_parser(full=False):
     g.add_argument("--composite", action="store_true",
                    help="run MakeComposite_Fe55_Clusters_Extensions.cc on the cluster files per image type and module")
     g.add_argument("--composite-macro", metavar="PATH", default=os.environ.get("MAKECOMPOSITE_MACRO", DEFAULT_COMPOSITE_MACRO),
-                   help="the macro (default $MAKECOMPOSITE_MACRO, else ~/Documents/LSM_Module_Testing_Analysis/src/...)")
+                   help="the macro (default $MAKECOMPOSITE_MACRO, else CICERO's copy in commissioning/lsm_composite/)")
     g.add_argument("--image-number", metavar="N", type=int, help="image type for the macro (default: Image_<N> in the name)")
     g.add_argument("--module", metavar="ACM=NAME", action="append", default=[], help="module name of an ACM (repeat)")
     g.add_argument("--module-list", metavar="FILE",
@@ -620,7 +621,8 @@ def raw_inputs(run, l1_skips=None):
 
 
 def packet_traces(run, paths):
-    """--packet: the level-0 traces / PSD traces not yet in the campaign -> records/packet/ (packet_report.file_items)."""
+    """The level-0 traces / PSD traces not yet in the campaign -> records/packet/ (packet_report.file_items): with
+    --packet, and for every level-0 input without it (their trace view and noise-spectrum pages in packet/)."""
     import packet_report as PR
     cls = PR.classify(paths)
     for kind in ("trace", "psd"):
@@ -972,6 +974,12 @@ def composite(run, configs, gc_dirs):
     if len(gc_dirs) == 2:
         sets.append((gc_dirs["per-image"], os.path.join(run.out, "composite_per_image"), "_per_image"))
     root_exe = shutil.which("root") or os.path.join(os.path.dirname(sys.executable), "root")
+    # ROOT compiles the macro next to the file it is given: a copy in the run folder keeps CICERO/ unchanged
+    build = os.path.join(run.out, "composite_macro")
+    os.makedirs(build, exist_ok=True)
+    macro = os.path.join(build, os.path.basename(args.composite_macro))
+    if not os.path.isfile(macro) or open(macro).read() != open(args.composite_macro).read():
+        shutil.copy2(args.composite_macro, macro)
     for rootdir, cdir, tag in sets:
         os.makedirs(os.path.join(cdir, "lists"), exist_ok=True)
         groups = {}
@@ -997,7 +1005,7 @@ def composite(run, configs, gc_dirs):
             log = os.path.join(D["logs"], f"composite{tag}_{name}.log")
             run.say(f"MakeComposite {name}{tag} ({len(files)} file(s))")
             with open(log, "w") as fh:
-                rc = subprocess.run([root_exe, "-l", "-q", "-b", f'{args.composite_macro}+("{lst}",{num},"{module}","{cdir}")'],
+                rc = subprocess.run([root_exe, "-l", "-q", "-b", f'{macro}+("{lst}",{num},"{module}","{cdir}")'],
                                     stdout=fh, stderr=subprocess.STDOUT).returncode
             plots = os.path.join(cdir, "Fe_55_Analysis_Plots", module, f"{name}_list")
             ok = rc == 0 and bool(glob.glob(os.path.join(plots, "compare", "*.png")))
@@ -1305,12 +1313,18 @@ def main(argv=None):
     mods_of = module_resolver(run)
 
     # ---- inputs: traces / L1 / images; which images need processing
+    l0_pages = False
     if args.packet:
         cls = packet_traces(run, files)
         run.images = cls["image"] + cls["l1"]
         images, l1_fits = raw_inputs(run, l1_skips="all")
     else:
         images, l1_fits = raw_inputs(run)
+        # level-0 traces / PSD traces also get the commissioning pages (trace view, noise spectrum) without --packet
+        cls0 = packet_traces(run, [p for p in files if RAW_INPUT.search(p)])
+        if cls0["trace"] or cls0["psd"]:
+            l0_pages = True
+            run.say(f"level-0 pages: {len(cls0['trace'])} trace(s), {len(cls0['psd'])} PSD trace(s) -> packet/")
         if args.stitch and images:                   # continuous readout: consecutive images joined (engine/stitch.py)
             import stitch as ST
             made = ST.write_stitched(ST.group_images(images, args.stitch, args.stitch_gap), os.path.join(out, "stitched"),
@@ -1382,13 +1396,14 @@ def main(argv=None):
         e = run.camp.entry(p)
         for t in tools_now:
             run.camp.add(p, t, kind="image", stem=e.get("stem") or image_stem(p), dataset=run.dataset)
-    run.camp.add_run(sys.argv, tools_now, list(need), done,
+    run.camp.add_run(sys.argv, tools_now + (["packet"] if l0_pages else []), list(need), done,
                      [ln for k in ("raw", "front", "gc", "comp") for ln in run.lines[k]])
     run.camp.save()
 
     # ---- every report and overview from everything the campaign holds
     # the tools whose pages change: those of this run that got a new input, or whose images were processed now
-    scope = {t for t in tools_now if fresh.get(t) or need} | ({"images"} if need else set())
+    scope = {t for t in tools_now if fresh.get(t) or need} | ({"images"} if need else set()) | \
+        ({"packet"} if l0_pages else set())
     refresh = bool(args.refresh_all or args.criteria or args.reprocess)
     configs, rows, roots, tool_lines = render_all(run, crit, mods_of, fresh, scope, refresh)
     run.camp.save()

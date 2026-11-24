@@ -7,7 +7,7 @@ images -> FITS per number of skips -> pipeline -> noise vs N (docs/native_pipeli
 
 ## Status (2026-11-11, end of day): all six items have a first version
 
-See docs/CICERO_user_guide.md (how to use, what was checked, the data needed). Done today: report usability
+See CICERO/docs/CICERO_user_guide.md (how to use, what was checked, the data needed). Done today: report usability
 (help panel, hints, plot buttons, viewer zoom / colour bar / PNG, flagged tabs, searchable index), L1 diagnostics,
 --dc-series, --defect-map (group scripts + defect log + interactive map), --sr (streak finder), binned decode_l1 in
 ccd_opt_ml (branch binned-l1, 7 tests pass; synced). Waiting for data (guide section 5) to validate thresholds.

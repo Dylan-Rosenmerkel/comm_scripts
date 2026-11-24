@@ -926,13 +926,13 @@ def split_active_overscan(data, cfg):
     starts from. Without an overscan (windowed readout) the row median of the active
     region is used instead.
     data: 2-D extension image (rows, cols) in ADU; cfg: analysis geometry from
-    geometry() (id_row_start, n_cols_prescan, ccd_cols = first overscan column).
+    geometry() (id_row_start, n_cols_prescan, ccd_cols = first overscan column, first_overscan_row).
     Returns (act: raw active pixels, x: baseline-subtracted active pixels,
     xo: baseline-subtracted overscan (= x without overscan), nrows, a0: first
     active column, no_ovs: True if there are fewer than 3 overscan columns).
     """
     r0 = cfg["id_row_start"]
-    d = data[r0:, :].astype(float)
+    d = data[r0:cfg.get("first_overscan_row", data.shape[0]), :].astype(float)   # no row overscan
     nrows = d.shape[0]
     a0, a1 = cfg["n_cols_prescan"], cfg["ccd_cols"]
     act, ovs = d[:, a0:a1], d[:, a1:]
@@ -2244,7 +2244,10 @@ def geometry(h0, hdul, img, args):
     h0: primary FITS header; hdul: open FITS file; img: the reference's
     input.image block; args: uses --ccd-cols. The analysis settings (dict) are in
     BINNED columns: id_row_start, n_cols_prescan, ccd_cols (first overscan
-    column), no_overscan.
+    column), no_overscan, first_overscan_row (rows read after the last CCD row,
+    from PHYSROW - NROWPRE and NPBIN; = the number of rows when there are none).
+    A row overscan holds the dark charge the empty rows collect on their way through
+    the whole CCD during the readout, so it is neither active area nor a baseline.
     """
     ncol = int(h0.get("NCOL", hdul[1].header["NAXIS1"]))
     nsbin = int(h0.get("NSBIN", 1)) or 1
@@ -2269,7 +2272,18 @@ def geometry(h0, hdul, img, args):
            "no_overscan": first_ovs >= ncol - 2}
     if cfg["no_overscan"]:
         cfg["n_cols_prescan"] = 0      # windowed readout: no prescan either
+    cfg["first_overscan_row"] = first_overscan_row(h0, int(h0.get("NROW", hdul[1].header.get("NAXIS2", 0)) or 0))
     return ccd_cols, cfg, ncol, nsbin
+
+
+def first_overscan_row(h0, nrow):
+    """First row (binned) read after the last row of the CCD: ceil((PHYSROW - NROWPRE) / NPBIN) when the image has
+    more rows than that (e.g. 1600 rows of a 1536-row CCD), else nrow (no row overscan, or PHYSROW unknown)."""
+    if "PHYSROW" not in h0 or nrow <= 0:
+        return nrow
+    npbin = int(h0.get("NPBIN", 1) or 1)
+    rows = int(math.ceil((float(h0["PHYSROW"]) - float(h0.get("NROWPRE", 0) or 0)) / npbin))
+    return rows if 0 < rows < nrow else nrow
 
 
 def gain_priors(j, names, args):

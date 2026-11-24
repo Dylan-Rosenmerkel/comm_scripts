@@ -129,10 +129,11 @@ def read_image(path, autoconfig_args=()):
 
 
 def regions(shape, geo):
-    """Boolean masks (active, overscan) of one CCD as panaSKImg: all rows; active columns n_cols_prescan .. first
-    overscan column; overscan the columns after it (empty if the image has none)."""
+    """Boolean masks (active, overscan) of one CCD as panaSKImg: active columns n_cols_prescan .. first overscan
+    column; overscan the columns after it (empty if the image has none). Unlike panaSKImg, rows read after the last
+    CCD row (first_overscan_row on) are not active: they hold only readout dark charge, no exposure."""
     act = np.zeros(shape, bool)
-    act[:, geo["n_cols_prescan"]:geo["ccd_cols"]] = True
+    act[:geo.get("first_overscan_row", shape[0]), geo["n_cols_prescan"]:geo["ccd_cols"]] = True
     ovs = np.zeros(shape, bool)
     ovs[:, geo["ccd_cols"]:] = True
     return act, ovs
@@ -1489,7 +1490,7 @@ def auto_tasks(imgs, out, kw, gain=None, gain_file=None, skip_start=0, log=print
                     break
                 geo = rec["geometry"]["value"]
                 act = np.zeros(c["e_img"].shape, bool)
-                act[:, geo["first_active_col"]:geo["first_overscan_col"]] = True
+                act[:geo.get("first_overscan_row", act.shape[0]), geo["first_active_col"]:geo["first_overscan_col"]] = True
                 valid = agmx_valid(c["e_img"].shape, act, geo["id_row_start"],
                                    (int(geo.get("npbin", 1) or 1), int(geo.get("nsbin", 1) or 1)))
                 for col in (t[2].get("mask_cols") or {}).get(n, []):

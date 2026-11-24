@@ -13,6 +13,13 @@ run_CICERO INPUT [-o PARENT] [-j N] [options]   # INPUT: an image, a raw DAQ fil
 run_CICERO -h                                   # the flags;   -h -v: the full guide
 ```
 
+**Install:** copy this folder anywhere (it needs nothing else from comm_scripts) and make the Python environment once:
+`conda env create -f CICERO/environment.yml` (or mamba / micromamba; conda-forge, Linux or macOS). Then run
+`CICERO/run_CICERO` from anywhere: it finds the environment by itself (`--env NAME` or `$CICERO_ENV` to choose).
+Everything it runs is in this folder, including the copies of the DAQ decoders (`commissioning/raw_levels/`), the
+defect-map script (`commissioning/lsm_defects/`) and the Fe-55 composite macro (`commissioning/lsm_composite/`).
+What has been checked on which data, and what is open: [docs/STATUS.md](docs/STATUS.md).
+
 `bin/run_CICERO` (on your PATH with the rest of `comm_scripts/bin`) starts `CICERO/run_CICERO`. Results
 go to `PARENT/CICERO_<run name>/`; read `summary.txt` first. Python: the `damic` conda environment (numpy,
 astropy, scipy, numba, scikit-image, matplotlib, ROOT), found automatically (`--env NAME` or `$CICERO_ENV`).
@@ -234,7 +241,7 @@ the Bayesian switch only runs in `auto`).
 | fits and clusters | `run_CICERO images.txt [--gain-correction] [--composite --module-list modules.csv]` | `index.html`, `images/index.html`, `root/` (+ `root_gaincorr*/`), `summary.txt`, `fit_quality.csv`, plots, `characterisation/` |
 | add to a campaign | any of these with `--campaign DIR` | the same, for everything the campaign holds |
 | CCDs without a comb | `... --gain 1.3` or `--gain EXT1=1.3,EXT4=0.82` or `--gain-file gains.json` | flagged in `summary.txt` |
-| L0 traces / PSD traces | `run_CICERO traces.txt [--l0-no-html]` | `L0/<trace>/` |
+| L0 traces / PSD traces | `run_CICERO traces.txt [--l0-no-html]` | `packet/` (trace view and noise spectrum per module, as in commissioning), `L0/<trace>/` (plots, viewer) |
 | L1 images (binned or not) | `run_CICERO l1.txt --l1-skips 1,10,100,1000 [--l1-skip-first K]` | `L1/`: one FITS per N, noise vs N, diagnostics |
 | commissioning packet | `run_CICERO packet.txt --packet --module-list modules.csv` | `packet/` (one page per module) |
 | dark current over a series | `run_CICERO series.txt --dc-series [--dc-limit X] [--no-clusters]` | `dc_series/` |
@@ -242,7 +249,7 @@ the Bayesian switch only runs in `auto`).
 | serial-register images | `run_CICERO sr.txt --sr [--sr-threshold 4] [--sr-min-length 3] [--no-clusters]` | `sr/` |
 
 The commissioning tools (inputs, pages, what was checked, the data still needed) are described in
-[docs/CICERO_user_guide.md](../docs/CICERO_user_guide.md).
+[docs/CICERO_user_guide.md](docs/CICERO_user_guide.md).
 
 ## Layout
 
@@ -257,7 +264,10 @@ CICERO/
   commissioning/        campaign (ledger, records, criteria, verdicts, overview pages), worker (one image -> its
                         record), ccd_metrics, overview_template.html, criteria_default.json,
                         raw_data (+ raw_levels/), packet_report (+ module page template), dc_series, defects
-                        (+ lsm_defects/), sr_images, compare_dcfit_vs_skips
+                        (+ lsm_defects/), lsm_composite/ (the Fe-55 composite macro), sr_images,
+                        compare_dcfit_vs_skips
+  docs/                 STATUS.md (checked / open), user guide, plan, efficiency notes
+  environment.yml       the conda environment
   tests/                python -m unittest discover -s CICERO/tests -v
 ```
 
@@ -268,46 +278,18 @@ Where the files came from (2026-11-12). They are now CICERO's own and can change
 - `clustering/`: `clustering_tests/` and `wip/lowdc/bayes/`;
 - `commissioning/`: `src/` and `utils/compare_dcfit_vs_skips.py`.
 
-`raw_levels/` (ccd_opt_ml) and `lsm_defects/` (LSM_Module_Testing_Analysis) are kept in sync with their own
+`raw_levels/` (ccd_opt_ml), `lsm_defects/` and `lsm_composite/` (LSM_Module_Testing_Analysis) are kept in sync with their own
 repositories by `utils/sync_from_ccd_opt_ml.py` and `utils/sync_from_lsm_analysis.py` (both update `src/` and
 `CICERO/`; `--dest CICERO` updates this folder only).
 
 ## Efficiency
 
-Recorded, not applied: [docs/CICERO_efficiency_notes.md](../docs/CICERO_efficiency_notes.md).
-- **Ready as a patch:** three exact or near-exact speed-ups to A_GMX's background map (2.8× on electron-counting CCDs,
-  100× on noisy ones), in `docs/patches/CICERO_efficiency_E1-E3.patch`.
+Notes: [docs/CICERO_efficiency_notes.md](docs/CICERO_efficiency_notes.md).
+- **Applied (2026-11-13):** three exact or near-exact speed-ups to A_GMX's background map (2.8× on electron-counting
+  CCDs, 100× on noisy ones; the patch is kept in `docs/patches/CICERO_efficiency_E1-E3.patch`).
 - **Larger items:** the few-electron threshold simulation, double fits, per-CCD parallelism.
 
 ## What has been checked
 
-- **Engine (fits, pedestal, threshold clustering, ROOT format):** the same code as `run_WADERs --engine native`,
-  validated against panaSKImg (`docs/native_pipeline.md`, `docs/native_pipeline_validation.md`).
-- **The any-image front end and `--clusterer auto`:** `wip/native_pipeline/ANYIMAGE.md`: a suite of 16 cases, mostly real data (plus a few synthetic files).
-  - DM09 Image_5: identical to A_GMX.
-  - Fe-55 Image_8: K-alpha within 1 eV.
-  - Injected few-electron events on real L2 noise: 58 / 64 found.
-- **This command (2026-11-12), on synthetic images** (4 CCDs per image, each CCD a different case). PyROOT was not
-  available, so the ROOT files were written by a test stand-in.
-  - Each case went to its chain: Fe-55-like -> A_GMX; low dark charge -> A_GMX + Bayes (run-pooled over 3 images);
-    dense tracks -> crowded mode; 1.5 e- noise -> unmodelled; flooded and unresolved -> threshold.
-  - Also run: `--clusterer agmx` / `threshold`, `--gain-correction both`, `--no-clusters` with `--dc-series`
-    `--defect-map` `--sr`.
-- **Campaigns (2026-11-12, synthetic):**
-  - 26 modules fed as a packet of 3 modules (`--packet`, 1-skip + 500-skip images), then two packets of 13, then
-    `--dc-series --defect-map` over everything.
-  - Each run processed only the new images; images first given as a packet got their cluster files when given as
-    images.
-  - The images overview gave 95 pass / 1 warn / 8 fail on the 500-skip view: the nine injected faults flagged, no
-    healthy CCD flagged. The 4 ADU baseline step fails at 76× the row-to-row scatter; the 1-skip view (12 CCDs) all
-    passes.
-  - A new image of one module redid only that module's defect group; new criteria re-judged everything with no new
-    fit; an unchanged rerun took about 1 s.
-- **Not yet run with this command on real data** (only through `wip/native_pipeline`). Before relying on it, a
-  first run on known data is worth comparing with `run_WADERs --engine native --clusterer agmx`, e.g. DM09 Image_5.
-  The open points of the front end are in `wip/native_pipeline/ANYIMAGE.md`:
-  - the crowded-mode cut 0.10 (PD06 sits at it);
-  - binned images (clustering not adapted to the bin size);
-  - skip-resolved data (synthetic file only);
-  - sibling gains;
-  - the Bayesian switch's halo and block-boundary tests.
+On which data each part was checked, and what is still open: [docs/STATUS.md](docs/STATUS.md). The engine's
+validation against panaSKImg is in the comm_scripts repository (`docs/native_pipeline_validation.md`).

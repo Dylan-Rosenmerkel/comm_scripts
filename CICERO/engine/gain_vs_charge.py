@@ -414,7 +414,7 @@ def ext_pixels(data, cfg, g0):
     """
     r0 = cfg["id_row_start"] + 3                     # skip the first rows (transient)
     a0, a1 = max(cfg["n_cols_prescan"], 1), cfg["ccd_cols"]
-    d = data[r0:].astype(float)
+    d = data[r0:cfg.get("first_overscan_row", data.shape[0])].astype(float)   # no row overscan
     if d.shape[1] - (a1 + 2) >= 3:
         x = d[:, a0:a1] - np.median(d[:, a1 + 2:], axis=1, keepdims=True)
     else:

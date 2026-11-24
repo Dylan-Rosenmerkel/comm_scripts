@@ -73,7 +73,7 @@ def make_record(path, s, kw, opts):
         rec["packet_numbers"] = {str(k): v for k, v in PR.image_numbers(s, meta).items()}
     gains = {e: c.get("gain") for e, c in s["ccds"].items() if "gain" in c}
     try:
-        rec["metrics"], rec["crosstalk"] = CM.image_metrics(path, gains, (geo["n_cols_prescan"], geo["ccd_cols"]))
+        rec["metrics"], rec["crosstalk"] = CM.image_metrics(path, gains, (geo["n_cols_prescan"], geo["ccd_cols"], geo["first_overscan_row"]))
     except Exception as e:
         rec["metrics"], rec["crosstalk"] = {}, {}
         rec["metrics_error"] = f"{type(e).__name__}: {e}"

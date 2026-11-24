@@ -125,9 +125,10 @@ Data arriving packet by packet go into one campaign folder (`--campaign DIR`): o
 every tool (images, packet, dark current, defect maps, serial register) has an overview page (module × CCD grid
 with pass / warn / fail verdicts from a criteria file) combined in `DIR/index.html`; every page has review boxes
 (name, status, comment per CCD or report tab), kept in `DIR/reviews.js`; without `--campaign` a run
-stands alone. Clustering, campaigns, layout and what has been checked: [CICERO/README.md](CICERO/README.md);
-efficiency notes (not applied): [docs/CICERO_efficiency_notes.md](docs/CICERO_efficiency_notes.md). It needs the `damic`
-conda environment (found automatically). `run_WADERs --engine native` still runs `src/`'s copy of the native engine
+stands alone. Clustering, campaigns and layout: [CICERO/README.md](CICERO/README.md); what has been checked on
+which data and what is still open: [CICERO/docs/STATUS.md](CICERO/docs/STATUS.md). It needs the `damic` conda
+environment (`conda env create -f CICERO/environment.yml`; found automatically). The `CICERO/` folder can be copied on
+its own: it needs nothing else from this repository. `run_WADERs --engine native` still runs `src/`'s copy of the native engine
 (threshold or A_GMX clusters), unchanged.
 
 ```bash
@@ -137,7 +138,7 @@ run_CICERO -h                                                  # every flag;  -h
 
 Results: `PARENT/CICERO_<input name>/`; read `summary.txt` first. The full user guide, with what every
 number and plot means and what data are still needed to validate each tool, is
-[docs/CICERO_user_guide.md](docs/CICERO_user_guide.md).
+[CICERO/docs/CICERO_user_guide.md](CICERO/docs/CICERO_user_guide.md).
 
 ### Inputs
 
@@ -255,7 +256,7 @@ can be sent to others as it is.
 | `CICERO/clustering/` | A_GMX and the Bayesian few-electron finder |
 | `CICERO/commissioning/` (campaigns, overviews) | `campaign.py` (ledger, records, criteria, verdicts, overview pages), `worker.py` (one image -> its record), `ccd_metrics.py`, `overview_template.html`, `criteria_default.json` (placeholder limits), `reviews.py` + `review_widget.js` (reviews) |
 | `CICERO/commissioning/` (tools) | `raw_data.py` + `raw_levels/` (L0 / L1; copies from ccd_opt_ml, `utils/sync_from_ccd_opt_ml.py`), `packet_report.py` + template, `dc_series.py`, `defects.py` + `lsm_defects/` (`utils/sync_from_lsm_analysis.py`), `sr_images.py` |
-| `CICERO/README.md`, `docs/CICERO_user_guide.md`, `docs/CICERO_commissioning_next_steps.md`, `docs/CICERO_efficiency_notes.md` | overview (incl. campaigns), user guide, plan and open items, efficiency notes (not applied) |
+| `CICERO/README.md`, `CICERO/docs/` (user guide, status, plan, efficiency notes) | overview (incl. campaigns), user guide, status (checked / open), plan, efficiency notes |
 
 **Not yet validated on real data** (see the user guide, section 5, for the data needed): a full commissioning packet
 (5-minute 1x1 1-skip and 10x10 500-skip images), serial-register images (tested only on synthetic data), the defect

@@ -14,7 +14,7 @@ Per image (the CCDs of one module are read at the same time):
   crosstalk   victim pixel ADU vs source charge [e-] where the source has > XT_SOURCE_E and the victim no event of
               its own (> 20 e-): slope with an intercept (the victim's dark-charge level and pedestal residual are
               not crosstalk), in e- per e-, with its error
-These read the image file once more (the engine's arrays are not reused here; see docs/CICERO_efficiency_notes.md).
+These read the image file once more (the engine's arrays are not reused here; see CICERO/docs/CICERO_efficiency_notes.md).
 """
 import math
 
@@ -39,7 +39,8 @@ def regions(h0, shape):
 
 def image_metrics(path, gains, geo=None):
     """({ext: metrics}, {'EXTa->EXTb': [coefficient, error]}) of one image. gains: {ext: gain [ADU/e-] or None}
-    (CCDs without a gain get only the ADU metrics). geo: (first active column, first overscan column) if known."""
+    (CCDs without a gain get only the ADU metrics). geo: (first active column, first overscan column[, first overscan
+    row]) if known; rows from the first overscan row on (readout dark charge only) are left out of the charge metrics."""
     from astropy.io import fits
     from scipy.ndimage import median_filter
     out, charge, gain_of = {}, {}, {}
@@ -49,7 +50,7 @@ def image_metrics(path, gains, geo=None):
                 if i > 0 and h.data is not None and np.ndim(h.data) == 2]
     for n, raw in exts:
         e = f"EXT{n}"
-        a0, o0 = geo if geo else regions(h0, raw.shape)
+        a0, o0, r1 = (tuple(geo) + (raw.shape[0],))[:3] if geo else regions(h0, raw.shape) + (raw.shape[0],)
         has_ovs = o0 < raw.shape[1] - 2
         base = np.median(raw[:, o0:], axis=1) if has_ovs else np.median(raw[:, a0:o0], axis=1)
         ps = raw - base[:, None]
@@ -71,7 +72,7 @@ def image_metrics(path, gains, geo=None):
         m["saturated_pixels"] = nsat if nsat >= 3 else 0
         g = gains.get(e)
         if g:
-            q = ps[:, a0:o0] / g
+            q = ps[:r1, a0:o0] / g
             charge[e], gain_of[e] = q, g
             f0 = np.mean(q < 0.5, axis=0)
             with np.errstate(divide="ignore"):

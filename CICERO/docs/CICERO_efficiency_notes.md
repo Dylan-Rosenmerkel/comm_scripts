@@ -2,7 +2,7 @@
 
 **2026-11-13: E1-E3 applied** after the check on real data (DM09 Image_5, Fe-55 DM28 Image_8, AMtest, single skip):
 same cluster counts and total energies in every file, DM09 and single skip identical, a few cluster energies on
-crowded CCDs moved by up to 9e-4 (relative); 10-45 % faster (docs/CICERO_plan_binned_crowded.md, section 0).
+crowded CCDs moved by up to 9e-4 (relative); 10-45 % faster (CICERO/docs/CICERO_plan_binned_crowded.md, section 0).
 The text below is the record from before.
 
 Found in the audit of 2026-11-12. **None of these changes is applied.** They are kept here, with the measurements,
@@ -26,9 +26,10 @@ Inside `background_map`:
 
 On a CCD with 1.5 e- read noise, `background_map` alone took 25 s, against about 5 s on an electron-counting CCD.
 
-## Ready, not applied: `docs/patches/CICERO_efficiency_E1-E3.patch`
+## Applied 2026-11-13: `CICERO/docs/patches/CICERO_efficiency_E1-E3.patch`
 
-Apply with `git apply docs/patches/CICERO_efficiency_E1-E3.patch`, after checking on real data.
+Applied 2026-11-13 after checking on real data (CICERO/docs/CICERO_plan_binned_crowded.md, section 0); the patch
+is kept for reference (it was made against the paths before the rename, superWADERs/).
 
 | # | change | file | measured effect | outputs |
 |---|---|---|---|---|

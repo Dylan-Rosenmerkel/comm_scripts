@@ -1,9 +1,10 @@
 # run_CICERO: user guide (2026-11-12)
 
 `run_CICERO` is a separate program (`CICERO/`; overview, clustering and layout in
-[CICERO/README.md](../CICERO/README.md)): its own engine (no panaSKImg), clustering chosen per CCD, and the
+[CICERO/README.md](../README.md)): its own engine (no panaSKImg), clustering chosen per CCD, and the
 commissioning tools below. It uses nothing from `run_WADERs` or `src/`. Python: the `damic` conda environment (found
-automatically).
+automatically; make it with `conda env create -f CICERO/environment.yml`). What has been checked on which data,
+and what is open: [STATUS.md](STATUS.md).
 
 ```
 run_CICERO INPUT [-o PARENT] [-j N] [options]       # INPUT: one file, or a .txt list (one path per line)
@@ -63,6 +64,8 @@ run_CICERO l1.txt --l1-skips 1,10,100,1000 [--l1-skip-first 20] [--no-clusters]
 ```
 run_CICERO traces.txt [--l0-no-html]
 ```
+`packet/`: the commissioning pages for the traces, as with `--packet` (one page per module: the trace view and,
+for psd_ traces, the noise spectrum; `packet/index.html` overview), also when `--packet` is not given.
 `L0/<trace>/overview.png`, `viewer.html` (interactive, whole trace), `summary.json`; the summary lists for each trace:
 samples, pixels x skips, skip cycle, inline vs raw sums (agree = decoder and firmware consistent), quality.
 
@@ -143,7 +146,7 @@ Commissioning data arrive packet by packet. Give every packet (or list) the same
 - **`DIR/index.html` combines every tool per CCD.**
 - **Without `--campaign`, a run stands alone:** a fresh folder with only its inputs and tools.
 
-Details, the verdicts and the criteria file are in [CICERO/README.md](../CICERO/README.md), section
+Details, the verdicts and the criteria file are in [CICERO/README.md](../README.md), section
 "Commissioning campaigns".
 
 ```
@@ -175,7 +178,7 @@ shows at once and is saved into the campaign folder (`DIR/reviews.js`) right awa
 `run_CICERO --campaign DIR` without input starts it), or in Chrome / Edge by the page itself (it asks for the
 folder once). Otherwise the review stays on the page and is saved by itself as soon as the helper runs. Saved
 reviews show on every page of the campaign and are listed in `DIR/reviews.csv` and `DIR/reviews.txt`. A review keeps the data and numbers it was written on; when newer data
-arrive it is marked "data changed since". Details: [CICERO/README.md](../CICERO/README.md), "Reviews".
+arrive it is marked "data changed since". Details: [CICERO/README.md](../README.md), "Reviews".
 
 ## 3. Using the HTML pages
 
@@ -251,4 +254,4 @@ Every page works offline (no network) in Chrome, Safari or Firefox; open it by d
 | DC series | `CICERO/commissioning/dc_series.py` |
 | defects | `CICERO/commissioning/defects.py`; group scripts copied in `lsm_defects/` (`utils/sync_from_lsm_analysis.py [--check]`) |
 | SR images | `CICERO/commissioning/sr_images.py` |
-| docs | this guide; `CICERO/README.md`; `docs/native_pipeline.md`, `docs/native_pipeline_validation.md` (engine validation), `docs/CICERO_commissioning_next_steps.md` |
+| docs | this guide; `CICERO/README.md`; `docs/native_pipeline.md`, `docs/native_pipeline_validation.md` (engine validation), `CICERO/docs/CICERO_commissioning_next_steps.md` |
