@@ -40,10 +40,9 @@ def main():
     ap.add_argument("--source", default=os.environ.get("CCD_OPT_ML", os.path.expanduser("~/Documents/Software/ccd_opt_ml")),
                     help="ccd_opt_ml checkout (default: $CCD_OPT_ML or ~/Documents/Software/ccd_opt_ml)")
     ap.add_argument("--check", action="store_true", help="only report which copies differ from the source")
-    ap.add_argument("--dest", choices=("both", "src", "CICERO", "superWADERs"), default="both",
+    ap.add_argument("--dest", choices=("both", "src", "CICERO"), default="both",
                     help="which copy to update (default both)")
     a = ap.parse_args()
-    a.dest = "CICERO" if a.dest == "superWADERs" else a.dest   # name before the rename
     rc = 0
     for key, dst in DESTS.items():
         if a.dest in ("both", key):

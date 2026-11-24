@@ -4,7 +4,7 @@ import os, sys
 import numpy as np
 R = os.environ.get("PROBE_REPO", os.path.expanduser("~/Documents/Software/comm_scripts"))
 for p in ("clustering", "engine"):
-    sys.path.insert(0, os.path.join(R, "superWADERs", p))
+    sys.path.insert(0, os.path.join(R, "CICERO", p))
 import adaptive as AD, agent_methods as AM
 lam = float(sys.argv[1]) if len(sys.argv) > 1 else 0.1
 b = int(sys.argv[3]) if len(sys.argv) > 3 else 100

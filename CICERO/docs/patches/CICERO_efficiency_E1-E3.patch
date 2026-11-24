@@ -1,5 +1,5 @@
---- a/superWADERs/clustering/agent_methods.py	2026-11-12 15:05:25.601953007 +0000
-+++ b/superWADERs/clustering/agent_methods.py	2026-11-12 15:53:15.102766998 +0000
+--- a/CICERO/clustering/agent_methods.py	2026-11-12 15:05:25.601953007 +0000
++++ b/CICERO/clustering/agent_methods.py	2026-11-12 15:53:15.102766998 +0000
 @@ -47,12 +47,28 @@
  # ----------------------------------------------------------------------------------------------------------
  # 1. background map
@@ -116,8 +116,8 @@
                          best = (sc, oi, truncated_poisson_mle(j - oi, K))
                  if best is not None:
                      changed += int(best[1] != int(np.round(o_r[r] - frac[r])))
---- a/superWADERs/clustering/adaptive.py	2026-11-12 15:05:25.601796566 +0000
-+++ b/superWADERs/clustering/adaptive.py	2026-11-12 16:08:06.887635928 +0000
+--- a/CICERO/clustering/adaptive.py	2026-11-12 15:05:25.601796566 +0000
++++ b/CICERO/clustering/adaptive.py	2026-11-12 16:08:06.887635928 +0000
 @@ -126,10 +126,15 @@
      if sigma is None:
          sigma = AM.read_noise(Q, valid)
@@ -137,8 +137,8 @@
      info = dict(sigma=sigma, sigma_crowd=sigma_crowd)
      streak_cl, hints = [], None
      cmode = (crowded or CROWDED).lower()
---- a/superWADERs/engine/characterise.py	2026-11-12 15:33:18.369963660 +0000
-+++ b/superWADERs/engine/characterise.py	2026-11-12 15:54:13.801497848 +0000
+--- a/CICERO/engine/characterise.py	2026-11-12 15:33:18.369963660 +0000
++++ b/CICERO/engine/characterise.py	2026-11-12 15:54:13.801497848 +0000
 @@ -522,13 +522,21 @@
          return dict(chain="threshold", why=plan.get("why", "flooded"), frac_above_4p5e=above, crowded="off",
                      fewe="off", fallbacks=fb, seconds=round(time.time() - t0, 2)), None, None

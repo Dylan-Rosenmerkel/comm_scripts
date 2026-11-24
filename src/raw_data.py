@@ -1,4 +1,4 @@
-"""Level-0 and level-1 raw skipper-CCD data for run_superWADERs (run_WADERs --engine native).
+"""Level-0 and level-1 raw skipper-CCD data for run_WADERs --engine native.
 
 The DAQ writes one binary file per channel, <name>.RJ45ADCDATA<ch>, next to <name>.meta (JSON: the settings that
 the FITS header of an image carries):

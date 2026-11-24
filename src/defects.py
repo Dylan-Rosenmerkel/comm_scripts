@@ -1,4 +1,4 @@
-"""Defect maps (run_superWADERs --defect-map): median composites and column defects with the group's Image_4 script,
+"""Defect maps (run_WADERs --engine native --defect-map): median composites and column defects with the group's Image_4 script,
 plus a defect log and an interactive defect map.
 
 The group's Image_4 (D. Venegas-Vargas, LSM_Module_Testing_Analysis/src; copy in src/lsm_defects/,
@@ -400,7 +400,7 @@ def run(images, out_dir, mods_of, autoconfig_args=(), log=print, nsig=5.0):
                         "value_adu", "seen_in"])
             w.writerows(csv_rows)
         size = PR.write_page(os.path.join(d, "defect_map.html"), name, f"{module} · ACM {acm} · {itype} · defect map",
-                             f"defect map (run_superWADERs --defect-map), {len(files)} image(s)", tabs, ccd_list)
+                             f"defect map (run_WADERs --engine native --defect-map), {len(files)} image(s)", tabs, ccd_list)
         nums = [[f"EXT{c + 1}", ", ".join(f"{t}: {sum(1 for r in csv_rows if r[2] == c + 1 and r[5] == t)}" for t, _ in TYPES)] for c in range(4)]
         index.append((module, acm, itype, "4 CCDs", os.path.join(name, "defect_map.html"), [t["label"] for t in tabs], nums, size, []))
         lines.append(f"  {name}: {len(files)} image(s) ({', '.join(kinds)}), {len(csv_rows)} defects (defects.csv, defect_map.html"

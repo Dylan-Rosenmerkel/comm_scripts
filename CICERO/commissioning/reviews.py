@@ -44,7 +44,7 @@ import shutil
 import sys
 import uuid
 
-FORMAT = "CICERO-reviews-1"          # written; files from before the rename say "superWADERs-reviews-1" (read the same)
+FORMAT = "CICERO-reviews-1"          # written into reviews.js; not checked when reading
 STATUSES = ("approved", "concern", "rejected", "note")
 TARGET_KEYS = ("tool", "module", "ext", "ccd", "acm", "dataset", "view", "page", "tab")
 

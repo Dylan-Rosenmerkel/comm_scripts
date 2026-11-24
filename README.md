@@ -112,8 +112,7 @@ within a few eV whenever an image's own comb was usable.
 
 ## run_CICERO: a separate program
 
-**CICERO**: CCD Image Calibration, Event Recognition, and Optimization (formerly superWADERs; the old command
-`run_superWADERs` still works and forwards to `run_CICERO`).
+**CICERO**: CCD Image Calibration, Event Recognition, and Optimization.
 
 `run_CICERO` (`CICERO/`, started by `bin/run_CICERO`) has its own engine, clustering and commissioning
 tools, and uses nothing from `bin/run_WADERs`, `src/`, `clustering_tests/` or `wip/` (its modules started as copies of

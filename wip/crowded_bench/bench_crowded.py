@@ -7,7 +7,7 @@ real crowded L2 ACM101 images (2026-09-22, images 9 and 10, core fill 0.27-0.31)
 Scene: the calibrated image [e-] of run WADERs_analysis_L2_101_20260922 (linear gain; the injected truth is in e- as
 well) + 25 muons (wip/agmx_crowded/inject_mu.sim_muons: L 40-400 px, Moyal knots, width 0.2 -> 0.8-1.6 px with depth)
 + 40 X-rays (1-8 keV, DAMIC diffusion, depth uniform). Binned b_y x b_x: the scene summed per bin (the image's own read
-noise is summed too: ~0.15 e- x b, small next to the tracks). A_GMX = superWADERs/clustering adaptive_cluster(engine gmx,
+noise is summed too: ~0.15 e- x b, small next to the tracks). A_GMX = CICERO/clustering adaptive_cluster(engine gmx,
 crowded 'auto', binning) with background_map.
 --base dm09: the scene is DM09 Image_5 (Fe-55, 3 images x 4 CCDs, whole electrons, core fill ~0.02 unbinned) with
 muons and X-rays at the same density per area; binned scenes get one read noise (0.16 e-) per bin.
@@ -115,7 +115,7 @@ def one(task):
     if os.path.exists(f):
         return f
     for p in ("clustering", "engine"):
-        sys.path.insert(0, os.path.join(REPO, "superWADERs", p))
+        sys.path.insert(0, os.path.join(REPO, "CICERO", p))
     import adaptive as AD
     import agent_methods as AM
     if base == "dm09":                    # counts per area as on L2 (25 muons, 40 X-rays per 1.63 Mpix)

@@ -1,4 +1,4 @@
-"""Commissioning packet report (run_superWADERs --packet): one interactive HTML page per module from the files of a
+"""Commissioning packet report (run_WADERs --engine native --packet): one interactive HTML page per module from the files of a
 packet, plus an index.
 
 A packet is a list of files in any order (.txt), of these types (recognised from the file, not the order):
@@ -414,7 +414,7 @@ def build(paths, out_dir, module_list=None, autoconfig_args=(), log=print, mods_
         path = os.path.join(pdir, rid + ".html")
         nfiles = len({f[1] for it in items for f in it[5]})
         size = write_page(path, rid, f"{name} · {len(items)} CCD(s)",
-                          f"commissioning packet report (run_superWADERs --packet), {nfiles} file(s)", tabs, ccd_list)
+                          f"commissioning packet report (run_WADERs --engine native --packet), {nfiles} file(s)", tabs, ccd_list)
         index.append((module, ", ".join(sorted({str(a) for a, *_ in items})), ", ".join(f"EXT{e}" for _, e, *_ in items),
                       ", ".join(c for _, _, c, *_ in items), os.path.basename(path), [tb["label"] for tb in tabs[1:]],
                       [[f"EXT{e} " + str(k), v] for _, e, _, _, nums, _ in items for k, v, *_ in nums], size,

@@ -1,4 +1,4 @@
-"""Serial-register (SR) images (run_superWADERs --sr): images of the horizontal register only. Every image "row" is
+"""Serial-register (SR) images (run_WADERs --engine native --sr): images of the horizontal register only. Every image "row" is
 one more readout of the register, so rows are reads in time, not positions on the CCD.
 
 Serial-register events are streaks in the serial register: readout artifacts, i.e. runs of charged pixels along a
@@ -190,7 +190,7 @@ def run(images, summaries, out_dir, mods_of, meta_of, thr_sigma=4.0, min_len=3, 
     for mod, its in sorted(modules.items()):
         rid, name, ccds, tabs = PR.module_page(mod, [it[:4] for it in its])
         size = PR.write_page(os.path.join(d, rid + "_sr.html"), rid + "_sr", f"{name} · serial register",
-                             "serial-register images (run_superWADERs --sr)", tabs, ccds)
+                             "serial-register images (run_WADERs --engine native --sr)", tabs, ccds)
         index.append((mod, ", ".join(sorted({str(a) for a, *_ in its})), ", ".join(f"EXT{e}" for _, e, *_ in its),
                       ", ".join(c for _, _, c, *_ in its), rid + "_sr.html", [t["label"] for t in tabs],
                       [[f"EXT{e} streaks", str(k)] for _, e, _, _, k in its], size, []))

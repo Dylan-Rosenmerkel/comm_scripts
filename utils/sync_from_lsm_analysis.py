@@ -29,10 +29,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--source", default=os.path.expanduser("~/Documents/LSM_Module_Testing_Analysis"))
     ap.add_argument("--check", action="store_true", help="only report which copies differ from the source")
-    ap.add_argument("--dest", choices=("both", "src", "CICERO", "superWADERs"), default="both",
+    ap.add_argument("--dest", choices=("both", "src", "CICERO"), default="both",
                     help="which copy to update (default both)")
     a = ap.parse_args()
-    a.dest = "CICERO" if a.dest == "superWADERs" else a.dest   # name before the rename
     rc = 0
     for key, dests in DESTS.items():
         if a.dest in ("both", key):

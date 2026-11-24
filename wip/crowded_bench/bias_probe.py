@@ -91,7 +91,7 @@ def _one(task):
     if os.path.exists(f):
         return f
     for p in ("clustering", "engine"):
-        sys.path.insert(0, os.path.join(REPO, "superWADERs", p))
+        sys.path.insert(0, os.path.join(REPO, "CICERO", p))
     import adaptive as AD
     import agent_methods as AM
     from scipy import ndimage as ndi

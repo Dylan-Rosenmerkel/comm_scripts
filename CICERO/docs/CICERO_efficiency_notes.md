@@ -29,7 +29,7 @@ On a CCD with 1.5 e- read noise, `background_map` alone took 25 s, against about
 ## Applied 2026-11-13: `CICERO/docs/patches/CICERO_efficiency_E1-E3.patch`
 
 Applied 2026-11-13 after checking on real data (CICERO/docs/CICERO_plan_binned_crowded.md, section 0); the patch
-is kept for reference (it was made against the paths before the rename, superWADERs/).
+is kept for reference.
 
 | # | change | file | measured effect | outputs |
 |---|---|---|---|---|

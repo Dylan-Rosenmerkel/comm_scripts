@@ -2,7 +2,7 @@
 many images, any binning, consecutive images of a continuous readout.
 
     python bench_lowbg.py make OUT [--bins 1x1 10x10 ...] [--dc 1e-6 1e-5 1e-4] [--n 20]
-    python bench_lowbg.py run OUT                         run_superWADERs --gain 1.3 on every (binning, dark current)
+    python bench_lowbg.py run OUT                         run_CICERO --gain 1.3 on every (binning, dark current)
     python bench_lowbg.py analyse OUT                     OUT/report.md, report.json
 
 Simulation (per CCD, 2 CCDs per image):
@@ -119,7 +119,7 @@ def make_setting(out, by, bx, dc, n_img, seed, rate=1.0):
 
 
 def run(out, jobs=2, parallel=1, extra=()):
-    """run_superWADERs on every setting not done yet (no summary.txt), `parallel` settings at a time, -j jobs each"""
+    """run_CICERO on every setting not done yet (no summary.txt), `parallel` settings at a time, -j jobs each"""
     from concurrent.futures import ThreadPoolExecutor
 
     def one(sd):
@@ -127,12 +127,12 @@ def run(out, jobs=2, parallel=1, extra=()):
         lst = os.path.join(sd, "images.txt")
         open(lst, "w").write("\n".join(imgs) + "\n")
         with open(os.path.join(sd, "run.log"), "w") as fh:
-            rc = subprocess.run([PY, os.path.join(REPO, "superWADERs", "run_superWADERs"), lst, "-o", sd, "-j", str(jobs),
+            rc = subprocess.run([PY, os.path.join(REPO, "CICERO", "run_CICERO"), lst, "-o", sd, "-j", str(jobs),
                                  "--overwrite", "--no-review-helper", "--gain", str(G)] + list(extra),
                                 stdout=fh, stderr=subprocess.STDOUT).returncode
         print(os.path.basename(sd), "rc", rc, flush=True)
     todo = [sd for sd in sorted(glob.glob(os.path.join(out, "*_dc*")))
-            if not glob.glob(os.path.join(sd, "superWADERs_*", "summary.txt"))]
+            if not glob.glob(os.path.join(sd, "CICERO_*", "summary.txt"))]
     with ThreadPoolExecutor(max_workers=parallel) as ex:
         list(ex.map(one, todo))
 
@@ -148,7 +148,7 @@ def analyse(out):
     rep = {}
     for sd in sorted(glob.glob(os.path.join(out, "*_dc*"))):
         T = json.load(open(os.path.join(sd, "truth.json")))
-        rd = glob.glob(os.path.join(sd, "superWADERs_*"))
+        rd = glob.glob(os.path.join(sd, "CICERO_*"))
         if not rd:
             continue
         rd = rd[0]
@@ -259,9 +259,9 @@ def main():
     ap.add_argument("--dc", nargs="*", type=float, default=[1e-6, 1e-5, 1e-4])
     ap.add_argument("--n", type=int, default=20)
     ap.add_argument("--rate", type=float, default=1.0, help="event rate x this (1: ~6 few-e, 2 X-rays, 0.5 muons per image)")
-    ap.add_argument("-j", "--jobs", type=int, default=2, help="workers per run_superWADERs run")
+    ap.add_argument("-j", "--jobs", type=int, default=2, help="workers per run_CICERO run")
     ap.add_argument("--parallel", type=int, default=1, help="settings run at the same time")
-    ap.add_argument("--extra", default="", help="more run_superWADERs arguments, e.g. '--clusterer threshold'")
+    ap.add_argument("--extra", default="", help="more run_CICERO arguments, e.g. '--clusterer threshold'")
     a = ap.parse_args()
     if a.what in ("make", "all"):
         for k, b in enumerate(a.bins):

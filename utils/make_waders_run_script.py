@@ -377,9 +377,9 @@ def strip_native_engine(text):
     """--engine native (src/native_pipeline.py) is comm_scripts-only: this version always runs panaSKImg. Removes
     the engine help, --engine / --thresholds, the dispatch and the native section, and the optional parameters added
     for it to env_ready / ensure_environment / step4_summary (so those read as before)."""
-    text = cut(text, "engine (--engine; default waders for run_WADERs, native for run_superWADERs):",
+    text = cut(text, "engine (--engine; default waders):",
                "output (WADERs_analysis_<run name>/):", "")
-    text = cut(text, "    if SUPER:                                   # started as bin/run_superWADERs",
+    text = cut(text, "    if SUPER:                                   # started as bin/run_CICERO",
                '    ap.add_argument("--all-ext", action="store_true",', "")
     text = sub(text, "    check_engine(args, auto)\n", "")
     text = sub(text, "    run_name, images = read_inputs_any(args)\n", "    run_name, images = read_inputs(args.input)\n")

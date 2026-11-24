@@ -1,17 +1,17 @@
-"""Validation of superWADERs/run_superWADERs (the program, not the wip copies) on every data type on this machine,
+"""Validation of CICERO/run_CICERO (the program, not the wip copies) on every data type on this machine,
 plus the switch tests that were never run and the efficiency patch E1-E3. Meant to run unattended in the background.
 
     python run_validation.py OUT [--stages 1,2,3]
 
 Stage 1 (suite): the cases of wip/native_pipeline/run.py (DM09, Fe-55 Image_8 DM07/27/28, PD06, AMtest, L2 ACM 103
          and its strips, injected few-electron events, binned, synthetic raw skips, single skip, std image) through
-         run_superWADERs --clusterer auto (no g(n) curve, all CCDs: the program has no --curve / --ext), judged by
+         run_CICERO --clusterer auto (no g(n) curve, all CCDs: the program has no --curve / --ext), judged by
          run.py's own check(), and compared with that suite's earlier results (suite.json of the wip engine).
          DM09 also with --clusterer agmx, and through bin/run_WADERs --engine native --clusterer agmx: the clusters of
          the three must be identical (DM09 is chosen A_GMX everywhere).
 Stage 2 (switch, in parallel with stage 1): wip/lowdc/switch_validation halo_test, boundary_test, real_l2_switch
          (live modules), 2 processes.
-Stage 3 (efficiency): docs/patches/superWADERs_efficiency_E1-E3.patch in a git worktree; dm09, dm28, single_skip and
+Stage 3 (efficiency): CICERO/docs/patches/CICERO_efficiency_E1-E3.patch in a git worktree; dm09, dm28, single_skip and
          amtest again; clusters and times against stage 1.
 Results: OUT/report.json, OUT/report.md, logs per run. At most 4 heavy processes at a time.
 """
@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.join(REPO, "wip", "native_pipeline"))
 import run as R          # noqa: E402  (cases, check, read_clusters, kalpha_per_ext of the earlier suite)
 
 OLD_SUITE = os.path.join(R.OUT, "suite.json")
-PATCH = os.path.join(REPO, "docs", "patches", "superWADERs_efficiency_E1-E3.patch")
+PATCH = os.path.join(REPO, "CICERO", "docs", "patches", "CICERO_efficiency_E1-E3.patch")
 SWV = os.path.join(REPO, "wip", "lowdc", "switch_validation")
 
 
@@ -41,7 +41,7 @@ def log(msg, fh=None):
 
 
 def prog_args(args):
-    """the earlier suite's arguments without --curve X and --ext a b c (run_superWADERs has neither)"""
+    """the earlier suite's arguments without --curve X and --ext a b c (run_CICERO has neither)"""
     out, skip = [], 0
     for i, a in enumerate(args):
         if skip:
@@ -59,18 +59,18 @@ def prog_args(args):
 
 
 def run_prog(name, images, args, out, repo=REPO, extra=()):
-    """one run of superWADERs/run_superWADERs; returns (rc, seconds, run folder)"""
+    """one run of CICERO/run_CICERO; returns (rc, seconds, run folder)"""
     d = os.path.join(out, name)
     os.makedirs(d, exist_ok=True)
     lst = os.path.join(d, "images.txt")
     with open(lst, "w") as fh:
         fh.write("\n".join(images) + "\n")
-    cmd = [PY, os.path.join(repo, "superWADERs", "run_superWADERs"), lst, "-o", d, "-j", "2", "--overwrite",
+    cmd = [PY, os.path.join(repo, "CICERO", "run_CICERO"), lst, "-o", d, "-j", "2", "--overwrite",
            "--no-review-helper"] + list(args) + list(extra)
     t0 = time.time()
     with open(os.path.join(d, "run.log"), "w") as fh:
         rc = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT).returncode
-    rd = os.path.join(d, "superWADERs_images")
+    rd = os.path.join(d, "CICERO_images")
     syn = os.path.join(d, "synthetic")                          # run.py's checks read the truth of synthetic cases there
     if not os.path.exists(syn) and os.path.isdir(os.path.join(R.OUT, "synthetic")):
         os.symlink(os.path.join(R.OUT, "synthetic"), syn)
@@ -173,7 +173,7 @@ def stage1(out, only=None):
                         os.symlink(f, dst)
                 old_root = clusters_of(tmp)
                 break
-        a_auto = clusters_of(os.path.join(out, "suite", "dm09", "superWADERs_images"))
+        a_auto = clusters_of(os.path.join(out, "suite", "dm09", "CICERO_images"))
         a_agmx = clusters_of(rd_agmx)
         rep["dm09_identity"] = dict(auto_vs_agmx=compare_clusters(a_auto, a_agmx),
                                     program_agmx_vs_run_WADERs_native=compare_clusters(a_agmx, old_root),
@@ -206,7 +206,7 @@ def stage3(out, rep1):
         imgs = [p for p in c["images"] if os.path.exists(p)]
         log(f"stage 3: {name} with E1-E3")
         rc, sec, rd = run_prog(name, imgs, prog_args(c["args"]), os.path.join(out, "patched"), repo=wt)
-        base = os.path.join(out, "suite", name, "superWADERs_images")
+        base = os.path.join(out, "suite", name, "CICERO_images")
         rep[name] = dict(rc=rc, seconds=sec, seconds_unpatched=(rep1.get(name) or {}).get("seconds"),
                          clusters=compare_clusters(clusters_of(base), clusters_of(rd)))
         d = rep[name]["clusters"]
@@ -217,7 +217,7 @@ def stage3(out, rep1):
 
 def write_report(out, rep):
     json.dump(rep, open(os.path.join(out, "report.json"), "w"), indent=1, default=str)
-    L = ["# superWADERs validation", ""]
+    L = ["# CICERO validation", ""]
     s1 = rep.get("stage1", {})
     if s1:
         L += ["## Stage 1: the program on every data type", "",

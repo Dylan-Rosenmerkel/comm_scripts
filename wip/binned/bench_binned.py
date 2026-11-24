@@ -1,15 +1,15 @@
-"""Binned-image benchmark with truth (plan docs/superWADERs_plan_binned_crowded.md, 1.6).
+"""Binned-image benchmark with truth (plan CICERO/docs/CICERO_plan_binned_crowded.md, 1.6).
 
 Real unbinned images are binned in software the way the CCD bins on chip: the electron counts of b_y x b_x pixels are
 summed (the dark charge and every event with them) and the read noise is added ONCE per bin. The unbinned images'
-own clusters (run_superWADERs, --clusterer auto) are the truth.
+own clusters (run_CICERO, --clusterer auto) are the truth.
 
     python bench_binned.py make OUT [--bins 2x2 5x5 10x10 2x1 1x1]   binned FITS per setting (1x1: re-noised, sanity)
-    python bench_binned.py run OUT                                    run_superWADERs on every setting + the unbinned
+    python bench_binned.py run OUT                                    run_CICERO on every setting + the unbinned
     python bench_binned.py analyse OUT                                report.md / report.json
 
 Source: DM09 Image_5 (3 images x 4 CCDs, Fe-55, 480 x 1280, no overscan). Electrons per pixel = round(pedestal-
-subtracted ADU / gain) from superWADERs' engine (read noise ~0.15 e-, so the rounding is the counting itself).
+subtracted ADU / gain) from CICERO's engine (read noise ~0.15 e-, so the rounding is the counting itself).
 Per bin: sum of the integer electrons + N(0, sigma_read) e-, x gain, + a pedestal of 1000 ADU. Header: NPBIN / NSBIN
 = b_y / b_x, NROW / NCOL binned, PRESCAN 0 (the 8 prescan columns are dropped before binning).
 
@@ -41,9 +41,9 @@ def images():
 
 
 def electrons(path):
-    """{ext: (e- per pixel as integers [rows, active cols], gain, read noise e-)} from superWADERs' engine"""
-    sys.path.insert(0, os.path.join(REPO, "superWADERs", "engine"))
-    sys.path.insert(0, os.path.join(REPO, "superWADERs", "clustering"))
+    """{ext: (e- per pixel as integers [rows, active cols], gain, read noise e-)} from CICERO's engine"""
+    sys.path.insert(0, os.path.join(REPO, "CICERO", "engine"))
+    sys.path.insert(0, os.path.join(REPO, "CICERO", "clustering"))
     import native_pipeline as NP
     s = NP.process_image(path, os.devnull, outputs=[], write=False, keep_arrays=True, all_ext=True, verbose=False)
     out = {}
@@ -64,7 +64,7 @@ def binned(e, by, bx, noise, rng):
 def make(out, bins):
     from astropy.io import fits
     rng = np.random.default_rng(20261113)
-    sys.path.insert(0, os.path.join(REPO, "superWADERs", "engine"))
+    sys.path.insert(0, os.path.join(REPO, "CICERO", "engine"))
     import autoconfig_panaSKImg as A
     truth = {}
     for p in images():
@@ -108,7 +108,7 @@ def run(out):
         lst = os.path.join(d, f"{name}.txt")
         open(lst, "w").write("\n".join(imgs) + "\n")
         with open(os.path.join(d, "run.log"), "w") as fh:
-            rc = subprocess.run([PY, os.path.join(REPO, "superWADERs", "run_superWADERs"), lst, "-o", d, "-j", "2",
+            rc = subprocess.run([PY, os.path.join(REPO, "CICERO", "run_CICERO"), lst, "-o", d, "-j", "2",
                                  "--overwrite", "--no-review-helper"], stdout=fh, stderr=subprocess.STDOUT).returncode
         print(name, "rc", rc, flush=True)
 
@@ -156,8 +156,8 @@ def fitted(rd):
 
 def analyse(out):
     from scipy.spatial import cKDTree
-    runs = {os.path.basename(d): glob.glob(os.path.join(d, "superWADERs_*"))[0]
-            for d in glob.glob(os.path.join(out, "runs", "*")) if glob.glob(os.path.join(d, "superWADERs_*"))}
+    runs = {os.path.basename(d): glob.glob(os.path.join(d, "CICERO_*"))[0]
+            for d in glob.glob(os.path.join(out, "runs", "*")) if glob.glob(os.path.join(d, "CICERO_*"))}
     T = clusters(runs["unbinned"])
     rep = {}
     for name, rd in sorted(runs.items()):

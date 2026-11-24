@@ -99,7 +99,7 @@ table.num.cmp td.same { color:var(--muted); }
 <script>
 "use strict";
 const D = JSON.parse(document.getElementById("data").textContent);
-const KEY = "superWADERs:" + D.report_id;
+const KEY = "packet_report:" + D.report_id;
 
 // ---------------------------------------------------------------- data arrays (gzip + base64)
 async function arr(a) {
@@ -696,8 +696,8 @@ const HELP = `<h2 style="margin-top:0">How to use this report</h2>
   hb.onclick = () => { help.style.display = help.style.display === "block" ? "none" : "block"; };
   help.querySelector("#hclose").onclick = () => { help.style.display = "none"; };
   document.addEventListener("keydown", e => { if (e.key === "Escape") help.style.display = "none"; });
-  let seen = false; try { seen = localStorage.getItem("superWADERs:hint2") === "1"; } catch (e) {}
-  if (!seen) { const h = el("div", "hint noprint", `<span>New here? Tick the CCDs to show below the tabs (all, or one with <b>only</b>). Plots and images are interactive: drag to zoom, double-click to reset; in an image, the slider or the arrow keys switch CCD. Comments are saved as you type. Press <b>? Help</b> for everything.</span><button>got it</button>`); document.querySelector("header").after(h); h.querySelector("button").onclick = () => { h.remove(); try { localStorage.setItem("superWADERs:hint2", "1"); } catch (e) {} }; }
+  let seen = false; try { seen = localStorage.getItem("packet_report:hint2") === "1"; } catch (e) {}
+  if (!seen) { const h = el("div", "hint noprint", `<span>New here? Tick the CCDs to show below the tabs (all, or one with <b>only</b>). Plots and images are interactive: drag to zoom, double-click to reset; in an image, the slider or the arrow keys switch CCD. Comments are saved as you type. Press <b>? Help</b> for everything.</span><button>got it</button>`); document.querySelector("header").after(h); h.querySelector("button").onclick = () => { h.remove(); try { localStorage.setItem("packet_report:hint2", "1"); } catch (e) {} }; }
   save.title = "write all comments of this report to a .json file"; load.title = "read comments from such a file"; pdf.title = "print every tab (with comments) - choose Save as PDF";
   const file = el("input"); file.type = "file"; file.accept = ".json"; file.style.display = "none";
   nav.append(save, load, pdf, file);

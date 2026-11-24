@@ -106,7 +106,7 @@ table.num.cmp td.same { color:var(--muted); }
 <script>
 "use strict";
 const D = JSON.parse(document.getElementById("data").textContent);
-const KEY = "CICERO:" + D.report_id, OLD_KEY = "superWADERs:" + D.report_id;   // OLD_KEY: choices saved before the rename
+const KEY = "CICERO:" + D.report_id;
 
 // ---------------------------------------------------------------- data arrays (gzip + base64)
 async function arr(a) {
@@ -460,7 +460,7 @@ SWR.init({ campaign: RV.campaign || "", root: RV.root || "", page: D.title, same
 const CCDS = D.ccds && D.ccds.length ? D.ccds : null;
 if (CCDS) CCDS.forEach((c, i) => { c.color = COLORS[i % COLORS.length]; });
 let SEL = CCDS ? CCDS.map(c => c.key) : [];
-try { const s = JSON.parse((localStorage.getItem(KEY + ":ccds") || localStorage.getItem(OLD_KEY + ":ccds")) || "null"); if (CCDS && Array.isArray(s)) { const k = CCDS.map(c => c.key).filter(x => s.includes(x)); if (k.length) SEL = k; } } catch (e) {}
+try { const s = JSON.parse(localStorage.getItem(KEY + ":ccds") || "null"); if (CCDS && Array.isArray(s)) { const k = CCDS.map(c => c.key).filter(x => s.includes(x)); if (k.length) SEL = k; } } catch (e) {}
 const DASHES = [[], [6, 3], [2, 2], [8, 3, 2, 3]];
 const swatch = c => c ? `<span class="sw" style="background:${c.color}"></span>` : "";
 function chosen(tb) {     // [{c, d}]: data of the ticked CCDs that have this tab (one item without a CCD on a tab of the whole module)
@@ -723,7 +723,7 @@ const HELP = `<h2 style="margin-top:0">How to use this report</h2>
   hb.onclick = () => { help.style.display = help.style.display === "block" ? "none" : "block"; };
   help.querySelector("#hclose").onclick = () => { help.style.display = "none"; };
   document.addEventListener("keydown", e => { if (e.key === "Escape") help.style.display = "none"; });
-  let seen = false; try { seen = localStorage.getItem("CICERO:hint2") === "1" || localStorage.getItem("superWADERs:hint2") === "1"; } catch (e) {}
+  let seen = false; try { seen = localStorage.getItem("CICERO:hint2") === "1"; } catch (e) {}
   if (!seen) { const h = el("div", "hint noprint", `<span>New here? Tick the CCDs to show below the tabs (all, or one with <b>only</b>). Plots and images are interactive: drag to zoom, double-click to reset; in an image, the slider or the arrow keys switch CCD. Each tab ends with a review box. Press <b>? Help</b> for everything.</span><button>got it</button>`); document.querySelector("header").after(h); h.querySelector("button").onclick = () => { h.remove(); try { localStorage.setItem("CICERO:hint2", "1"); } catch (e) {} }; }
   pdf.title = "print every tab (with the reviews) - choose Save as PDF";
   nav.append(pdf);

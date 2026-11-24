@@ -122,7 +122,7 @@ def _env_has(env, module):
 
 
 def find_env(conda, name):
-    """Prefix of the environment to use: --env / $CICERO_ENV (or the old $SUPERWADERS_ENV); else one named 'damic'; else the first environment
+    """Prefix of the environment to use: --env / $CICERO_ENV; else one named 'damic'; else the first environment
     whose site-packages hold numba and ROOT."""
     try:
         out = subprocess.run([conda, "env", "list", "--json"], capture_output=True, text=True, check=True).stdout
@@ -455,7 +455,7 @@ def build_parser(full=False):
     g.add_argument("--sr", action="store_true", help="serial-register images: streaks along a read (sr/)")
     g.add_argument("--sr-threshold", metavar="N", type=float, default=4.0, help="with --sr: N x noise (default 4)")
     g.add_argument("--sr-min-length", metavar="PIX", type=int, default=3, help="with --sr: shortest streak (default 3)")
-    ap.add_argument("--env", metavar="NAME", default=os.environ.get("CICERO_ENV") or os.environ.get("SUPERWADERS_ENV"),
+    ap.add_argument("--env", metavar="NAME", default=os.environ.get("CICERO_ENV"),
                     help="conda environment (default $CICERO_ENV, else 'damic', else one with numba and ROOT)")
     ap.add_argument("-v", "--verbose", action="store_true", help="with -h: the full guide")
     return ap
