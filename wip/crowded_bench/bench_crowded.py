@@ -28,6 +28,7 @@ from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+CICERO_DIR = os.environ.get("CICERO_DIR", os.path.join(os.path.dirname(REPO), "CICERO"))   # CICERO checkout (github Dylan-Rosenmerkel/CICERO)
 RUN = os.path.expanduser("~/Documents/comm_scripts_data/L2_101_20260922/WADERs_analysis_L2_101_20260922")
 STEM = {9: "avg_img_500x3500x500_1x1_L2_101_20260922_134507_9", 10: "avg_img_500x3500x500_1x1_L2_101_20260922_222502_10"}
 EXTS = (1, 2, 4)
@@ -115,7 +116,7 @@ def one(task):
     if os.path.exists(f):
         return f
     for p in ("clustering", "engine"):
-        sys.path.insert(0, os.path.join(REPO, "CICERO", p))
+        sys.path.insert(0, os.path.join(CICERO_DIR, p))
     import adaptive as AD
     import agent_methods as AM
     if base == "dm09":                    # counts per area as on L2 (25 muons, 40 X-rays per 1.63 Mpix)

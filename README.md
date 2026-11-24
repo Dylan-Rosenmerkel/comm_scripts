@@ -10,14 +10,11 @@ Scripts to analyse skipper-CCD images with panaSKImg (WADERs) without writing JS
 ```
 comm_scripts/
   README.md
-  bin/     commands to run          run_WADERs (and the alias runWADERs), run_CICERO (starts
-                                    CICERO/run_CICERO), run_AGMX (A_GMX clusters for a finished run)
+  bin/     commands to run          run_WADERs (and the alias runWADERs), run_AGMX (A_GMX clusters for a
+                                    finished run)
   src/     the pipeline modules     autoconfig_panaSKImg.py, gain_dc_split.py,
   of run_WADERs                     gain_vs_charge.py, fit_quality.py, agmx_root.py (A_GMX -> panaSKImg cluster files);
                                     native_*.py and the commissioning tools for run_WADERs --engine native
-  CICERO/  a separate program  run_CICERO with its own engine, clustering (clusterer auto: one chain per
-                                    CCD) and commissioning tools; uses nothing from bin/run_WADERs, src/, clustering_tests/
-                                    or wip/ (CICERO/README.md)
   utils/   standalone helpers       compare_dcfit_vs_skips.py, split_clustersRec_by_ext.py,
                                     skip_noise_L1.py, compare_runs.py
   clustering_tests/  research code   alternative clustering methods (A_GMX, GMX, MHC, MFD+G, ...) and the
@@ -45,13 +42,11 @@ function does what. Everything still open: `docs/notes/OPEN_ITEMS.md`.
 ```bash
 /path/to/comm_scripts/bin/run_WADERs image.fz          # one image
 /path/to/comm_scripts/bin/run_WADERs my_images.txt     # a list, one image path per line
-/path/to/comm_scripts/bin/run_CICERO my_images.txt   # CICERO: no panaSKImg, clustering chosen per CCD
 ```
 
-`run_CICERO` is a separate program (`CICERO/`): its own engine and clustering, with the chain chosen per
-CCD (Bayesian few-electron finder / A_GMX / crowded A_GMX / unmodelled / threshold), plus the commissioning tools: raw
-L0 / L1 files, commissioning packet reports, dark current over a series, defect maps and serial-register images.
-See [run_CICERO](#run_cicero-a-separate-program) below and [CICERO/README.md](CICERO/README.md).
+**CICERO** (`run_CICERO`: its own engine, clustering chosen per CCD, and the commissioning tools for L0 / L1 data,
+packets, dark-current series, defect maps and serial-register images) started here and is now its own repository:
+[https://github.com/Dylan-Rosenmerkel/CICERO](https://github.com/Dylan-Rosenmerkel/CICERO). It needs nothing from comm_scripts.
 
 The rest of this section is about `run_WADERs`.
 
@@ -110,156 +105,11 @@ gain periods by 0.6 % (on Fe-55 it was as good or slightly better).
 On the 2025-08-27 Image 5s the per-image and pooled curves gave the same front-side K-alpha to
 within a few eV whenever an image's own comb was usable.
 
-## run_CICERO: a separate program
+## CICERO
 
-**CICERO**: CCD Image Calibration, Event Recognition, and Optimization.
-
-`run_CICERO` (`CICERO/`, started by `bin/run_CICERO`) has its own engine, clustering and commissioning
-tools, and uses nothing from `bin/run_WADERs`, `src/`, `clustering_tests/` or `wip/` (its modules started as copies of
-them on 2026-11-12 and now change on their own). Pedestal, fits and cluster files in panaSKImg's format are the native
-engine's; the clustering is chosen per CCD (`--clusterer auto`, the default): A_GMX with the Bayesian few-electron
-switch on sparse electron-counting CCDs, A_GMX crowded mode on crowded ones, A_GMX 'unmodelled' (hysteresis) on noisy
-or structured ones, the threshold clusterer on flooded / unresolved ones; every choice is listed in `summary.txt`.
-Data arriving packet by packet go into one campaign folder (`--campaign DIR`): only new inputs are processed, and
-every tool (images, packet, dark current, defect maps, serial register) has an overview page (module × CCD grid
-with pass / warn / fail verdicts from a criteria file) combined in `DIR/index.html`; every page has review boxes
-(name, status, comment per CCD or report tab), kept in `DIR/reviews.js`; without `--campaign` a run
-stands alone. Clustering, campaigns and layout: [CICERO/README.md](CICERO/README.md); what has been checked on
-which data and what is still open: [CICERO/docs/STATUS.md](CICERO/docs/STATUS.md). It needs the `damic` conda
-environment (`conda env create -f CICERO/environment.yml`; found automatically). The `CICERO/` folder can be copied on
-its own: it needs nothing else from this repository. `run_WADERs --engine native` still runs `src/`'s copy of the native engine
-(threshold or A_GMX clusters), unchanged.
-
-```bash
-run_CICERO INPUT [-o PARENT] [-j N] [--overwrite] [options]    # INPUT: one file, or a .txt list (one path per line)
-run_CICERO -h                                                  # every flag;  -h -v: the full guide
-```
-
-Results: `PARENT/CICERO_<input name>/`; read `summary.txt` first. The full user guide, with what every
-number and plot means and what data are still needed to validate each tool, is
-[CICERO/docs/CICERO_user_guide.md](CICERO/docs/CICERO_user_guide.md).
-
-### Inputs
-
-| file | what it is | what happens to it |
-|---|---|---|
-| `avg_*.fits`, `.fits.bz2`, `.fz` | averaged images from the DAQ (any size, binning, number of skips) | image pipeline: pedestal, fits, clusters |
-| `trace_*.RJ45ADCDATA<ch>` (+ `.meta`) | level-0 trace: raw video samples of one channel | decoded, checked, plotted (`L0/`) |
-| `psd_*.RJ45ADCDATA<ch>` (+ `.meta`) | level-0 noise trace (no skip windows) | samples and noise spectra |
-| `*_L1_*.RJ45ADCDATA0..3` + `.meta` | level-1 image: every skip of every pixel (binned or not) | FITS images with N skips each, then the pipeline (`L1/`) |
-
-Files in a list may come in any order: the type is read from the file, the four channel files of an L1 image are
-grouped by name. Give averaged (L2) images as their `avg_*.fits`.
-
-**Module names** (`--module-list FILE`): a correlation list, one line per ACM (or per CCD when one board carries
-CCDs of different modules); comma, tab or space separated, `#` comments and a header line are ignored:
-
-```
-# ACM, module[, EXT<n> or CCD name]
-101, DM24
-102, DM25
-103, PA03, EXT2
-```
-
-Without an entry the name comes from `--module ACM=NAME`, then the data folder name (`..._DMa_DMb_DMc_...`), else
-`ACM<id>`.
-
-### What to run
-
-| task | command | output (in the run folder) |
-|---|---|---|
-| fits and clusters (chain per CCD) | `run_CICERO images.txt [--gain-correction] [--composite]` | `index.html`, `images/index.html`, `root/` (+ `root_gaincorr*/`), `summary.txt`, `characterisation/` |
-| add a packet / list to a campaign | any command below with `--campaign DIR` (`--criteria FILE`, `--refresh-all`, `--reprocess`) | the same in `DIR/`, for everything the campaign holds; only new inputs are processed |
-| review the pages | type in the review box of any page; saved into `DIR/reviews.js` at once (the review helper starts with every run; elsewhere: `run_CICERO --campaign DIR`, no input) | the reviews on every page; `reviews.csv`, `reviews.txt` |
-| a module measured again (2nd packet, 2nd cooldown) | the command with `--dataset NAME --campaign DIR` | one report and one overview view per data set; the campaign overview uses the newest |
-| L0 traces / PSD traces | `run_CICERO traces.txt [--l0-no-html]` | `L0/<trace>/`: `overview.png`, `viewer.html`, `summary.json` |
-| L1 images at several skip counts | `run_CICERO l1.txt --l1-skips 1,10,100,1000 [--l1-skip-first K]` | `L1/`: one FITS per N (all through the pipeline), `noise_vs_skips.csv/.png`, `compare/`, `<image>_diagnostics/` |
-| commissioning packet | `run_CICERO packet.txt --packet --module-list modules.csv` | `packet/index.html` + one page per module |
-| dark current over a series | `run_CICERO series.txt --dc-series [--dc-limit X] [--no-clusters]` | `dc_series/`: `dc_report.pdf`, `dc_series.csv`, one page per module |
-| defect maps | `run_CICERO images.txt --defect-map [--defect-sigma 5] [--no-clusters]` | `defects/<module>_ACM<id>_<size>/`: `defects.csv`, `defect_map.html`, composites, the group's Image_4 plot and log |
-| serial-register images | `run_CICERO sr.txt --sr [--sr-threshold 4] [--sr-min-length 3] [--no-clusters]` | `sr/`: `sr_streaks.csv`, `sr_summary.csv`, PNGs, one page per module |
-
-The commissioning flags can be combined in one run (e.g. `--dc-series --defect-map --sr`). Every tool's folder has an
-overview page, `index.html`: a module × CCD grid with pass / warn / fail verdicts from the criteria file, what needs
-attention, distributions, the full table, and links to the module pages. The run's or campaign's `index.html` combines
-all tools per CCD. Add `--no-clusters` when you need no cluster files: it is much faster.
-
-What each tool does:
-
-- **Engine**: the same steps as run_WADERs (autoconfig, gain from the many-peak fit where better, dark current
-  from the 0e-/1e- peaks, every panaSKImg pedestal method, `--tune`), and panaSKImg's `--save-plots` PDFs. Before
-  the fits, a characterisation of every image and CCD (`characterisation/<image>.json`); clustering chain per CCD
-  (`--clusterer auto`, or `agmx` / `threshold` everywhere). Thresholds of the threshold clusterer: `--thresholds auto`
-  (default; in electrons from each CCD's dark charge), `sigma0` (WADERs' 10 / 30 sigma) or `PIX,SEED`. CCDs without
-  a measurable comb: `--gain` / `--gain-file`.
-- **L1** (`--l1-skips`, `--l1-skip-first K`): one image per number of skips N (mean of skips K..K+N-1) with the DAQ
-  header from the `.meta`; noise and gain per CCD against N with the 1/sqrt(N) line; the DC-fit, baseline and sigma
-  plots of every N side by side; diagnostics per channel (start-of-pixel transient and the suggested
-  `--l1-skip-first`, single-skip noise, noise vs N within a pixel, spectrum over the skips, drift during a pixel).
-- **Packet** (`--packet`): a list of a commissioning packet's files (traces, PSD traces, 1-skip and 500-skip images
-  of any size and binning, L1 files; any order). One report per module with the tabs it has data for: Overview,
-  Trace, PSD (sigma_ADU, sigma_CDS), per image a numbers tab (gain, noise, dark current, chi2, the pixel-charge
-  histogram with the dark-current fit when the electron peaks are resolved, profiles) and an image viewer. No
-  clustering.
-- **Dark current** (`--dc-series`): every image of the list is one point in time (DATEINI). Rate = DC /
-  (exposure + readout/2) in e-/pix/day, and from the growth of the dark charge along the rows (slope; the intercept
-  is charge made during the readout). Settling fit (plateau + exponential) with 5 or more images; flags "above
-  limit" (`--dc-limit`) and "still falling". Pages: Rates, Fits (each image's histogram with its dark-current fit),
-  Per row, Data (table of every number), Method.
-- **Defect map** (`--defect-map`): images of one ACM with the same size and binning form a group (any type or skip
-  count). Median composite per CCD; bright / dark columns (Image_4's rule on the composite, confirmed in the single
-  images; adjacent columns = one defect; the first active column is usually a readout artefact) and hot / cold pixel
-  spots (`--defect-sigma`). A hot / cold pixel must be persistent: present in enough images that chance coincidences
-  of events or dark electrons are unlikely (< 0.1 per CCD, from each image's occupancy); few or busy images can give
-  "none identifiable". Checked on simulated images down to 1e-5 e-/pix and on real data, not yet against a known
-  defect list. The group's `Image_4` (`src/lsm_defects/`) always runs (without an overscan: pedestal and noise
-  from the active region, CTI n/a); its plot is in the page's "Image_4 plot" tab.
-  `defects.csv` is the defect log.
-- **Serial-register images** (`--sr`): streaks in the serial register (readout artifacts): runs of >=
-  `--sr-min-length` pixels above `--sr-threshold` x noise along one read, confined to it. Page: a Diagnostics tab
-  (streaks per image and per 1000 reads, dark charge, read noise and gain per image, dark charge per read, streak
-  lengths and positions, a table of all numbers), DC fits (each image's histogram with its dark-current fit) and one
-  tab per image with the streaks marked; the streak list
-  is in `sr_streaks.csv`.
-
-### The interactive pages
-
-Every page is one self-contained HTML file: it works offline in Chrome, Safari or Firefox (double-click it), and it
-can be sent to others as it is.
-
-- **One page per module.** The row below the tabs lists its CCDs: tick the ones to show, **all CCDs in the module**
-  for all of them, **only** next to a CCD for that one alone (remembered in the browser). Traces are shown one below
-  the other; PSD spectra, profiles and series plots are overlaid with one colour per CCD; numbers are side by side
-  (a value that is the same for every CCD is shown once, in grey); fit histograms one per CCD.
-- **Images, like ds9 frames**: one CCD at a time; the slider, the arrow buttons or the left / right arrow keys switch
-  CCD and keep zoom, position, scale mode and the row / column cut, so the same spot can be compared; **blink**
-  switches every second. Wheel or + / - zoom, drag to move, click a pixel for its row and column cut, shift + drag a
-  box for the region's statistics, scale (auto = around the background, like zscale), colormap, asinh, PNG. Defect
-  and streak pages mark what was found (tick boxes per type); click a line of the list to jump to it.
-- **Plots**: drag a box to zoom, shift + drag to move, wheel zooms x (alt + wheel: y), double-click or **reset**,
-  **log y / lin y**, **PNG**; hover to read values.
-- **Flags**: a red number is outside the usual range (noise > 0.3 e-, peaks not resolved, defects found, DC above the
-  limit, ...); a red dot marks the tab and the CCD it belongs to.
-- **Comments**: a box at the bottom of every tab, saved in the browser as you type; **Save comments** writes them to a
-  `.json` file (keep it next to the page or send it), **Load comments** reads one back.
-- **Export PDF**: every tab on its own page (the ticked CCDs) with the comments; choose "Save as PDF".
-- **Log**: at the bottom of each tab, how its numbers were made (files, header settings, checks, fit results).
-- **? Help** (top right) explains all of this on the page itself.
-
-### Where the code is
-
-| file | what |
-|---|---|
-| `CICERO/run_CICERO` | the command (`bin/run_CICERO` starts it) |
-| `CICERO/engine/` | `native_pipeline.py` (pedestal, fits, calibration, clustering chain, cluster files), `characterise.py` (front end), and CICERO's own copies of autoconfig, gain_dc_split, gain_vs_charge, ... |
-| `CICERO/clustering/` | A_GMX and the Bayesian few-electron finder |
-| `CICERO/commissioning/` (campaigns, overviews) | `campaign.py` (ledger, records, criteria, verdicts, overview pages), `worker.py` (one image -> its record), `ccd_metrics.py`, `overview_template.html`, `criteria_default.json` (placeholder limits), `reviews.py` + `review_widget.js` (reviews) |
-| `CICERO/commissioning/` (tools) | `raw_data.py` + `raw_levels/` (L0 / L1; copies from ccd_opt_ml, `utils/sync_from_ccd_opt_ml.py`), `packet_report.py` + template, `dc_series.py`, `defects.py` + `lsm_defects/` (`utils/sync_from_lsm_analysis.py`), `sr_images.py` |
-| `CICERO/README.md`, `CICERO/docs/` (user guide, status, plan, efficiency notes) | overview (incl. campaigns), user guide, status (checked / open), plan, efficiency notes |
-
-**Not yet validated on real data** (see the user guide, section 5, for the data needed): a full commissioning packet
-(5-minute 1x1 1-skip and 10x10 500-skip images), serial-register images (tested only on synthetic data), the defect
-thresholds against known defects, and dark-current limits.
+CICERO (CCD Image Calibration, Event Recognition, and Optimization) was developed in this repository until
+2026-11-24 and is now its own repository: [https://github.com/Dylan-Rosenmerkel/CICERO](https://github.com/Dylan-Rosenmerkel/CICERO), with its install steps, every command and option, and
+what has been checked. Its history up to the move is in this repository's git log.
 
 ## Requirements
 
@@ -411,53 +261,10 @@ cl = adaptive.adaptive_cluster(Q_k, valid_k, engine="gmx", fewe="auto", fewe_lam
 - **Untuned values:** the f_c cut and the halo.
 - The L2 gains (1.3 / 0.82 ADU/e-) are unconfirmed.
 
-## Any image: characterisation front end and `--clusterer auto` (working: the default of run_CICERO)
+## Any image: characterisation front end and `--clusterer auto`
 
-Developed in `wip/native_pipeline/` (details and its robustness suite: `wip/native_pipeline/ANYIMAGE.md`); since
-2026-11-12 it is part of `CICERO/` (`engine/characterise.py`, `engine/native_pipeline.py`) and the default
-clustering of `run_CICERO`. `src/` and `run_WADERs` do not have it. Before clustering, each image and CCD is
-characterised: data form, geometry, binning, dead / quiet channel, first-column artefact, saturation, gain source,
-noise, dark charge, crowding. Every fallback is logged, and the record goes to `characterisation/<image>.json` and
-into each ROOT file. The chain is then chosen per CCD:
-
-| per CCD | chain |
-|---|---|
-| electron counting, core fill < 0.10 | A_GMX, with the few-electron switch (run-pooled when the run has >= 2 images and DC <= 1.5e-2 e-/pix) |
-| electron counting, core fill >= 0.10 | A_GMX crowded mode |
-| noise >= 1 e- or a structured background | A_GMX 'unmodelled' (hysteresis) |
-| flooded (no peaks, > 10 e-/pix) | threshold clusterer above the flooding level, at 10 / 30 x the charge width |
-| not counting, noise < 1 e- | threshold clusterer (sigma0 rule) |
-| raw skips / std images | compressed first / refused |
-
-```bash
-run_CICERO images.txt [--gain-correction]                         # clusterer auto is the default
-run_CICERO l2_images.txt --gain EXT1=1.3,EXT2=1.3,EXT3=1.3,EXT4=0.82   # no comb: give the gain
-python CICERO/engine/characterise.py IMAGES... -o OUT              # the front end alone (JSON per image)
-cd wip/native_pipeline && $PY run.py -j 2                               # the wip robustness suite (its own copies)
-```
-
-**Validated:**
-- **Robustness suite:** 16 cases run without error. They cover DM09, DM07 / DM27 / DM28 Fe-55, PD06, AMtest, the L2
-  ACM 103 noise test, binned images, a single-skip image, synthetic raw skips, a std image, and injected events.
-- **DM09 Image_5:** `--clusterer auto` equals `--clusterer agmx` (12/12 files identical, same K-alpha).
-- **Fe-55 Image_8:** K-alpha within 1 eV of the earlier A_GMX + g(n) results, after allowing for the different
-  eV/e- constant.
-- **Injected few-electron events** on real L2 noise: 58 / 64 found, with the electron count exact.
-- **Real failures it fixes** (each logged when it happens):
-  - L2 channels that were silently skipped;
-  - gains silently taken from the reference JSON;
-  - the A_GMX crash on images with < 61 rows;
-  - a flooded CCD that ran out of memory.
-
-**Not validated / open:**
-- **Crowded-mode cut (0.10):** dense Fe-55 Image_8 CCDs go to crowded mode (core fill 0.13-0.155); K-alpha moves
-  < 1 eV. PD06 sits at the cut and can flip between CCDs.
-- **Skip-resolved data:** tested only on a synthetic file.
-- **Sibling gains** (taking the gain from other images of the same CCD): tested on constructed records only.
-- **Binned images:** clustering is not adapted to the bin size.
-- **Dark charge below ~1e-5 e-/pix** cannot be measured from a few images.
-- **Not yet ported:** the work-arounds for `gmx.py` (< 61 rows) and for strips are not fixed in `clustering_tests/`.
-- **Ported to CICERO/** (2026-11-12); run there on synthetic images only so far (CICERO/README.md).
+Developed in `wip/native_pipeline/` (its robustness suite: `wip/native_pipeline/ANYIMAGE.md`) and now part of CICERO
+([https://github.com/Dylan-Rosenmerkel/CICERO](https://github.com/Dylan-Rosenmerkel/CICERO)), where each CCD gets its own clustering chain. `src/` and `run_WADERs` do not have it.
 
 ## Tests
 

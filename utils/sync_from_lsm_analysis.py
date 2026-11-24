@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 """Copy the defect-map script of LSM_Module_Testing_Analysis (D. Venegas-Vargas: src/Image_4.py) into
-comm_scripts/src/lsm_defects/ (run_WADERs --engine native) and CICERO/commissioning/lsm_defects/ (run_CICERO), and
-its Fe-55 composite macro (src/MakeComposite_Fe55_Clusters_Extensions.cc) into CICERO/commissioning/lsm_composite/,
-unchanged except for a first line naming the source and its commit (--dest: only one of them).
+comm_scripts/src/lsm_defects/ (run_WADERs --engine native), unchanged except for a first line naming the source
+and its commit. CICERO keeps its own copies (its tools/sync_from_lsm_analysis.py).
 
---defect-map (src/defects.py, CICERO/commissioning/defects.py) runs it on the run's images (its geometry
-constants set from each image's header) and adds the defect log and the interactive defect map. run_CICERO
---composite runs the macro copy (so CICERO needs nothing outside its folder).
+--defect-map (src/defects.py) runs it on the run's images (its geometry constants set from each image's header)
+and adds the defect log and the interactive defect map.
 
     python utils/sync_from_lsm_analysis.py [--source ~/Documents/LSM_Module_Testing_Analysis] [--check]
-                                           [--dest both|src|CICERO]
 """
 import argparse
 import os
@@ -17,10 +14,7 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DESTS = {"src": [(os.path.join(ROOT, "src", "lsm_defects"), ["Image_4.py"])],
-         "CICERO": [(os.path.join(ROOT, "CICERO", "commissioning", "lsm_defects"), ["Image_4.py"]),
-                    (os.path.join(ROOT, "CICERO", "commissioning", "lsm_composite"),
-                     ["MakeComposite_Fe55_Clusters_Extensions.cc"])]}
+DESTS = [(os.path.join(ROOT, "src", "lsm_defects"), ["Image_4.py"])]
 MARK = ("{c} copied from LSM_Module_Testing_Analysis/src/{name} (commit {commit}) by utils/sync_from_lsm_analysis.py: "
         "edit it there, not here\n")
 
@@ -29,14 +23,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--source", default=os.path.expanduser("~/Documents/LSM_Module_Testing_Analysis"))
     ap.add_argument("--check", action="store_true", help="only report which copies differ from the source")
-    ap.add_argument("--dest", choices=("both", "src", "CICERO"), default="both",
-                    help="which copy to update (default both)")
     a = ap.parse_args()
     rc = 0
-    for key, dests in DESTS.items():
-        if a.dest in ("both", key):
-            for dst, files in dests:
-                rc |= sync(a, dst, files)
+    for dst, files in DESTS:
+        rc |= sync(a, dst, files)
     sys.exit(rc)
 
 

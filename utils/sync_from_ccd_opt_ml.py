@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Copy the L0 / L1 readers and trace plotters of ccd_opt_ml into comm_scripts/src/raw_levels/ (run_WADERs --engine
-native) and CICERO/commissioning/raw_levels/ (run_CICERO); --dest chooses one of them.
+native). CICERO keeps its own copy (its tools/sync_from_ccd_opt_ml.py).
 
-run_WADERs --engine native (src/raw_data.py) and run_CICERO (CICERO/commissioning/raw_data.py) decode
+run_WADERs --engine native (src/raw_data.py) decodes
 and plot level-0 traces and turn level-1 images into FITS images with these modules. They are maintained in
 ccd_opt_ml (github Dylan-Rosenmerkel/ccd_opt_ml, src/); comm_scripts keeps copies so that it does not need that
 repository. The copies are unchanged except for a first line naming the source
@@ -10,7 +10,6 @@ file and its commit; they import each other by their plain names (raw_data.py pu
 
     python utils/sync_from_ccd_opt_ml.py [--source ~/Documents/Software/ccd_opt_ml]          copy
     python utils/sync_from_ccd_opt_ml.py --check                                              report differences only
-    python utils/sync_from_ccd_opt_ml.py --dest CICERO                                   only CICERO's copy
 """
 import argparse
 import os
@@ -18,8 +17,7 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DESTS = {"src": os.path.join(ROOT, "src", "raw_levels"),
-         "CICERO": os.path.join(ROOT, "CICERO", "commissioning", "raw_levels")}
+DEST = os.path.join(ROOT, "src", "raw_levels")
 FILES = ["decode_trace.py", "trace_geometry.py", "trace_regions.py", "plot_trace.py", "view_trace.py", "decode_l1.py"]
 MARK = "# copied from ccd_opt_ml/src/{name} (commit {commit}) by utils/sync_from_ccd_opt_ml.py: edit it there, not here\n"
 
@@ -40,14 +38,8 @@ def main():
     ap.add_argument("--source", default=os.environ.get("CCD_OPT_ML", os.path.expanduser("~/Documents/Software/ccd_opt_ml")),
                     help="ccd_opt_ml checkout (default: $CCD_OPT_ML or ~/Documents/Software/ccd_opt_ml)")
     ap.add_argument("--check", action="store_true", help="only report which copies differ from the source")
-    ap.add_argument("--dest", choices=("both", "src", "CICERO"), default="both",
-                    help="which copy to update (default both)")
     a = ap.parse_args()
-    rc = 0
-    for key, dst in DESTS.items():
-        if a.dest in ("both", key):
-            rc |= sync(a, dst)
-    sys.exit(rc)
+    sys.exit(sync(a, DEST))
 
 
 def sync(a, DST):

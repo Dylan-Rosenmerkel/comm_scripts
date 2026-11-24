@@ -26,12 +26,13 @@ import time
 import numpy as np
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+CICERO_DIR = os.environ.get("CICERO_DIR", os.path.join(os.path.dirname(REPO), "CICERO"))   # CICERO checkout (github Dylan-Rosenmerkel/CICERO)
 PY = "/opt/homebrew/Caskroom/miniforge/base/envs/damic/bin/python"
 sys.path.insert(0, os.path.join(REPO, "wip", "native_pipeline"))
 import run as R          # noqa: E402  (cases, check, read_clusters, kalpha_per_ext of the earlier suite)
 
 OLD_SUITE = os.path.join(R.OUT, "suite.json")
-PATCH = os.path.join(REPO, "CICERO", "docs", "patches", "CICERO_efficiency_E1-E3.patch")
+PATCH = os.path.join(CICERO_DIR, "docs", "patches", "CICERO_efficiency_E1-E3.patch")
 SWV = os.path.join(REPO, "wip", "lowdc", "switch_validation")
 
 
@@ -65,7 +66,7 @@ def run_prog(name, images, args, out, repo=REPO, extra=()):
     lst = os.path.join(d, "images.txt")
     with open(lst, "w") as fh:
         fh.write("\n".join(images) + "\n")
-    cmd = [PY, os.path.join(repo, "CICERO", "run_CICERO"), lst, "-o", d, "-j", "2", "--overwrite",
+    cmd = [PY, os.path.join(CICERO_DIR if repo == REPO else os.path.join(repo, "CICERO"), "run_CICERO"), lst, "-o", d, "-j", "2", "--overwrite",
            "--no-review-helper"] + list(args) + list(extra)
     t0 = time.time()
     with open(os.path.join(d, "run.log"), "w") as fh:

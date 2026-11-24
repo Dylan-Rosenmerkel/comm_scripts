@@ -29,6 +29,7 @@ import sys
 import numpy as np
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+CICERO_DIR = os.environ.get("CICERO_DIR", os.path.join(os.path.dirname(REPO), "CICERO"))   # CICERO checkout (github Dylan-Rosenmerkel/CICERO)
 PY = "/opt/homebrew/Caskroom/miniforge/base/envs/damic/bin/python"
 TEMPLATE = sorted(glob.glob(os.path.expanduser("~/Documents/comm_scripts_data/ndcm_images_2_L2_103/avg_img_100x500x1000_*.fits")))[0]
 H, W, NOV, G, NOISE, PED, NEXT = 600, 2000, 20, 1.3, 0.12, 1000.0, 2
@@ -127,7 +128,7 @@ def run(out, jobs=2, parallel=1, extra=()):
         lst = os.path.join(sd, "images.txt")
         open(lst, "w").write("\n".join(imgs) + "\n")
         with open(os.path.join(sd, "run.log"), "w") as fh:
-            rc = subprocess.run([PY, os.path.join(REPO, "CICERO", "run_CICERO"), lst, "-o", sd, "-j", str(jobs),
+            rc = subprocess.run([PY, os.path.join(CICERO_DIR, "run_CICERO"), lst, "-o", sd, "-j", str(jobs),
                                  "--overwrite", "--no-review-helper", "--gain", str(G)] + list(extra),
                                 stdout=fh, stderr=subprocess.STDOUT).returncode
         print(os.path.basename(sd), "rc", rc, flush=True)

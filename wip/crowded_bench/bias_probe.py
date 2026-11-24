@@ -20,6 +20,7 @@ from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 
 REPO = os.environ.get("PROBE_REPO", os.path.expanduser("~/Documents/Software/comm_scripts"))
+CICERO_DIR = os.environ.get("CICERO_DIR", os.path.join(os.path.dirname(REPO), "CICERO"))   # CICERO checkout (github Dylan-Rosenmerkel/CICERO)
 EPS = 3.75e-3
 A_UM2, B_UM, THICK, PIX = 285.0, 8.2e-4, 675.0, 15.0
 E_KEV = (0.3, 1.0, 3.0, 6.0, 15.0, 30.0, 60.0)
@@ -91,7 +92,7 @@ def _one(task):
     if os.path.exists(f):
         return f
     for p in ("clustering", "engine"):
-        sys.path.insert(0, os.path.join(REPO, "CICERO", p))
+        sys.path.insert(0, os.path.join(CICERO_DIR, p))
     import adaptive as AD
     import agent_methods as AM
     from scipy import ndimage as ndi

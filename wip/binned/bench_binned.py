@@ -30,6 +30,7 @@ import sys
 import numpy as np
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+CICERO_DIR = os.environ.get("CICERO_DIR", os.path.join(os.path.dirname(REPO), "CICERO"))   # CICERO checkout (github Dylan-Rosenmerkel/CICERO)
 PY = "/opt/homebrew/Caskroom/miniforge/base/envs/damic/bin/python"
 SRC_LIST = os.path.expanduser("~/Documents/comm_scripts_data/waders_integration_example/DM09_Image5.txt")
 PRE = 8
@@ -42,8 +43,8 @@ def images():
 
 def electrons(path):
     """{ext: (e- per pixel as integers [rows, active cols], gain, read noise e-)} from CICERO's engine"""
-    sys.path.insert(0, os.path.join(REPO, "CICERO", "engine"))
-    sys.path.insert(0, os.path.join(REPO, "CICERO", "clustering"))
+    sys.path.insert(0, os.path.join(CICERO_DIR, "engine"))
+    sys.path.insert(0, os.path.join(CICERO_DIR, "clustering"))
     import native_pipeline as NP
     s = NP.process_image(path, os.devnull, outputs=[], write=False, keep_arrays=True, all_ext=True, verbose=False)
     out = {}
@@ -64,7 +65,7 @@ def binned(e, by, bx, noise, rng):
 def make(out, bins):
     from astropy.io import fits
     rng = np.random.default_rng(20261113)
-    sys.path.insert(0, os.path.join(REPO, "CICERO", "engine"))
+    sys.path.insert(0, os.path.join(CICERO_DIR, "engine"))
     import autoconfig_panaSKImg as A
     truth = {}
     for p in images():
@@ -108,7 +109,7 @@ def run(out):
         lst = os.path.join(d, f"{name}.txt")
         open(lst, "w").write("\n".join(imgs) + "\n")
         with open(os.path.join(d, "run.log"), "w") as fh:
-            rc = subprocess.run([PY, os.path.join(REPO, "CICERO", "run_CICERO"), lst, "-o", d, "-j", "2",
+            rc = subprocess.run([PY, os.path.join(CICERO_DIR, "run_CICERO"), lst, "-o", d, "-j", "2",
                                  "--overwrite", "--no-review-helper"], stdout=fh, stderr=subprocess.STDOUT).returncode
         print(name, "rc", rc, flush=True)
 
