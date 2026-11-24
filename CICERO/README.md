@@ -30,6 +30,8 @@ run_CICERO -h                                   # every flag;   -h -v: the full 
 
 Results go to `PARENT/CICERO_<input name>/`. Read `summary.txt` first; `index.html` is the overview page.
 
+**Every command and option:** [HOW_TO_USE.md](HOW_TO_USE.md).
+
 **Inputs** (any mix, in any order): averaged images (`.fits`, `.fz`, `.fits.gz`, `.fits.bz2`; any size, binning or
 number of skips), skip-resolved raw FITS files (averaged first), level-0 traces and PSD traces (`trace_*` / `psd_*`
 `.RJ45ADCDATA<ch>`), and level-1 images (`*_L1_*.RJ45ADCDATA0..3` with their `.meta`).
@@ -109,6 +111,7 @@ CICERO/
   commissioning/   campaigns, overview pages and reviews; packet, dark-current, defect-map, SR and L0 / L1 tools;
                    copies kept in sync with their sources: raw_levels/ (ccd_opt_ml DAQ decoders),
                    lsm_defects/ and lsm_composite/ (LSM_Module_Testing_Analysis)
+  HOW_TO_USE.md    every command and option
   docs/            STATUS.md, the user guide (every page and number explained), plans and notes
   tests/           python -m unittest discover -s CICERO/tests
   environment.yml  the conda environment
